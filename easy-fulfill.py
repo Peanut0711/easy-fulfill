@@ -37,8 +37,9 @@ class ImageDialog(QDialog):
         
         # 닫기 버튼
         close_button = QPushButton("닫기")
+        close_button.setMaximumWidth(100)  # 버튼 폭 제한
         close_button.clicked.connect(self.close)
-        layout.addWidget(close_button)
+        layout.addWidget(close_button, alignment=Qt.AlignCenter)  # 중앙 정렬
         
         self.setLayout(layout)
         
@@ -47,6 +48,10 @@ class ImageDialog(QDialog):
         
         # 창 크기 설정
         self.resize(1024, 768)  # 더 큰 초기 크기로 설정
+    
+    def mousePressEvent(self, event):
+        """마우스 클릭 이벤트 처리 - 창의 아무 곳이나 클릭하면 닫힘"""
+        self.close()
     
     def load_image(self, image_url):
         try:
@@ -767,9 +772,11 @@ class MainWindow(QMainWindow):
                 lambda row: subcategorize_mcu(row['상품명']) if row['카테고리'] == 'MCU/개발보드' else '기타',
                 axis=1
             )
+            result_df['소분류'] = ''  # 소분류 열 추가
+            result_df['비고'] = ''    # 비고 열 추가
 
             # 결과 정렬
-            result_df = result_df[['카테고리', '중분류', '상품명']].sort_values(by=['카테고리', '중분류', '상품명'])
+            result_df = result_df[['카테고리', '중분류', '소분류', '상품명', '비고']].sort_values(by=['카테고리', '중분류', '소분류', '상품명'])
 
             # 테이블 위젯 초기화
             table = self.ui.categoryTableWidget
@@ -807,11 +814,11 @@ class MainWindow(QMainWindow):
                             }
                         """)
                         button.clicked.connect(lambda checked, url=image_url: self.show_image(url))
-                        table.setCellWidget(row_position, 3, button)
+                        table.setCellWidget(row_position, 4, button)  # 이미지 열 위치 변경
                     else:
                         # 이미지 URL이 없는 경우 빈 셀 추가
                         empty_item = QTableWidgetItem("")
-                        table.setItem(row_position, 3, empty_item)
+                        table.setItem(row_position, 4, empty_item)  # 이미지 열 위치 변경
 
             # 열 너비 자동 조정
             table.resizeColumnsToContents()
@@ -852,6 +859,32 @@ class MainWindow(QMainWindow):
             return
 
         try:
+            # 테이블에서 최신 데이터 가져오기
+            table = self.ui.categoryTableWidget
+            updated_df = self.categorized_df.copy()
+            
+            # 테이블에서 소분류와 비고 데이터 업데이트
+            for row in range(table.rowCount()):
+                # 상품명 열 확인
+                product_name_item = table.item(row, 3)
+                if product_name_item is None:
+                    continue
+                product_name = product_name_item.text()
+                
+                # 소분류 열 확인
+                subcategory_item = table.item(row, 2)
+                subcategory = subcategory_item.text() if subcategory_item is not None else ""
+                
+                # 비고 열 확인
+                note_item = table.item(row, 5)
+                note = note_item.text() if note_item is not None else ""
+                
+                # 데이터프레임에서 해당 상품 찾아 업데이트
+                mask = updated_df['상품명'] == product_name
+                if any(mask):
+                    updated_df.loc[mask, '소분류'] = subcategory
+                    updated_df.loc[mask, '비고'] = note
+            
             # output 디렉토리 생성
             output_dir = Path("output")
             output_dir.mkdir(exist_ok=True)
@@ -865,7 +898,7 @@ class MainWindow(QMainWindow):
 
             # 엑셀 파일로 저장
             with pd.ExcelWriter(output_file, engine='xlsxwriter') as writer:
-                self.categorized_df.to_excel(writer, index=False, sheet_name='Sheet1')
+                updated_df.to_excel(writer, index=False, sheet_name='Sheet1')
                 
                 # 워크시트와 워크북 객체 가져오기
                 worksheet = writer.sheets['Sheet1']
@@ -885,10 +918,10 @@ class MainWindow(QMainWindow):
                 })
                 
                 # 열 너비 자동 조정 및 포맷 적용
-                for idx, col in enumerate(self.categorized_df.columns):
+                for idx, col in enumerate(updated_df.columns):
                     # 열 이름의 길이와 데이터의 최대 길이 계산
                     max_length = max(
-                        self.categorized_df[col].astype(str).apply(len).max(),
+                        updated_df[col].astype(str).apply(len).max(),
                         len(str(col))
                     )
                     # 한글은 2배의 너비가 필요하므로 조정
@@ -896,7 +929,7 @@ class MainWindow(QMainWindow):
                     worksheet.set_column(idx, idx, adjusted_width + 2, center_format)
                 
                 # 헤더에 포맷 적용
-                for col_num, value in enumerate(self.categorized_df.columns.values):
+                for col_num, value in enumerate(updated_df.columns.values):
                     worksheet.write(0, col_num, value, header_format)
                 
                 # 전체 행 높이 조정
@@ -904,7 +937,7 @@ class MainWindow(QMainWindow):
 
             print(f"✓ 분류 결과 파일이 생성되었습니다.")
             print(f"  - 파일 위치: {output_file}")
-            print(f"  - 행 수: {len(self.categorized_df)}")
+            print(f"  - 행 수: {len(updated_df)}")
 
             self.statusBar().showMessage(f"분류 결과 파일 생성 완료: {output_file}")
             

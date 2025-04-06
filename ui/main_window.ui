@@ -227,7 +227,7 @@
            </font>
           </property>
           <property name="editTriggers">
-           <set>QAbstractItemView::NoEditTriggers</set>
+           <set>QAbstractItemView::DoubleClicked</set>
           </property>
           <property name="alternatingRowColors">
            <bool>true</bool>
@@ -256,12 +256,22 @@
           </column>
           <column>
            <property name="text">
+            <string>소분류</string>
+           </property>
+          </column>
+          <column>
+           <property name="text">
             <string>상품명</string>
            </property>
           </column>
           <column>
            <property name="text">
             <string>이미지</string>
+           </property>
+          </column>
+          <column>
+           <property name="text">
+            <string>비고</string>
            </property>
           </column>
          </widget>
