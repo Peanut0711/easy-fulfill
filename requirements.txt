@@ -1,0 +1,7 @@
+PySide6==6.8.1
+pandas==2.2.1
+openpyxl==3.1.2
+xlrd==2.0.1
+pyxlsb==1.0.10
+msoffcrypto-tool==5.1.1 
+xlsxwriter==3.2.2
