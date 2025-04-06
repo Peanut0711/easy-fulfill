@@ -111,14 +111,16 @@ class Ui_MainWindow(object):
         self.verticalLayout_2.addLayout(self.horizontalLayout_3)
 
         self.categoryTableWidget = QTableWidget(self.tab_2)
-        if (self.categoryTableWidget.columnCount() < 3):
-            self.categoryTableWidget.setColumnCount(3)
+        if (self.categoryTableWidget.columnCount() < 4):
+            self.categoryTableWidget.setColumnCount(4)
         __qtablewidgetitem = QTableWidgetItem()
         self.categoryTableWidget.setHorizontalHeaderItem(0, __qtablewidgetitem)
         __qtablewidgetitem1 = QTableWidgetItem()
         self.categoryTableWidget.setHorizontalHeaderItem(1, __qtablewidgetitem1)
         __qtablewidgetitem2 = QTableWidgetItem()
         self.categoryTableWidget.setHorizontalHeaderItem(2, __qtablewidgetitem2)
+        __qtablewidgetitem3 = QTableWidgetItem()
+        self.categoryTableWidget.setHorizontalHeaderItem(3, __qtablewidgetitem3)
         self.categoryTableWidget.setObjectName(u"categoryTableWidget")
         font2 = QFont()
         font2.setFamilies([u"\ub9d1\uc740 \uace0\ub515"])
@@ -224,6 +226,8 @@ class Ui_MainWindow(object):
         ___qtablewidgetitem1.setText(QCoreApplication.translate("MainWindow", u"\uc911\ubd84\ub958", None));
         ___qtablewidgetitem2 = self.categoryTableWidget.horizontalHeaderItem(2)
         ___qtablewidgetitem2.setText(QCoreApplication.translate("MainWindow", u"\uc0c1\ud488\uba85", None));
+        ___qtablewidgetitem3 = self.categoryTableWidget.horizontalHeaderItem(3)
+        ___qtablewidgetitem3.setText(QCoreApplication.translate("MainWindow", u"\uc774\ubbf8\uc9c0", None));
         self.categorizeButton.setText(QCoreApplication.translate("MainWindow", u"\uc0c1\ud488 \ubd84\ub958", None))
         self.exportCategoryButton.setText(QCoreApplication.translate("MainWindow", u"\uc5d1\uc140\ub85c \ub0b4\ubcf4\ub0b4\uae30", None))
         self.tabWidget.setTabText(self.tabWidget.indexOf(self.tab_2), QCoreApplication.translate("MainWindow", u"\uc0c1\ud488\ubd84\ub958", None))

@@ -259,6 +259,11 @@
             <string>상품명</string>
            </property>
           </column>
+          <column>
+           <property name="text">
+            <string>이미지</string>
+           </property>
+          </column>
          </widget>
         </item>
         <item>

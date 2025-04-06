@@ -11,9 +11,64 @@ import numpy as np
 import subprocess
 import tempfile
 import msoffcrypto
-from PySide6.QtWidgets import QApplication, QMainWindow, QFileDialog, QMessageBox, QInputDialog, QLineEdit, QTableWidgetItem
+from PySide6.QtWidgets import (QApplication, QMainWindow, QFileDialog, QMessageBox, 
+                              QInputDialog, QLineEdit, QTableWidgetItem, QLabel, 
+                              QDialog, QVBoxLayout, QHBoxLayout, QPushButton)
 from PySide6.QtUiTools import QUiLoader
-from PySide6.QtCore import QFile, QIODevice
+from PySide6.QtCore import QFile, QIODevice, Qt, QSize
+from PySide6.QtGui import QPixmap, QImage
+import requests
+from io import BytesIO
+
+class ImageDialog(QDialog):
+    def __init__(self, image_url, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("상품 이미지")
+        self.setModal(True)
+        
+        # 레이아웃 설정
+        layout = QVBoxLayout()
+        
+        # 이미지 레이블
+        self.image_label = QLabel()
+        self.image_label.setAlignment(Qt.AlignCenter)
+        self.image_label.setMinimumSize(800, 600)  # 최소 크기 설정
+        layout.addWidget(self.image_label)
+        
+        # 닫기 버튼
+        close_button = QPushButton("닫기")
+        close_button.clicked.connect(self.close)
+        layout.addWidget(close_button)
+        
+        self.setLayout(layout)
+        
+        # 이미지 로드
+        self.load_image(image_url)
+        
+        # 창 크기 설정
+        self.resize(1024, 768)  # 더 큰 초기 크기로 설정
+    
+    def load_image(self, image_url):
+        try:
+            # 이미지 다운로드
+            response = requests.get(image_url)
+            image_data = BytesIO(response.content)
+            
+            # QPixmap으로 변환
+            pixmap = QPixmap()
+            pixmap.loadFromData(image_data.getvalue())
+            
+            # 이미지 크기 조정 (최대 크기 설정)
+            scaled_pixmap = pixmap.scaled(
+                800, 600,  # 고정된 최대 크기
+                Qt.KeepAspectRatio,
+                Qt.SmoothTransformation
+            )
+            
+            self.image_label.setPixmap(scaled_pixmap)
+            
+        except Exception as e:
+            self.image_label.setText(f"이미지를 불러올 수 없습니다.\n{str(e)}")
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -660,6 +715,20 @@ class MainWindow(QMainWindow):
         try:
             print(f"\n[상품 분류 시작]")
             
+            # CSV 파일 읽기
+            df = pd.read_csv(self.product_file_path)
+            print(f"CSV 파일 열 목록: {df.columns.tolist()}")
+            
+            # 대표이미지 URL 열이 있는지 확인
+            has_image_column = '대표이미지 URL' in df.columns
+            print(f"대표이미지 URL 열 존재: {has_image_column}")
+            
+            if has_image_column:
+                print(f"대표이미지 URL 열 데이터 샘플:")
+                print(df[['상품명', '대표이미지 URL']].head())
+            
+            product_names = df['상품명'].dropna().unique()
+            
             # 카테고리 키워드 정의
             category_keywords = {
                 "MCU/개발보드": ["STM32", "ESP32", "아두이노", "라즈베리", "개발보드", "KIT"],
@@ -672,10 +741,6 @@ class MainWindow(QMainWindow):
                 "전원부품": ["배터리", "전원", "전압", "DC"],
                 "기타": []
             }
-
-            # CSV 파일 읽기
-            df = pd.read_csv(self.product_file_path)
-            product_names = df['상품명'].dropna().unique()
 
             # 분류 함수 정의
             def subcategorize_mcu(name):
@@ -720,6 +785,33 @@ class MainWindow(QMainWindow):
                 for col, value in enumerate(row):
                     item = QTableWidgetItem(str(value))
                     table.setItem(row_position, col, item)
+                
+                # 이미지 열에 버튼 추가
+                if has_image_column:
+                    product_name = row['상품명']
+                    image_url = df[df['상품명'] == product_name]['대표이미지 URL'].iloc[0] if len(df[df['상품명'] == product_name]) > 0 else None
+                    
+                    if pd.notna(image_url) and str(image_url).strip():
+                        print(f"이미지 URL 추가: {product_name} - {image_url}")
+                        button = QPushButton("이미지 보기")
+                        button.setStyleSheet("""
+                            QPushButton {
+                                background-color: #4CAF50;
+                                color: white;
+                                border: none;
+                                padding: 5px;
+                                border-radius: 3px;
+                            }
+                            QPushButton:hover {
+                                background-color: #45a049;
+                            }
+                        """)
+                        button.clicked.connect(lambda checked, url=image_url: self.show_image(url))
+                        table.setCellWidget(row_position, 3, button)
+                    else:
+                        # 이미지 URL이 없는 경우 빈 셀 추가
+                        empty_item = QTableWidgetItem("")
+                        table.setItem(row_position, 3, empty_item)
 
             # 열 너비 자동 조정
             table.resizeColumnsToContents()
@@ -747,6 +839,11 @@ class MainWindow(QMainWindow):
                 "오류",
                 f"상품 분류 중 오류가 발생했습니다.\n\n{error_msg}"
             )
+
+    def show_image(self, image_url):
+        """이미지 URL을 받아 다이얼로그로 표시합니다."""
+        dialog = ImageDialog(image_url, self)
+        dialog.exec()
 
     def export_category_excel(self):
         """분류된 상품 목록을 엑셀 파일로 내보냅니다."""
