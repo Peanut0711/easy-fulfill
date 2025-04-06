@@ -16,10 +16,11 @@ from PySide6.QtGui import (QAction, QBrush, QColor, QConicalGradient,
     QIcon, QImage, QKeySequence, QLinearGradient,
     QPainter, QPalette, QPixmap, QRadialGradient,
     QTransform)
-from PySide6.QtWidgets import (QApplication, QFrame, QHBoxLayout, QLabel,
-    QMainWindow, QMenu, QMenuBar, QPushButton,
-    QSizePolicy, QSpacerItem, QStatusBar, QVBoxLayout,
-    QWidget)
+from PySide6.QtWidgets import (QAbstractItemView, QApplication, QFrame, QHBoxLayout,
+    QHeaderView, QLabel, QMainWindow, QMenu,
+    QMenuBar, QPushButton, QSizePolicy, QSpacerItem,
+    QStatusBar, QTabWidget, QTableWidget, QTableWidgetItem,
+    QVBoxLayout, QWidget)
 
 class Ui_MainWindow(object):
     def setupUi(self, MainWindow):
@@ -36,77 +37,134 @@ class Ui_MainWindow(object):
         self.centralwidget.setObjectName(u"centralwidget")
         self.verticalLayout = QVBoxLayout(self.centralwidget)
         self.verticalLayout.setObjectName(u"verticalLayout")
-        self.horizontalLayout = QHBoxLayout()
-        self.horizontalLayout.setObjectName(u"horizontalLayout")
-        self.horizontalSpacer_3 = QSpacerItem(40, 20, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
-
-        self.horizontalLayout.addItem(self.horizontalSpacer_3)
-
-        self.filePathLabel = QLabel(self.centralwidget)
-        self.filePathLabel.setObjectName(u"filePathLabel")
-        self.filePathLabel.setMinimumSize(QSize(300, 40))
-        self.filePathLabel.setMaximumSize(QSize(500, 40))
+        self.tabWidget = QTabWidget(self.centralwidget)
+        self.tabWidget.setObjectName(u"tabWidget")
+        self.tab = QWidget()
+        self.tab.setObjectName(u"tab")
+        self.selectFileButton = QPushButton(self.tab)
+        self.selectFileButton.setObjectName(u"selectFileButton")
+        self.selectFileButton.setGeometry(QRect(570, 30, 91, 41))
+        sizePolicy = QSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+        sizePolicy.setHorizontalStretch(0)
+        sizePolicy.setVerticalStretch(0)
+        sizePolicy.setHeightForWidth(self.selectFileButton.sizePolicy().hasHeightForWidth())
+        self.selectFileButton.setSizePolicy(sizePolicy)
         font = QFont()
-        font.setFamilies([u"\ub9d1\uc740 \uace0\ub515"])
         font.setPointSize(10)
         font.setBold(True)
-        self.filePathLabel.setFont(font)
-        self.filePathLabel.setFrameShape(QFrame.Shape.Panel)
-        self.filePathLabel.setFrameShadow(QFrame.Shadow.Sunken)
-        self.filePathLabel.setMargin(5)
-
-        self.horizontalLayout.addWidget(self.filePathLabel)
-
-        self.selectFileButton = QPushButton(self.centralwidget)
-        self.selectFileButton.setObjectName(u"selectFileButton")
-        self.selectFileButton.setMinimumSize(QSize(200, 40))
-        self.selectFileButton.setMaximumSize(QSize(200, 40))
+        self.selectFileButton.setFont(font)
+        self.generateButton = QPushButton(self.tab)
+        self.generateButton.setObjectName(u"generateButton")
+        self.generateButton.setGeometry(QRect(570, 130, 91, 41))
+        sizePolicy1 = QSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        sizePolicy1.setHorizontalStretch(0)
+        sizePolicy1.setVerticalStretch(0)
+        sizePolicy1.setHeightForWidth(self.generateButton.sizePolicy().hasHeightForWidth())
+        self.generateButton.setSizePolicy(sizePolicy1)
+        self.generateButton.setFont(font)
+        self.exportInvoiceButton = QPushButton(self.tab)
+        self.exportInvoiceButton.setObjectName(u"exportInvoiceButton")
+        self.exportInvoiceButton.setGeometry(QRect(570, 80, 91, 41))
+        self.exportInvoiceButton.setFont(font)
+        self.filePathLabel = QLabel(self.tab)
+        self.filePathLabel.setObjectName(u"filePathLabel")
+        self.filePathLabel.setGeometry(QRect(120, 30, 431, 40))
+        self.filePathLabel.setMinimumSize(QSize(300, 40))
+        self.filePathLabel.setMaximumSize(QSize(500, 40))
         font1 = QFont()
+        font1.setFamilies([u"\ub9d1\uc740 \uace0\ub515"])
         font1.setPointSize(10)
         font1.setBold(True)
-        self.selectFileButton.setFont(font1)
+        self.filePathLabel.setFont(font1)
+        self.filePathLabel.setFrameShape(QFrame.Shape.Panel)
+        self.filePathLabel.setFrameShadow(QFrame.Shadow.Sunken)
+        self.filePathLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.filePathLabel.setMargin(5)
+        self.tabWidget.addTab(self.tab, "")
+        self.tab_2 = QWidget()
+        self.tab_2.setObjectName(u"tab_2")
+        self.verticalLayout_2 = QVBoxLayout(self.tab_2)
+        self.verticalLayout_2.setObjectName(u"verticalLayout_2")
+        self.horizontalLayout_3 = QHBoxLayout()
+        self.horizontalLayout_3.setObjectName(u"horizontalLayout_3")
+        self.productFileLabel = QLabel(self.tab_2)
+        self.productFileLabel.setObjectName(u"productFileLabel")
+        self.productFileLabel.setMinimumSize(QSize(300, 40))
+        self.productFileLabel.setMaximumSize(QSize(500, 40))
+        self.productFileLabel.setFont(font1)
+        self.productFileLabel.setFrameShape(QFrame.Shape.Panel)
+        self.productFileLabel.setFrameShadow(QFrame.Shadow.Sunken)
+        self.productFileLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.productFileLabel.setMargin(5)
 
-        self.horizontalLayout.addWidget(self.selectFileButton)
+        self.horizontalLayout_3.addWidget(self.productFileLabel)
 
-        self.horizontalSpacer_4 = QSpacerItem(40, 20, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+        self.selectProductFileButton = QPushButton(self.tab_2)
+        self.selectProductFileButton.setObjectName(u"selectProductFileButton")
+        self.selectProductFileButton.setMinimumSize(QSize(120, 40))
+        self.selectProductFileButton.setMaximumSize(QSize(120, 40))
+        self.selectProductFileButton.setFont(font)
 
-        self.horizontalLayout.addItem(self.horizontalSpacer_4)
-
-
-        self.verticalLayout.addLayout(self.horizontalLayout)
-
-        self.horizontalLayout_2 = QHBoxLayout()
-        self.horizontalLayout_2.setObjectName(u"horizontalLayout_2")
-        self.horizontalSpacer = QSpacerItem(40, 20, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
-
-        self.horizontalLayout_2.addItem(self.horizontalSpacer)
-
-        self.generateButton = QPushButton(self.centralwidget)
-        self.generateButton.setObjectName(u"generateButton")
-        self.generateButton.setMinimumSize(QSize(200, 40))
-        self.generateButton.setMaximumSize(QSize(200, 40))
-        self.generateButton.setFont(font1)
-
-        self.horizontalLayout_2.addWidget(self.generateButton)
-
-        self.exportInvoiceButton = QPushButton(self.centralwidget)
-        self.exportInvoiceButton.setObjectName(u"exportInvoiceButton")
-        self.exportInvoiceButton.setMinimumSize(QSize(200, 40))
-        self.exportInvoiceButton.setMaximumSize(QSize(200, 40))
-        self.exportInvoiceButton.setFont(font1)
-
-        self.horizontalLayout_2.addWidget(self.exportInvoiceButton)
-
-        self.horizontalSpacer_2 = QSpacerItem(40, 20, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
-
-        self.horizontalLayout_2.addItem(self.horizontalSpacer_2)
+        self.horizontalLayout_3.addWidget(self.selectProductFileButton)
 
 
-        self.verticalLayout.addLayout(self.horizontalLayout_2)
+        self.verticalLayout_2.addLayout(self.horizontalLayout_3)
 
-        self.verticalSpacer = QSpacerItem(20, 40, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding)
+        self.categoryTableWidget = QTableWidget(self.tab_2)
+        if (self.categoryTableWidget.columnCount() < 3):
+            self.categoryTableWidget.setColumnCount(3)
+        __qtablewidgetitem = QTableWidgetItem()
+        self.categoryTableWidget.setHorizontalHeaderItem(0, __qtablewidgetitem)
+        __qtablewidgetitem1 = QTableWidgetItem()
+        self.categoryTableWidget.setHorizontalHeaderItem(1, __qtablewidgetitem1)
+        __qtablewidgetitem2 = QTableWidgetItem()
+        self.categoryTableWidget.setHorizontalHeaderItem(2, __qtablewidgetitem2)
+        self.categoryTableWidget.setObjectName(u"categoryTableWidget")
+        font2 = QFont()
+        font2.setFamilies([u"\ub9d1\uc740 \uace0\ub515"])
+        font2.setPointSize(9)
+        self.categoryTableWidget.setFont(font2)
+        self.categoryTableWidget.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.categoryTableWidget.setAlternatingRowColors(True)
+        self.categoryTableWidget.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.categoryTableWidget.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.categoryTableWidget.setSortingEnabled(True)
+        self.categoryTableWidget.horizontalHeader().setStretchLastSection(True)
 
-        self.verticalLayout.addItem(self.verticalSpacer)
+        self.verticalLayout_2.addWidget(self.categoryTableWidget)
+
+        self.horizontalLayout_4 = QHBoxLayout()
+        self.horizontalLayout_4.setObjectName(u"horizontalLayout_4")
+        self.horizontalSpacer_5 = QSpacerItem(40, 20, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+
+        self.horizontalLayout_4.addItem(self.horizontalSpacer_5)
+
+        self.categorizeButton = QPushButton(self.tab_2)
+        self.categorizeButton.setObjectName(u"categorizeButton")
+        self.categorizeButton.setMinimumSize(QSize(150, 40))
+        self.categorizeButton.setMaximumSize(QSize(150, 40))
+        self.categorizeButton.setFont(font)
+
+        self.horizontalLayout_4.addWidget(self.categorizeButton)
+
+        self.exportCategoryButton = QPushButton(self.tab_2)
+        self.exportCategoryButton.setObjectName(u"exportCategoryButton")
+        self.exportCategoryButton.setMinimumSize(QSize(150, 40))
+        self.exportCategoryButton.setMaximumSize(QSize(150, 40))
+        self.exportCategoryButton.setFont(font)
+
+        self.horizontalLayout_4.addWidget(self.exportCategoryButton)
+
+        self.horizontalSpacer_6 = QSpacerItem(40, 20, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+
+        self.horizontalLayout_4.addItem(self.horizontalSpacer_6)
+
+
+        self.verticalLayout_2.addLayout(self.horizontalLayout_4)
+
+        self.tabWidget.addTab(self.tab_2, "")
+
+        self.verticalLayout.addWidget(self.tabWidget)
 
         MainWindow.setCentralWidget(self.centralwidget)
         self.menubar = QMenuBar(MainWindow)
@@ -130,6 +188,9 @@ class Ui_MainWindow(object):
 
         self.retranslateUi(MainWindow)
 
+        self.tabWidget.setCurrentIndex(0)
+
+
         QMetaObject.connectSlotsByName(MainWindow)
     # setupUi
 
@@ -150,10 +211,22 @@ class Ui_MainWindow(object):
         self.actionExit.setShortcut(QCoreApplication.translate("MainWindow", u"Alt+F4", None))
 #endif // QT_CONFIG(shortcut)
         self.actionAbout.setText(QCoreApplication.translate("MainWindow", u"\ud504\ub85c\uadf8\ub7a8 \uc815\ubcf4(&A)", None))
-        self.filePathLabel.setText(QCoreApplication.translate("MainWindow", u"\uc120\ud0dd\ub41c \ud30c\uc77c \uc5c6\uc74c", None))
-        self.selectFileButton.setText(QCoreApplication.translate("MainWindow", u"\uc5d1\uc140 \ud30c\uc77c \uc120\ud0dd", None))
-        self.generateButton.setText(QCoreApplication.translate("MainWindow", u"\uc791\uc5c5\uc9c0\uc2dc\uc11c \uc0dd\uc131", None))
+        self.selectFileButton.setText(QCoreApplication.translate("MainWindow", u"\uc5f4\uae30", None))
+        self.generateButton.setText(QCoreApplication.translate("MainWindow", u"\uc791\uc5c5\uc9c0\uc2dc\uc11c", None))
         self.exportInvoiceButton.setText(QCoreApplication.translate("MainWindow", u"\uc1a1\uc7a5 \uc5d1\uc140", None))
+        self.filePathLabel.setText(QCoreApplication.translate("MainWindow", u"\uc120\ud0dd\ub41c \ud30c\uc77c \uc5c6\uc74c", None))
+        self.tabWidget.setTabText(self.tabWidget.indexOf(self.tab), QCoreApplication.translate("MainWindow", u"\uc8fc\ubb38\ucc98\ub9ac", None))
+        self.productFileLabel.setText(QCoreApplication.translate("MainWindow", u"\uc120\ud0dd\ub41c \ud30c\uc77c \uc5c6\uc74c", None))
+        self.selectProductFileButton.setText(QCoreApplication.translate("MainWindow", u"\uc0c1\ud488 \ud30c\uc77c \uc5f4\uae30", None))
+        ___qtablewidgetitem = self.categoryTableWidget.horizontalHeaderItem(0)
+        ___qtablewidgetitem.setText(QCoreApplication.translate("MainWindow", u"\uce74\ud14c\uace0\ub9ac", None));
+        ___qtablewidgetitem1 = self.categoryTableWidget.horizontalHeaderItem(1)
+        ___qtablewidgetitem1.setText(QCoreApplication.translate("MainWindow", u"\uc911\ubd84\ub958", None));
+        ___qtablewidgetitem2 = self.categoryTableWidget.horizontalHeaderItem(2)
+        ___qtablewidgetitem2.setText(QCoreApplication.translate("MainWindow", u"\uc0c1\ud488\uba85", None));
+        self.categorizeButton.setText(QCoreApplication.translate("MainWindow", u"\uc0c1\ud488 \ubd84\ub958", None))
+        self.exportCategoryButton.setText(QCoreApplication.translate("MainWindow", u"\uc5d1\uc140\ub85c \ub0b4\ubcf4\ub0b4\uae30", None))
+        self.tabWidget.setTabText(self.tabWidget.indexOf(self.tab_2), QCoreApplication.translate("MainWindow", u"\uc0c1\ud488\ubd84\ub958", None))
         self.menuFile.setTitle(QCoreApplication.translate("MainWindow", u"\ud30c\uc77c(&F)", None))
         self.menuHelp.setTitle(QCoreApplication.translate("MainWindow", u"\ub3c4\uc6c0\ub9d0(&H)", None))
         self.statusbar.setStyleSheet(QCoreApplication.translate("MainWindow", u"QStatusBar {\n"

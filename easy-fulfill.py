@@ -11,7 +11,7 @@ import numpy as np
 import subprocess
 import tempfile
 import msoffcrypto
-from PySide6.QtWidgets import QApplication, QMainWindow, QFileDialog, QMessageBox, QInputDialog, QLineEdit
+from PySide6.QtWidgets import QApplication, QMainWindow, QFileDialog, QMessageBox, QInputDialog, QLineEdit, QTableWidgetItem
 from PySide6.QtUiTools import QUiLoader
 from PySide6.QtCore import QFile, QIODevice
 
@@ -68,6 +68,11 @@ class MainWindow(QMainWindow):
         self.ui.selectFileButton.clicked.connect(self.select_excel_file)
         self.ui.generateButton.clicked.connect(self.generate_work_order)
         self.ui.exportInvoiceButton.clicked.connect(self.export_invoice_excel)
+        
+        # 상품 분류 탭 버튼 연결
+        self.ui.selectProductFileButton.clicked.connect(self.select_product_file)
+        self.ui.categorizeButton.clicked.connect(self.categorize_products)
+        self.ui.exportCategoryButton.clicked.connect(self.export_category_excel)
         
         # 메뉴 동작 연결
         self.ui.actionOpenExcel.triggered.connect(self.select_excel_file)
@@ -627,6 +632,217 @@ class MainWindow(QMainWindow):
                 self,
                 "오류",
                 f"송장 엑셀 파일 생성 중 오류가 발생했습니다.\n\n{error_msg}"
+            )
+
+    def select_product_file(self):
+        """상품 파일을 선택하는 다이얼로그를 표시합니다."""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "상품 파일 선택",
+            "input",
+            "CSV Files (*.csv)"
+        )
+        
+        if file_path:
+            print(f"\n[상품 파일 선택됨] 경로: {file_path}")
+            filename = os.path.basename(file_path)
+            self.product_file_path = file_path
+            self.ui.productFileLabel.setText(filename)
+            self.statusBar().showMessage(f"상품 파일 선택됨: {filename}")
+            print("✓ 상품 파일이 성공적으로 선택되었습니다.")
+
+    def categorize_products(self):
+        """선택된 상품 파일을 분류합니다."""
+        if not hasattr(self, 'product_file_path'):
+            QMessageBox.warning(self, "경고", "먼저 상품 파일을 선택해주세요.")
+            return
+
+        try:
+            print(f"\n[상품 분류 시작]")
+            
+            # 카테고리 키워드 정의
+            category_keywords = {
+                "MCU/개발보드": ["STM32", "ESP32", "아두이노", "라즈베리", "개발보드", "KIT"],
+                "모터": ["모터", "서보", "BLDC", "코어리스", "JGB25"],
+                "센서": ["센서", "엔코더", "AS5600", "AS5048", "자이로", "MPU"],
+                "케이블": ["케이블", "USB", "연결선"],
+                "통신 모듈": ["I2C", "SPI", "CAN", "RS485", "UART", "이더넷"],
+                "디스플레이": ["OLED", "디스플레이", "LCD", "스크린"],
+                "구동부품": ["바퀴", "휠", "기어", "샤프트", "축"],
+                "전원부품": ["배터리", "전원", "전압", "DC"],
+                "기타": []
+            }
+
+            # CSV 파일 읽기
+            df = pd.read_csv(self.product_file_path)
+            product_names = df['상품명'].dropna().unique()
+
+            # 분류 함수 정의
+            def subcategorize_mcu(name):
+                if re.search("ESP32", name, re.IGNORECASE):
+                    return "ESP32"
+                elif re.search("STM32", name, re.IGNORECASE):
+                    return "STM32"
+                elif re.search("아두이노|Arduino", name, re.IGNORECASE):
+                    return "아두이노"
+                else:
+                    return "기타"
+
+            def categorize_product(name):
+                for category, keywords in category_keywords.items():
+                    for keyword in keywords:
+                        if re.search(keyword, name, re.IGNORECASE):
+                            return category
+                return "기타"
+
+            # 분류 적용
+            result_df = pd.DataFrame({'상품명': product_names})
+            result_df['카테고리'] = result_df['상품명'].apply(categorize_product)
+            result_df['중분류'] = result_df.apply(
+                lambda row: subcategorize_mcu(row['상품명']) if row['카테고리'] == 'MCU/개발보드' else '기타',
+                axis=1
+            )
+
+            # 결과 정렬
+            result_df = result_df[['카테고리', '중분류', '상품명']].sort_values(by=['카테고리', '중분류', '상품명'])
+
+            # 테이블 위젯 초기화
+            table = self.ui.categoryTableWidget
+            table.setRowCount(0)
+            table.setSortingEnabled(False)  # 정렬 임시 비활성화
+
+            # 결과를 테이블에 표시
+            for idx, row in result_df.iterrows():
+                row_position = table.rowCount()
+                table.insertRow(row_position)
+                
+                # 각 열에 아이템 추가
+                for col, value in enumerate(row):
+                    item = QTableWidgetItem(str(value))
+                    table.setItem(row_position, col, item)
+
+            # 열 너비 자동 조정
+            table.resizeColumnsToContents()
+            table.setSortingEnabled(True)  # 정렬 다시 활성화
+
+            # 분류 결과 저장
+            self.categorized_df = result_df
+            
+            print(f"✓ 상품 분류 완료")
+            print(f"총 {len(result_df)}개의 상품이 분류되었습니다.")
+            
+            # 카테고리별 상품 수 출력
+            category_counts = result_df['카테고리'].value_counts()
+            print("\n[카테고리별 상품 수]")
+            for category, count in category_counts.items():
+                print(f"{category}: {count}개")
+
+            self.statusBar().showMessage(f"상품 분류 완료: 총 {len(result_df)}개 상품")
+
+        except Exception as e:
+            error_msg = str(e)
+            print(f"❌ 상품 분류 중 오류 발생: {error_msg}")
+            QMessageBox.critical(
+                self,
+                "오류",
+                f"상품 분류 중 오류가 발생했습니다.\n\n{error_msg}"
+            )
+
+    def export_category_excel(self):
+        """분류된 상품 목록을 엑셀 파일로 내보냅니다."""
+        if not hasattr(self, 'categorized_df'):
+            QMessageBox.warning(self, "경고", "먼저 상품을 분류해주세요.")
+            return
+
+        try:
+            # output 디렉토리 생성
+            output_dir = Path("output")
+            output_dir.mkdir(exist_ok=True)
+            
+            # 현재 시간을 파일명에 포함
+            current_time = datetime.now().strftime("%Y%m%d%H%M%S")
+            output_file = (output_dir / f"Product_Categorized_{current_time}.xlsx").resolve()
+            
+            print(f"\n[분류 결과 엑셀 파일 생성]")
+            print(f"출력 파일: {output_file}")
+
+            # 엑셀 파일로 저장
+            with pd.ExcelWriter(output_file, engine='xlsxwriter') as writer:
+                self.categorized_df.to_excel(writer, index=False, sheet_name='Sheet1')
+                
+                # 워크시트와 워크북 객체 가져오기
+                worksheet = writer.sheets['Sheet1']
+                workbook = writer.book
+                
+                # 가운데 정렬을 위한 셀 포맷 설정
+                center_format = workbook.add_format({
+                    'align': 'center',
+                    'valign': 'vcenter'
+                })
+                
+                # 헤더 포맷 설정 (가운데 정렬 + 굵게)
+                header_format = workbook.add_format({
+                    'align': 'center',
+                    'valign': 'vcenter',
+                    'bold': True
+                })
+                
+                # 열 너비 자동 조정 및 포맷 적용
+                for idx, col in enumerate(self.categorized_df.columns):
+                    # 열 이름의 길이와 데이터의 최대 길이 계산
+                    max_length = max(
+                        self.categorized_df[col].astype(str).apply(len).max(),
+                        len(str(col))
+                    )
+                    # 한글은 2배의 너비가 필요하므로 조정
+                    adjusted_width = max_length * 2 if any('\u3131' <= c <= '\u318E' or '\uAC00' <= c <= '\uD7A3' for c in str(col)) else max_length
+                    worksheet.set_column(idx, idx, adjusted_width + 2, center_format)
+                
+                # 헤더에 포맷 적용
+                for col_num, value in enumerate(self.categorized_df.columns.values):
+                    worksheet.write(0, col_num, value, header_format)
+                
+                # 전체 행 높이 조정
+                worksheet.set_default_row(20)
+
+            print(f"✓ 분류 결과 파일이 생성되었습니다.")
+            print(f"  - 파일 위치: {output_file}")
+            print(f"  - 행 수: {len(self.categorized_df)}")
+
+            self.statusBar().showMessage(f"분류 결과 파일 생성 완료: {output_file}")
+            
+            # 성공 메시지 표시 (커스텀 버튼 포함)
+            msg = QMessageBox()
+            msg.setIcon(QMessageBox.Information)
+            msg.setWindowTitle("완료")
+            msg.setText("분류 결과 파일이 생성되었습니다.")
+            msg.setInformativeText(f"파일 위치:\n{output_file}")
+            
+            # 버튼 추가
+            open_location_button = msg.addButton("폴더 열기", QMessageBox.ActionRole)
+            open_file_button = msg.addButton("파일 열기", QMessageBox.ActionRole)
+            close_button = msg.addButton("닫기", QMessageBox.RejectRole)
+            
+            msg.setDefaultButton(close_button)
+            
+            # 메시지 박스 표시
+            clicked_button = msg.exec()
+            
+            # 버튼 클릭 처리
+            if msg.clickedButton() == open_location_button:
+                if not self.open_file_location(output_file):
+                    QMessageBox.warning(self, "오류", "파일 위치를 열 수 없습니다.")
+            elif msg.clickedButton() == open_file_button:
+                if not self.open_file_with_default_app(output_file):
+                    QMessageBox.warning(self, "오류", "파일을 열 수 없습니다.\n엑셀이 설치되어 있는지 확인해주세요.")
+
+        except Exception as e:
+            error_msg = str(e)
+            print(f"❌ 분류 결과 파일 생성 중 오류 발생: {error_msg}")
+            QMessageBox.critical(
+                self,
+                "오류",
+                f"분류 결과 파일 생성 중 오류가 발생했습니다.\n\n{error_msg}"
             )
 
 def main():
