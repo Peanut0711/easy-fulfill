@@ -26,7 +26,7 @@ class Ui_MainWindow(object):
     def setupUi(self, MainWindow):
         if not MainWindow.objectName():
             MainWindow.setObjectName(u"MainWindow")
-        MainWindow.resize(780, 560)
+        MainWindow.resize(880, 560)
         self.actionOpenExcel = QAction(MainWindow)
         self.actionOpenExcel.setObjectName(u"actionOpenExcel")
         self.actionExit = QAction(MainWindow)

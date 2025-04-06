@@ -19,39 +19,222 @@ from PySide6.QtCore import QFile, QIODevice, Qt, QSize
 from PySide6.QtGui import QPixmap, QImage
 import requests
 from io import BytesIO
+import warnings
+
+# 이미지 경고 메시지 숨기기
+warnings.filterwarnings("ignore", category=UserWarning, module="PIL.PngImagePlugin")
 
 class ImageDialog(QDialog):
-    def __init__(self, image_url, parent=None):
+    def __init__(self, image_url, product_name, parent=None, all_images=None, current_index=None, table_widget=None):
         super().__init__(parent)
-        self.setWindowTitle("상품 이미지")
-        self.setModal(True)
+        self.current_product_name = product_name  # 현재 상품명 저장
+        self.current_subcategory = ""  # 현재 소분류 저장
+        
+        # 이미지 목록 및 현재 인덱스 저장
+        self.all_images = all_images or []
+        self.current_index = current_index or 0
+        self.table_widget = table_widget  # 테이블 위젯 참조 저장
         
         # 레이아웃 설정
-        layout = QVBoxLayout()
+        main_layout = QVBoxLayout()
         
         # 이미지 레이블
         self.image_label = QLabel()
         self.image_label.setAlignment(Qt.AlignCenter)
         self.image_label.setMinimumSize(800, 600)  # 최소 크기 설정
-        layout.addWidget(self.image_label)
+        self.image_label.mousePressEvent = self.image_clicked  # 이미지 클릭 이벤트 추가
+        main_layout.addWidget(self.image_label)
+        
+        # 소분류 입력 필드 추가 (중앙 배치)
+        subcategory_layout = QHBoxLayout()
+        # 왼쪽 스페이서 추가
+        subcategory_layout.addStretch(1)
+        
+        subcategory_label = QLabel("소분류:")
+        self.subcategory_input = QLineEdit()
+        self.subcategory_input.setPlaceholderText("소분류 입력")
+        self.subcategory_input.setMinimumWidth(200)  # 최소 너비 설정
+        self.subcategory_input.returnPressed.connect(self.handle_subcategory_enter)
+        self.subcategory_input.textChanged.connect(self.update_title_with_subcategory)
+        
+        subcategory_layout.addWidget(subcategory_label)
+        subcategory_layout.addWidget(self.subcategory_input)
+        
+        # 오른쪽 스페이서 추가
+        subcategory_layout.addStretch(1)
+        
+        main_layout.addLayout(subcategory_layout)
+        
+        # 버튼 레이아웃 (이전/다음/닫기) - 중앙 배치
+        button_layout = QHBoxLayout()
+        
+        # 왼쪽 스페이서 추가
+        button_layout.addStretch(1)
+        
+        # 이전 버튼
+        self.prev_button = QPushButton("이전")
+        self.prev_button.setMaximumWidth(100)
+        self.prev_button.clicked.connect(self.show_previous_image)
+        button_layout.addWidget(self.prev_button)
         
         # 닫기 버튼
         close_button = QPushButton("닫기")
-        close_button.setMaximumWidth(100)  # 버튼 폭 제한
+        close_button.setMaximumWidth(100)
         close_button.clicked.connect(self.close)
-        layout.addWidget(close_button, alignment=Qt.AlignCenter)  # 중앙 정렬
+        button_layout.addWidget(close_button)
         
-        self.setLayout(layout)
+        # 다음 버튼
+        self.next_button = QPushButton("다음 (Ctrl+Space)")
+        self.next_button.setMaximumWidth(150)
+        self.next_button.clicked.connect(self.show_next_image)
+        button_layout.addWidget(self.next_button)
+        
+        # 오른쪽 스페이서 추가
+        button_layout.addStretch(1)
+        
+        main_layout.addLayout(button_layout)
+        
+        self.setLayout(main_layout)
         
         # 이미지 로드
         self.load_image(image_url)
         
         # 창 크기 설정
         self.resize(1024, 768)  # 더 큰 초기 크기로 설정
+        
+        # 이전/다음 버튼 상태 업데이트
+        self.update_navigation_buttons()
+        
+        # 키보드 이벤트 처리
+        self.setFocusPolicy(Qt.StrongFocus)
+        
+        # 마우스 휠 이벤트 활성화
+        self.setMouseTracking(True)
+        
+        # 현재 상품의 소분류 값 가져오기
+        self.load_subcategory_from_table()
+        
+        # 초기 타이틀 설정
+        self.update_title_with_subcategory()
     
-    def mousePressEvent(self, event):
-        """마우스 클릭 이벤트 처리 - 창의 아무 곳이나 클릭하면 닫힘"""
+    def update_title_with_subcategory(self):
+        """소분류 정보를 포함하여 타이틀 업데이트"""
+        subcategory_text = self.subcategory_input.text().strip()
+        if subcategory_text:
+            self.setWindowTitle(f"상품이미지 - '{self.current_product_name}' [ 소분류: {subcategory_text} ]")
+        else:
+            self.setWindowTitle(f"상품이미지 - '{self.current_product_name}' [ 소분류: - ]")
+    
+    def handle_subcategory_enter(self):
+        """소분류 입력 필드에서 엔터키를 눌렀을 때 처리"""
+        # 현재 소분류 값 업데이트
+        self.update_subcategory()
+        
+        # 다음 이미지로 이동 (다음 버튼이 활성화된 경우에만)
+        if self.next_button.isEnabled():
+            self.show_next_image()
+    
+    def load_subcategory_from_table(self):
+        """테이블에서 현재 상품의 소분류 값을 가져와 입력 필드에 설정"""
+        if self.table_widget:
+            for row in range(self.table_widget.rowCount()):
+                product_item = self.table_widget.item(row, 3)  # 상품명 열
+                if product_item and product_item.text() == self.current_product_name:
+                    subcategory_item = self.table_widget.item(row, 2)  # 소분류 열
+                    if subcategory_item:
+                        self.subcategory_input.setText(subcategory_item.text())
+                    break
+    
+    def update_subcategory(self):
+        """소분류 입력 필드의 값을 테이블에 업데이트"""
+        if self.table_widget:
+            for row in range(self.table_widget.rowCount()):
+                product_item = self.table_widget.item(row, 3)  # 상품명 열
+                if product_item and product_item.text() == self.current_product_name:
+                    # 소분류 열에 값 설정
+                    subcategory_item = QTableWidgetItem(self.subcategory_input.text())
+                    self.table_widget.setItem(row, 2, subcategory_item)
+                    break
+    
+    def image_clicked(self, event):
+        """이미지 클릭 이벤트 처리"""
         self.close()
+    
+    def wheelEvent(self, event):
+        """마우스 휠 이벤트 처리"""
+        # 휠 방향에 따라 이전/다음 이미지 표시
+        if event.angleDelta().y() > 0:  # 위로 스크롤
+            self.show_previous_image()
+        else:  # 아래로 스크롤
+            self.show_next_image()
+        event.accept()
+    
+    def keyPressEvent(self, event):
+        """키보드 이벤트 처리"""
+        if event.key() == Qt.Key_Left:
+            self.show_previous_image()
+        elif event.key() == Qt.Key_Right:
+            self.show_next_image()
+        elif event.key() == Qt.Key_Escape:
+            self.close()
+        elif event.key() == Qt.Key_Space and event.modifiers() == Qt.ControlModifier:
+            # Ctrl+Space 단축키로 다음 이미지로 이동
+            if self.next_button.isEnabled():
+                self.show_next_image()
+        else:
+            super().keyPressEvent(event)
+    
+    def show_previous_image(self):
+        """이전 이미지 표시"""
+        if self.all_images and self.current_index > 0:
+            self.current_index -= 1
+            self.show_current_image()
+    
+    def show_next_image(self):
+        """다음 이미지 표시"""
+        if self.all_images and self.current_index < len(self.all_images) - 1:
+            self.current_index += 1
+            self.show_current_image()
+    
+    def show_current_image(self):
+        """현재 인덱스의 이미지 표시"""
+        if self.all_images and 0 <= self.current_index < len(self.all_images):
+            image_info = self.all_images[self.current_index]
+            self.current_product_name = image_info['product_name']  # 현재 상품명 업데이트
+            self.load_image(image_info['image_url'])
+            self.update_navigation_buttons()
+            self.load_subcategory_from_table()  # 소분류 값 로드
+            self.update_title_with_subcategory()  # 타이틀 업데이트
+    
+    def update_navigation_buttons(self):
+        """이전/다음 버튼 상태 업데이트"""
+        if not self.all_images:
+            self.prev_button.setEnabled(False)
+            self.next_button.setEnabled(False)
+            return
+            
+        self.prev_button.setEnabled(self.current_index > 0)
+        self.next_button.setEnabled(self.current_index < len(self.all_images) - 1)
+    
+    def closeEvent(self, event):
+        """창이 닫힐 때 호출되는 이벤트"""
+        # 소분류 값 업데이트
+        self.update_subcategory()
+        
+        # 현재 표시 중인 상품의 이름을 사용하여 테이블에서 해당 행 찾기
+        if self.table_widget:
+            print(f"창 닫힘: 현재 상품명 '{self.current_product_name}'로 테이블 검색")
+            for row in range(self.table_widget.rowCount()):
+                product_item = self.table_widget.item(row, 3)  # 상품명 열
+                if product_item and product_item.text() == self.current_product_name:
+                    print(f"상품 '{self.current_product_name}'를 테이블의 {row}번 행에서 찾음")
+                    # 해당 행 선택
+                    self.table_widget.selectRow(row)
+                    # 해당 행으로 스크롤
+                    self.table_widget.scrollToItem(product_item)
+                    break
+        
+        super().closeEvent(event)
     
     def load_image(self, image_url):
         try:
@@ -783,6 +966,9 @@ class MainWindow(QMainWindow):
             table.setRowCount(0)
             table.setSortingEnabled(False)  # 정렬 임시 비활성화
 
+            # 이미지 정보 저장
+            self.image_info_list = []
+            
             # 결과를 테이블에 표시
             for idx, row in result_df.iterrows():
                 row_position = table.rowCount()
@@ -800,6 +986,13 @@ class MainWindow(QMainWindow):
                     
                     if pd.notna(image_url) and str(image_url).strip():
                         print(f"이미지 URL 추가: {product_name} - {image_url}")
+                        
+                        # 이미지 정보 저장
+                        self.image_info_list.append({
+                            'product_name': product_name,
+                            'image_url': image_url
+                        })
+                        
                         button = QPushButton("이미지 보기")
                         button.setStyleSheet("""
                             QPushButton {
@@ -813,7 +1006,8 @@ class MainWindow(QMainWindow):
                                 background-color: #45a049;
                             }
                         """)
-                        button.clicked.connect(lambda checked, url=image_url: self.show_image(url))
+                        button.clicked.connect(lambda checked, url=image_url, name=product_name, idx=len(self.image_info_list)-1: 
+                                             self.show_image(url, name, self.image_info_list, idx))
                         table.setCellWidget(row_position, 4, button)  # 이미지 열 위치 변경
                     else:
                         # 이미지 URL이 없는 경우 빈 셀 추가
@@ -847,9 +1041,9 @@ class MainWindow(QMainWindow):
                 f"상품 분류 중 오류가 발생했습니다.\n\n{error_msg}"
             )
 
-    def show_image(self, image_url):
+    def show_image(self, image_url, product_name, all_images=None, current_index=None):
         """이미지 URL을 받아 다이얼로그로 표시합니다."""
-        dialog = ImageDialog(image_url, self)
+        dialog = ImageDialog(image_url, product_name, self, all_images, current_index, self.ui.categoryTableWidget)
         dialog.exec()
 
     def export_category_excel(self):
