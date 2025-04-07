@@ -327,38 +327,58 @@ class MainWindow(QMainWindow):
         """파일명이 올바른 형식인지 검사합니다."""
         print(f"\n[파일명 검증 시작] 파일명: {filename}")
         
-        pattern = r'^스마트스토어_전체주문발주발송관리_(\d{8})_(\d{4})\.xlsx$'
-        match = re.match(pattern, filename)
+        # 네이버 스토어 파일 형식 검사
+        naver_pattern = r'^스마트스토어_전체주문발주발송관리_(\d{8})_(\d{4})\.xlsx$'
+        naver_match = re.match(naver_pattern, filename)
         
-        if not match:
-            print("❌ 파일명 형식이 올바르지 않습니다.")
-            print("   - 올바른 형식: 스마트스토어_전체주문발주발송관리_YYYYMMDD_HHMM.xlsx")
-            return False
-            
-        # 날짜와 시간 유효성 검사
-        date_str = match.group(1)
-        time_str = match.group(2)
+        # 쿠팡 스토어 파일 형식 검사
+        coupang_pattern = r'^DeliveryList\((\d{4}-\d{2}-\d{2})\)_\(0\)\.xlsx$'
+        coupang_match = re.match(coupang_pattern, filename)
         
-        try:
-            # 날짜 형식 검증 (YYYYMMDD)
-            date = datetime.strptime(date_str, '%Y%m%d')
-            print(f"✓ 날짜 형식 검증 완료: {date.strftime('%Y년 %m월 %d일')}")
+        if naver_match:
+            # 날짜와 시간 유효성 검사
+            date_str = naver_match.group(1)
+            time_str = naver_match.group(2)
             
-            # 시간 형식 검증 (HHMM)
-            hour = int(time_str[:2])
-            minute = int(time_str[2:])
-            
-            if hour < 0 or hour > 23 or minute < 0 or minute > 59:
-                print(f"❌ 잘못된 시간 형식: {hour:02d}:{minute:02d}")
-                return False
+            try:
+                # 날짜 형식 검증 (YYYYMMDD)
+                date = datetime.strptime(date_str, '%Y%m%d')
+                print(f"✓ 날짜 형식 검증 완료: {date.strftime('%Y년 %m월 %d일')}")
                 
-            print(f"✓ 시간 형식 검증 완료: {hour:02d}시 {minute:02d}분")
-            print("✓ 파일명 검증 성공")
-            return True
+                # 시간 형식 검증 (HHMM)
+                hour = int(time_str[:2])
+                minute = int(time_str[2:])
+                
+                if hour < 0 or hour > 23 or minute < 0 or minute > 59:
+                    print(f"❌ 잘못된 시간 형식: {hour:02d}:{minute:02d}")
+                    return False, None
+                    
+                print(f"✓ 시간 형식 검증 완료: {hour:02d}시 {minute:02d}분")
+                print("✓ 네이버 스토어 파일명 검증 성공")
+                return True, "naver"
+                
+            except ValueError:
+                print("❌ 날짜/시간 형식이 올바르지 않습니다.")
+                return False, None
+        elif coupang_match:
+            # 날짜 유효성 검사
+            date_str = coupang_match.group(1)
             
-        except ValueError:
-            print("❌ 날짜/시간 형식이 올바르지 않습니다.")
-            return False
+            try:
+                # 날짜 형식 검증 (YYYY-MM-DD)
+                date = datetime.strptime(date_str, '%Y-%m-%d')
+                print(f"✓ 날짜 형식 검증 완료: {date.strftime('%Y년 %m월 %d일')}")
+                print("✓ 쿠팡 스토어 파일명 검증 성공")
+                return True, "coupang"
+                
+            except ValueError:
+                print("❌ 날짜 형식이 올바르지 않습니다.")
+                return False, None
+        else:
+            print("❌ 파일명 형식이 올바르지 않습니다.")
+            print("   - 네이버 스토어 형식: 스마트스토어_전체주문발주발송관리_YYYYMMDD_HHMM.xlsx")
+            print("   - 쿠팡 스토어 형식: DeliveryList(YYYY-MM-DD)_(0).xlsx")
+            return False, None
             
     def open_file_with_default_app(self, file_path):
         """기본 애플리케이션으로 파일을 엽니다."""
@@ -374,10 +394,52 @@ class MainWindow(QMainWindow):
             print(f"! 파일 열기 실패: {str(e)}")
             return False
             
-    def process_excel_file(self):
-        """엑셀 파일에서 주문번호를 처리합니다."""
+    def select_excel_file(self):
+        """엑셀 파일을 선택하는 다이얼로그를 표시합니다."""
+        file_path, _ = QFileDialog.getOpenFileName(
+        self,
+        "엑셀 파일 선택",
+        "input",
+        "Excel Files (*.xlsx *.xls)"
+        )                
+        if file_path:
+            print(f"\n[파일 선택됨] 경로: {file_path}")
+            filename = os.path.basename(file_path)
+            
+            is_valid, store_type = self.is_valid_filename(filename)
+            
+            if is_valid:
+                self.selected_file_path = file_path
+                self.ui.filePathLabel.setText(filename)
+                self.statusBar().showMessage(f"파일 선택됨: {filename}")
+                print("✓ 파일이 성공적으로 선택되었습니다.")
+                
+                # 스토어 타입에 따라 다른 처리 메서드 호출
+                if store_type == "naver":
+                    print("✓ 네이버 스토어 파일 처리 시작")
+                    self.process_naver_excel_file()
+                elif store_type == "coupang":
+                    print("✓ 쿠팡 스토어 파일 처리 시작")
+                    self.process_coupang_excel_file()
+            else:
+                QMessageBox.warning(
+                    self,
+                    "잘못된 파일명",
+                    "올바른 파일명 형식이 아닙니다.\n\n"
+                    "네이버 스토어: 스마트스토어_전체주문발주발송관리_20240405_1509.xlsx\n"
+                    "쿠팡 스토어: DeliveryList(2025-04-06)_(0).xlsx"
+                )
+                self.selected_file_path = None
+                self.ui.filePathLabel.setText("선택된 파일 없음")
+                self.statusBar().showMessage("잘못된 파일명")
+                print("❌ 파일 선택이 취소되었습니다.")
+        else:
+            print("\n[알림] 파일 선택이 취소되었습니다.")
+            
+    def process_naver_excel_file(self):
+        """네이버 스토어 엑셀 파일에서 주문번호를 처리합니다."""
         try:
-            print(f"\n[엑셀 파일 처리 시작] 파일: {self.selected_file_path}")
+            print(f"\n[네이버 스토어 엑셀 파일 처리 시작] 파일: {self.selected_file_path}")
             
             # 파일 정보 출력
             file_size = os.path.getsize(self.selected_file_path)
@@ -635,39 +697,17 @@ class MainWindow(QMainWindow):
                 "3. 파일을 다시 저장하거나 다른 형식(.xlsx)으로 변환해보세요."
             )
             
-    def select_excel_file(self):
-        """엑셀 파일을 선택하는 다이얼로그를 표시합니다."""
-        file_path, _ = QFileDialog.getOpenFileName(
-        self,
-        "엑셀 파일 선택",
-        "input",
-        "Excel Files (*.xlsx *.xls)"
-        )                
-        if file_path:
-            print(f"\n[파일 선택됨] 경로: {file_path}")
-            filename = os.path.basename(file_path)
-            
-            if self.is_valid_filename(filename):
-                self.selected_file_path = file_path
-                self.ui.filePathLabel.setText(filename)
-                self.statusBar().showMessage(f"파일 선택됨: {filename}")
-                print("✓ 파일이 성공적으로 선택되었습니다.")
-                # 파일 선택 후 바로 처리 시작
-                self.process_excel_file()
-            else:
-                QMessageBox.warning(
-                    self,
-                    "잘못된 파일명",
-                    "올바른 파일명 형식이 아닙니다.\n\n"
-                    "예시: 스마트스토어_전체주문발주발송관리_20240405_1509.xlsx"
-                )
-                self.selected_file_path = None
-                self.ui.filePathLabel.setText("선택된 파일 없음")
-                self.statusBar().showMessage("잘못된 파일명")
-                print("❌ 파일 선택이 취소되었습니다.")
-        else:
-            print("\n[알림] 파일 선택이 취소되었습니다.")
-            
+    def process_coupang_excel_file(self):
+        """쿠팡 스토어 엑셀 파일에서 주문번호를 처리합니다."""
+        # 쿠팡 스토어 파일 처리 로직은 추후 구현 예정
+        QMessageBox.information(
+            self,
+            "알림",
+            "쿠팡 스토어 파일 처리 기능은 아직 구현되지 않았습니다.\n"
+            "추후 업데이트를 기대해주세요."
+        )
+        print("❌ 쿠팡 스토어 파일 처리 기능은 아직 구현되지 않았습니다.")
+
     def generate_work_order(self):
         """작업지시서 생성 버튼 클릭 시 실행되는 함수입니다."""
         if not self.selected_file_path:
@@ -814,33 +854,24 @@ class MainWindow(QMainWindow):
                 for idx, col in enumerate(df_invoice.columns):
                     # 열 이름의 길이와 데이터의 최대 길이 계산
                     max_length = max(
-                        df_invoice[col].astype(str).apply(len).max(),  # 데이터의 최대 길이
-                        len(str(col))  # 열 이름의 길이
+                        df_invoice[col].astype(str).apply(len).max(),
+                        len(str(col))
                     )
                     # 한글은 2배의 너비가 필요하므로 조정
                     adjusted_width = max_length * 2 if any('\u3131' <= c <= '\u318E' or '\uAC00' <= c <= '\uD7A3' for c in str(col)) else max_length
-                    worksheet.set_column(idx, idx, adjusted_width + 2, center_format)  # 여유 공간 2 추가
+                    worksheet.set_column(idx, idx, adjusted_width + 2, center_format)
                 
                 # 헤더에 포맷 적용
                 for col_num, value in enumerate(df_invoice.columns.values):
                     worksheet.write(0, col_num, value, header_format)
                 
                 # 전체 행 높이 조정
-                worksheet.set_default_row(20)  # 기본 행 높이를 20으로 설정
-            
+                worksheet.set_default_row(20)
+
             print(f"✓ 송장 엑셀 파일이 생성되었습니다.")
             print(f"  - 파일 위치: {output_file}")
             print(f"  - 행 수: {len(df_invoice)}")
-            print("\n[통합 처리된 주문 정보]")
-            for info in consolidated_orders.values():
-                print(f"\n수취인: {info['수취인명']}")
-                print(f"주문번호 목록: {', '.join(sorted(info['주문번호목록']))}")  # 시간순 정렬
-                print(f"배송 주소: {info['통합배송지']}")
-                print(f"상품 목록:")
-                for product in info['상품목록']:
-                    print(f"- {product['상품명']} x {product['수량']}")
-                print("-" * 30)
-            
+
             self.statusBar().showMessage(f"송장 엑셀 파일 생성 완료: {output_file}")
             
             # 성공 메시지 표시 (커스텀 버튼 포함)
@@ -867,7 +898,7 @@ class MainWindow(QMainWindow):
             elif msg.clickedButton() == open_file_button:
                 if not self.open_file_with_default_app(output_file):
                     QMessageBox.warning(self, "오류", "파일을 열 수 없습니다.\n엑셀이 설치되어 있는지 확인해주세요.")
-            
+
         except Exception as e:
             error_msg = str(e)
             print(f"❌ 송장 엑셀 파일 생성 중 오류 발생: {error_msg}")
