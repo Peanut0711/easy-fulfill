@@ -328,7 +328,7 @@ class MainWindow(QMainWindow):
         print(f"\n[파일명 검증 시작] 파일명: {filename}")
         
         # 네이버 스토어 파일 형식 검사
-        naver_pattern = r'^스마트스토어_전체주문발주발송관리_(\d{8})_(\d{4})\.xlsx$'
+        naver_pattern = r'^스마트스토어_(전체|선택)주문발주발송관리_(\d{8})_(\d{4})\.xlsx$'
         naver_match = re.match(naver_pattern, filename)
         
         # 쿠팡 스토어 파일 형식 검사
@@ -337,8 +337,8 @@ class MainWindow(QMainWindow):
         
         if naver_match:
             # 날짜와 시간 유효성 검사
-            date_str = naver_match.group(1)
-            time_str = naver_match.group(2)
+            date_str = naver_match.group(2)
+            time_str = naver_match.group(3)
             
             try:
                 # 날짜 형식 검증 (YYYYMMDD)
