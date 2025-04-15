@@ -349,6 +349,13 @@ class MainWindow(QMainWindow):
         loadAction.triggered.connect(self.select_excel_file)
         toolbar.addAction(loadAction)
 
+        # 복사 액션
+        copyAction = QAction(QIcon('image/copy.png'), '복사', self)
+        copyAction.setShortcut('Ctrl+C')
+        copyAction.setStatusTip('클립보드에 복사 (Ctrl+C)')
+        copyAction.triggered.connect(self.copy_to_clipboard)
+        toolbar.addAction(copyAction)
+
         # 엑셀 송장 출력 액션
         exportAction = QAction(QIcon('image/excel.png'), '엑셀 송장 출력', self)
         exportAction.setShortcut('Ctrl+E')
@@ -361,21 +368,7 @@ class MainWindow(QMainWindow):
         openAction.setShortcut('Ctrl+F')
         openAction.setStatusTip('output 폴더 열기 (Ctrl+F)')
         openAction.triggered.connect(self.open_output_folder)
-        toolbar.addAction(openAction)
-        
-        # 복사 액션
-        copyAction = QAction(QIcon('image/copy.png'), '복사', self)
-        copyAction.setShortcut('Ctrl+C')
-        copyAction.setStatusTip('클립보드에 복사 (Ctrl+C)')
-        copyAction.triggered.connect(self.copy_to_clipboard)
-        toolbar.addAction(copyAction)
-
-        # 초기화 액션
-        clearAction = QAction(QIcon('image/reset.png'), '초기화', self)
-        clearAction.setShortcut('Ctrl+R')
-        clearAction.setStatusTip('초기화 (Ctrl+R)')
-        clearAction.triggered.connect(self.clear_list)
-        toolbar.addAction(clearAction)
+        toolbar.addAction(openAction)        
 
         # 노션 홈페이지 액션
         notionAction = QAction(QIcon('image/notion.png'), '노션', self)
@@ -390,6 +383,13 @@ class MainWindow(QMainWindow):
         notionAction.setStatusTip('우체국 홈페이지로 이동 (Ctrl+P)')
         notionAction.triggered.connect(lambda: QDesktopServices.openUrl(QUrl("https://biz.epost.go.kr/ui/index.jsp")))
         toolbar.addAction(notionAction)
+
+        # 초기화 액션
+        clearAction = QAction(QIcon('image/reset.png'), '초기화', self)
+        clearAction.setShortcut('Ctrl+R')
+        clearAction.setStatusTip('초기화 (Ctrl+R)')
+        clearAction.triggered.connect(self.clear_list)
+        toolbar.addAction(clearAction)
         
         # 종료 액션
         exitAction = QAction(QIcon('image/exit.png'), '종료', self)

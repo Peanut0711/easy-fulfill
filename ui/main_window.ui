@@ -35,9 +35,9 @@
        <widget class="QLabel" name="filePathLabel">
         <property name="geometry">
          <rect>
-          <x>30</x>
-          <y>50</y>
-          <width>401</width>
+          <x>90</x>
+          <y>40</y>
+          <width>500</width>
           <height>40</height>
          </rect>
         </property>
@@ -80,9 +80,9 @@
         <property name="geometry">
          <rect>
           <x>30</x>
-          <y>120</y>
+          <y>100</y>
           <width>651</width>
-          <height>441</height>
+          <height>461</height>
          </rect>
         </property>
        </widget>
