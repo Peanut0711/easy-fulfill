@@ -309,13 +309,13 @@ class MainWindow(QMainWindow):
         """툴바를 설정합니다."""
         # 툴바 생성
         toolbar = self.addToolBar('툴바')
-        toolbar.setOrientation(Qt.Vertical)  # 툴바를 세로로 설정
-        self.addToolBar(Qt.LeftToolBarArea, toolbar)  # 툴바를 좌측에 배치
+        # toolbar.setOrientation(Qt.Vertical)  # 툴바를 세로로 설정
+        # self.addToolBar(Qt.LeftToolBarArea, toolbar)  # 툴바를 좌측에 배치
         
         # 우체국 홈페이지 액션
         notionAction = QAction(QIcon('image/Korea_Post.png'), '우체국', self)
         notionAction.setShortcut('Ctrl+P')
-        notionAction.setStatusTip('우체국 홈페이지로 이동')
+        notionAction.setStatusTip('우체국 홈페이지로 이동 (Ctrl+P)')
         notionAction.triggered.connect(lambda: QDesktopServices.openUrl(QUrl("https://biz.epost.go.kr/ui/index.jsp")))
         toolbar.addAction(notionAction)
         
@@ -323,28 +323,28 @@ class MainWindow(QMainWindow):
         # 노션 홈페이지 액션
         notionAction = QAction(QIcon('image/notion.png'), '노션', self)
         notionAction.setShortcut('Ctrl+N')
-        notionAction.setStatusTip('노션 홈페이지로 이동')
+        notionAction.setStatusTip('노션 홈페이지로 이동 (Ctrl+N)')
         notionAction.triggered.connect(lambda: QDesktopServices.openUrl(QUrl("https://www.notion.so")))
         toolbar.addAction(notionAction)
         
         # 열기 액션
         openAction = QAction(QIcon('image/open.png'), '열기', self)
         openAction.setShortcut('Ctrl+O')
-        openAction.setStatusTip('파일 열기')
+        openAction.setStatusTip('파일 열기 (Ctrl+O)')
         openAction.triggered.connect(self.select_excel_file)
         toolbar.addAction(openAction)
         
         # 복사 액션
         copyAction = QAction(QIcon('image/copy.png'), '복사', self)
         copyAction.setShortcut('Ctrl+C')
-        copyAction.setStatusTip('클립보드에 복사')
+        copyAction.setStatusTip('클립보드에 복사 (Ctrl+C)')
         copyAction.triggered.connect(self.copy_to_clipboard)
         toolbar.addAction(copyAction)
         
         # 종료 액션
         exitAction = QAction(QIcon('image/exit.png'), '종료', self)
         exitAction.setShortcut('Ctrl+Q')
-        exitAction.setStatusTip('프로그램 종료')
+        exitAction.setStatusTip('프로그램 종료 (Ctrl+Q)')
         exitAction.triggered.connect(QApplication.quit)
         toolbar.addAction(exitAction)
         
@@ -355,7 +355,7 @@ class MainWindow(QMainWindow):
                 text = self.ui.plainTextEdit.toPlainText()
                 clipboard = QApplication.clipboard()
                 clipboard.setText(text)
-                self.statusBar().showMessage("텍스트가 클립보드에 복사되었습니다.")
+                self.statusBar().showMessage("텍스트가 클립보드에 복사되었습니다.", 2000)
             else:
                 QMessageBox.warning(self, "오류", "plainTextEdit 위젯이 존재하지 않습니다.")
         except Exception as e:
@@ -729,20 +729,39 @@ class MainWindow(QMainWindow):
             print("\n[주문 정보 출력]")
             print(f"총 {len(self.orders)}개의 주문이 있습니다.")
             
+            # 마크다운 형식으로 주문 정보 생성
+            markdown_text = ""
+            
             for pattern, info in self.orders.items():
-                print(f"\n주문번호 패턴: {pattern}")
-                print(f"주문번호 목록: {', '.join(info['주문번호목록'])}")
-                print(f"수취인명: {info['수취인명']}")
-                print(f"수취인연락처: {info['수취인연락처1']}")
-                print(f"통합배송지: {info['통합배송지']}")
-                print(f"구매자연락처: {info['구매자연락처']}")
-                print(f"배송메세지: {info['배송메세지']}")
-                print(f"상품수: {info['상품수']}")
-                print("\n[상품 목록]")
-                for product in info['상품목록']:
-                    print(f"- {product['상품명']} x {product['수량']}")
-                print("-" * 50)
+                # 수취인명 표시
+                markdown_text += f"- [ ] {info['수취인명']}\n"
                 
+                # 상품 목록 표시
+                for product in info['상품목록']:
+                    product_name = product['상품명']
+                    quantity = product['수량']
+                    
+                    # 옵션 정보 추출 (상품명에서 괄호 안의 내용)
+                    option_match = re.search(r'\((.*?)\)', product_name)
+                    if option_match:
+                        option = option_match.group(1)
+                        # 원래 상품명에서 옵션 부분 제거
+                        product_name = re.sub(r'\s*\(.*?\)', '', product_name)
+                    else:
+                        option = "없음"
+                    
+                    markdown_text += f"{product_name} ( 옵션: {option} ) - {quantity} 개\n"
+                
+                markdown_text += "\n"  # 주문 간 구분을 위한 빈 줄
+            
+            # plainTextEdit에 마크다운 텍스트 표시
+            self.ui.plainTextEdit.setPlainText(markdown_text)
+            
+            # 클립보드에 자동 복사
+            clipboard = QApplication.clipboard()
+            clipboard.setText(markdown_text)
+            self.statusBar().showMessage("주문 정보가 클립보드에 복사되었습니다.", 2000)
+            
         except Exception as e:
             error_msg = str(e)
             print(f"❌ 엑셀 파일 처리 중 오류 발생: {error_msg}")
