@@ -20,9 +20,8 @@ from PySide6.QtGui import QPixmap, QImage, QIcon, QAction, QDesktopServices
 import requests
 from io import BytesIO
 import warnings
+import logging
 
-# 이미지 경고 메시지 숨기기
-warnings.filterwarnings("ignore", category=UserWarning, module="PIL.PngImagePlugin")
 
 class ImageDialog(QDialog):
     def __init__(self, image_url, product_name, parent=None, all_images=None, current_index=None, table_widget=None):
@@ -312,27 +311,12 @@ class MainWindow(QMainWindow):
         toolbar = self.addToolBar('툴바')
         # toolbar.setOrientation(Qt.Vertical)  # 툴바를 세로로 설정
         # self.addToolBar(Qt.LeftToolBarArea, toolbar)  # 툴바를 좌측에 배치
-        
-        # 우체국 홈페이지 액션
-        notionAction = QAction(QIcon('image/Korea_Post.png'), '우체국', self)
-        notionAction.setShortcut('Ctrl+P')
-        notionAction.setStatusTip('우체국 홈페이지로 이동 (Ctrl+P)')
-        notionAction.triggered.connect(lambda: QDesktopServices.openUrl(QUrl("https://biz.epost.go.kr/ui/index.jsp")))
-        toolbar.addAction(notionAction)
-        
-        
-        # 노션 홈페이지 액션
-        notionAction = QAction(QIcon('image/notion.png'), '노션', self)
-        notionAction.setShortcut('Ctrl+N')
-        notionAction.setStatusTip('노션 홈페이지로 이동 (Ctrl+N)')
-        notionAction.triggered.connect(lambda: QDesktopServices.openUrl(QUrl("https://www.notion.so")))
-        toolbar.addAction(notionAction)
-        
+                
         # 열기 액션
-        openAction = QAction(QIcon('image/open.png'), '열기', self)
+        openAction = QAction(QIcon('image/open.png'), '폴더 열기', self)
         openAction.setShortcut('Ctrl+F')
-        openAction.setStatusTip('파일 열기 (Ctrl+F)')
-        openAction.triggered.connect(self.select_excel_file)
+        openAction.setStatusTip('output 폴더 열기 (Ctrl+F)')
+        openAction.triggered.connect(self.open_output_folder)
         toolbar.addAction(openAction)
         
         # 복사 액션
@@ -341,6 +325,20 @@ class MainWindow(QMainWindow):
         copyAction.setStatusTip('클립보드에 복사 (Ctrl+C)')
         copyAction.triggered.connect(self.copy_to_clipboard)
         toolbar.addAction(copyAction)
+
+        # 노션 홈페이지 액션
+        notionAction = QAction(QIcon('image/notion.png'), '노션', self)
+        notionAction.setShortcut('Ctrl+N')
+        notionAction.setStatusTip('노션 홈페이지로 이동 (Ctrl+N)')
+        notionAction.triggered.connect(lambda: QDesktopServices.openUrl(QUrl("https://www.notion.so")))
+        toolbar.addAction(notionAction)
+
+        # 우체국 홈페이지 액션
+        notionAction = QAction(QIcon('image/Korea_Post.png'), '우체국', self)
+        notionAction.setShortcut('Ctrl+E')
+        notionAction.setStatusTip('우체국 홈페이지로 이동 (Ctrl+E)')
+        notionAction.triggered.connect(lambda: QDesktopServices.openUrl(QUrl("https://biz.epost.go.kr/ui/index.jsp")))
+        toolbar.addAction(notionAction)
         
         # 종료 액션
         exitAction = QAction(QIcon('image/exit.png'), '종료', self)
@@ -701,7 +699,7 @@ class MainWindow(QMainWindow):
                     '수취인연락처1': str(first_order[required_columns['수취인연락처1']]),
                     '통합배송지': str(first_order[required_columns['통합배송지']]),
                     '구매자연락처': str(first_order[required_columns['구매자연락처']]),
-                    '배송메세지': str(first_order[required_columns['배송메세지']]).replace('nan', ''),
+                    '배송메세지': str(first_order[required_columns['배송메세지']]),
                     '상품수': 0,
                     '상품목록': []
                 }
@@ -816,7 +814,8 @@ class MainWindow(QMainWindow):
                 '수취인전화번호': None,
                 '등록상품명': None,
                 '등록옵션명': None,
-                '구매수(수량)': None
+                '구매수(수량)': None,
+                '배송메세지': None,
             }
             
             for col in df.columns:
@@ -850,6 +849,7 @@ class MainWindow(QMainWindow):
                         '수취인이름': str(row[required_columns['수취인이름']]),
                         '수취인주소': str(row[required_columns['수취인 주소']]),
                         '수취인전화번호': str(row[required_columns['수취인전화번호']]) if not pd.isna(row[required_columns['수취인전화번호']]) else '',
+                        '배송메세지': str(row[required_columns['배송메세지']]) if not pd.isna(row[required_columns['배송메세지']]) else '',
                         '상품목록': []
                     }
                 
@@ -984,6 +984,10 @@ class MainWindow(QMainWindow):
 
                 # 통합된 주문 정보로 송장 데이터 생성
                 for info in consolidated_orders.values():
+                    delivery_msg = info.get('배송메세지', '')
+                    if pd.isna(delivery_msg) or str(delivery_msg).lower() == 'nan':
+                        delivery_msg = ''
+                        
                     invoice_data.append({
                         '주문번호': '',
                         '고객주문처명': '',
@@ -992,9 +996,9 @@ class MainWindow(QMainWindow):
                         '수취인 주소': info['통합배송지'],
                         '수취인 전화번호': info['수취인연락처1'],
                         '수취인 이동통신': info['수취인연락처1'],
-                        '상품명': info['상품목록'][0]['상품명'],  # 첫 번째 상품명 사용
+                        '상품명': info['상품목록'][0]['상품명'],
                         '상품모델': '전자제품',
-                        '배송메세지': info['배송메세지'],
+                        '배송메세지': delivery_msg,
                         '비고': ''
                     })
             elif self.store_type == "coupang":
@@ -1012,6 +1016,10 @@ class MainWindow(QMainWindow):
                     for key in address_keys:
                         print(f"- {key}: {info[key]}")
                     
+                    delivery_msg = info.get('배송메세지', '')
+                    if pd.isna(delivery_msg) or str(delivery_msg).lower() == 'nan':
+                        delivery_msg = ''
+                    
                     invoice_data.append({
                         '주문번호': '',
                         '고객주문처명': '',
@@ -1022,12 +1030,15 @@ class MainWindow(QMainWindow):
                         '수취인 이동통신': info['수취인전화번호'],
                         '상품명': info['상품목록'][0]['상품명'],
                         '상품모델': '전자제품',
-                        '배송메세지': info.get('배송메세지', ''),
+                        '배송메세지': delivery_msg,
                         '비고': ''
                     })
             
             # 데이터프레임 생성
             df_invoice = pd.DataFrame(invoice_data)
+            
+            # 'nan' 값을 빈 문자열로 변환
+            df_invoice['배송메세지'] = df_invoice['배송메세지'].fillna('')
             
             # 열 순서 지정
             columns = [
@@ -1099,7 +1110,7 @@ class MainWindow(QMainWindow):
             
             # 버튼 추가
             open_location_button = msg.addButton("폴더 열기", QMessageBox.ActionRole)
-            open_file_button = msg.addButton("파일 열기", QMessageBox.ActionRole)
+            open_file_button = msg.addButton("엑셀 열기", QMessageBox.ActionRole)
             close_button = msg.addButton("닫기", QMessageBox.RejectRole)
             
             msg.setDefaultButton(close_button)
@@ -1415,6 +1426,28 @@ class MainWindow(QMainWindow):
                 "오류",
                 f"분류 결과 파일 생성 중 오류가 발생했습니다.\n\n{error_msg}"
             )
+
+    def open_output_folder(self):
+        """output 폴더를 생성하고 엽니다."""
+        try:
+            # output 폴더 경로 설정
+            output_dir = Path("output")
+            
+            # 폴더가 없으면 생성
+            output_dir.mkdir(exist_ok=True)
+            
+            # 폴더 열기
+            if sys.platform == 'win32':
+                os.startfile(str(output_dir))
+            elif sys.platform == 'darwin':  # macOS
+                subprocess.call(('open', str(output_dir)))
+            else:  # linux
+                subprocess.call(('xdg-open', str(output_dir)))
+                
+            self.statusBar().showMessage("output 폴더가 열렸습니다.", 2000)
+            
+        except Exception as e:
+            QMessageBox.warning(self, "오류", f"폴더를 열 수 없습니다: {str(e)}")
 
 def main():
     print("프로그램 시작")
