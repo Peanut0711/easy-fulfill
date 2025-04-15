@@ -649,7 +649,7 @@ class MainWindow(QMainWindow):
             for col in df.columns:
                 col_str = str(col)
                 for key in required_columns.keys():
-                    if key in col_str:
+                    if key == col_str:  # 정확히 일치하는 경우에만 매칭
                         required_columns[key] = col
                         print(f"✓ '{key}' 열을 찾았습니다: {col}")
             
@@ -812,6 +812,8 @@ class MainWindow(QMainWindow):
             required_columns = {
                 '주문번호': None,
                 '수취인이름': None,
+                '수취인 주소': None,  # '수취인주소'에서 '수취인 주소'로 수정
+                '수취인전화번호': None,
                 '등록상품명': None,
                 '등록옵션명': None,
                 '구매수(수량)': None
@@ -820,7 +822,7 @@ class MainWindow(QMainWindow):
             for col in df.columns:
                 col_str = str(col)
                 for key in required_columns.keys():
-                    if key in col_str:
+                    if key == col_str:  # 정확히 일치하는 경우에만 매칭
                         required_columns[key] = col
                         print(f"✓ '{key}' 열을 찾았습니다: {col}")
             
@@ -842,8 +844,12 @@ class MainWindow(QMainWindow):
                     continue
                 
                 if order_number not in self.orders:
+                    phone_value = row[required_columns['수취인전화번호']]
+                    print(f"수취인전화번호 값: {phone_value}, 타입: {type(phone_value)}")
                     self.orders[order_number] = {
                         '수취인이름': str(row[required_columns['수취인이름']]),
+                        '수취인주소': str(row[required_columns['수취인 주소']]),
+                        '수취인전화번호': str(row[required_columns['수취인전화번호']]) if not pd.isna(row[required_columns['수취인전화번호']]) else '',
                         '상품목록': []
                     }
                 
@@ -992,9 +998,33 @@ class MainWindow(QMainWindow):
                         '비고': ''
                     })
             elif self.store_type == "coupang":
-                # 쿠팡 스토어 처리 (추후 구현)
-                QMessageBox.warning(self, "경고", "쿠팡 스토어는 아직 지원되지 않습니다.")
-                return
+                # 쿠팡 스토어 처리
+                print("\n[쿠팡 스토어 데이터 구조 확인]")
+                for order_number, info in self.orders.items():
+                    print(f"\n주문번호: {order_number}")
+                    print("사용 가능한 키 목록:")
+                    for key in info.keys():
+                        print(f"- {key}")
+                    
+                    # 수취인 주소 관련 키 확인
+                    address_keys = [k for k in info.keys() if '주소' in k]
+                    print("\n주소 관련 키:")
+                    for key in address_keys:
+                        print(f"- {key}: {info[key]}")
+                    
+                    invoice_data.append({
+                        '주문번호': '',
+                        '고객주문처명': '',
+                        '수취인명': info['수취인이름'],
+                        '우편번호': '',
+                        '수취인 주소': info['수취인주소'],
+                        '수취인 전화번호': info['수취인전화번호'],
+                        '수취인 이동통신': info['수취인전화번호'],
+                        '상품명': info['상품목록'][0]['상품명'],
+                        '상품모델': '전자제품',
+                        '배송메세지': info.get('배송메세지', ''),
+                        '비고': ''
+                    })
             
             # 데이터프레임 생성
             df_invoice = pd.DataFrame(invoice_data)
