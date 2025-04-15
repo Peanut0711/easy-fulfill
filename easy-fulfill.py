@@ -329,8 +329,8 @@ class MainWindow(QMainWindow):
         
         # 열기 액션
         openAction = QAction(QIcon('image/open.png'), '열기', self)
-        openAction.setShortcut('Ctrl+O')
-        openAction.setStatusTip('파일 열기 (Ctrl+O)')
+        openAction.setShortcut('Ctrl+F')
+        openAction.setStatusTip('파일 열기 (Ctrl+F)')
         openAction.triggered.connect(self.select_excel_file)
         toolbar.addAction(openAction)
         
@@ -456,10 +456,13 @@ class MainWindow(QMainWindow):
             
     def select_excel_file(self):
         """엑셀 파일을 선택하는 다이얼로그를 표시합니다."""
+        # 다운로드 폴더 경로 설정
+        downloads_path = os.path.join(os.path.expanduser("~"), "Downloads")
+        
         file_path, _ = QFileDialog.getOpenFileName(
         self,
         "엑셀 파일 선택",
-        "input",
+        downloads_path,
         "Excel Files (*.xlsx *.xls)"
         )                
         if file_path:
@@ -885,7 +888,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(
                 self,
                 "오류",
-                "엑셀 파일 처리 중 오류가 발생했습니다.\n\n{error_msg}"
+                f"엑셀 파일 처리 중 오류가 발생했습니다.\n\n{error_msg}"
             )
 
     def generate_work_order(self):

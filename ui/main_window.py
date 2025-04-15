@@ -213,7 +213,7 @@ class Ui_MainWindow(object):
 "}", None))
         self.actionOpenExcel.setText(QCoreApplication.translate("MainWindow", u"\uc5d1\uc140 \ud30c\uc77c \uc5f4\uae30(&O)", None))
 #if QT_CONFIG(shortcut)
-        self.actionOpenExcel.setShortcut(QCoreApplication.translate("MainWindow", u"Ctrl+O", None))
+        self.actionOpenExcel.setShortcut(QCoreApplication.translate("MainWindow", u"Ctrl+O", None))       
 #endif // QT_CONFIG(shortcut)
         self.actionExit.setText(QCoreApplication.translate("MainWindow", u"\uc885\ub8cc(&X)", None))
 #if QT_CONFIG(shortcut)
