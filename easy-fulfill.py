@@ -309,7 +309,7 @@ class MainWindow(QMainWindow):
         """툴바를 설정합니다."""
         # 툴바 생성
         toolbar = self.addToolBar('툴바')
-        toolbar.setIconSize(QSize(24, 24))  # 아이콘 크기를 24x24로 축소
+        toolbar.setIconSize(QSize(28, 28))
         
         # 툴바를 세로로 설정하고 좌측에 배치
         # toolbar.setOrientation(Qt.Vertical)
@@ -356,6 +356,13 @@ class MainWindow(QMainWindow):
         copyAction.triggered.connect(self.copy_to_clipboard)
         toolbar.addAction(copyAction)
 
+        # 노션 홈페이지 액션
+        notionAction = QAction(QIcon('image/notion.png'), '노션', self)
+        notionAction.setShortcut('Ctrl+N')
+        notionAction.setStatusTip('노션 홈페이지로 이동 (Ctrl+N)')
+        notionAction.triggered.connect(lambda: QDesktopServices.openUrl(QUrl("https://www.notion.so")))
+        toolbar.addAction(notionAction)
+
         # 엑셀 송장 출력 액션
         exportAction = QAction(QIcon('image/excel.png'), '엑셀 송장 출력', self)
         exportAction.setShortcut('Ctrl+E')
@@ -368,14 +375,7 @@ class MainWindow(QMainWindow):
         openAction.setShortcut('Ctrl+F')
         openAction.setStatusTip('output 폴더 열기 (Ctrl+F)')
         openAction.triggered.connect(self.open_output_folder)
-        toolbar.addAction(openAction)        
-
-        # 노션 홈페이지 액션
-        notionAction = QAction(QIcon('image/notion.png'), '노션', self)
-        notionAction.setShortcut('Ctrl+N')
-        notionAction.setStatusTip('노션 홈페이지로 이동 (Ctrl+N)')
-        notionAction.triggered.connect(lambda: QDesktopServices.openUrl(QUrl("https://www.notion.so")))
-        toolbar.addAction(notionAction)
+        toolbar.addAction(openAction)                
 
         # 우체국 홈페이지 액션
         notionAction = QAction(QIcon('image/korea_post.png'), '우체국', self)
@@ -570,6 +570,23 @@ class MainWindow(QMainWindow):
                 self.ui.filePathLabel.setText(filename)
                 self.statusBar().showMessage(f"파일 선택됨: {filename}")
                 print("✓ 파일이 성공적으로 선택되었습니다.")
+                
+                # 스토어 타입에 따라 로고 표시
+                if self.store_type == "naver":
+                    logo_path = "image/naver_logo.png"
+                    logo_size = QSize(120, 40)  # 네이버 로고 크기
+                else:  # coupang
+                    logo_path = "image/coupang_logo.png"
+                    logo_size = QSize(150, 40)  # 쿠팡 로고 크기
+                
+                # 로고 이미지 로드 및 표시
+                if os.path.exists(logo_path):
+                    pixmap = QPixmap(logo_path)
+                    scaled_pixmap = pixmap.scaled(logo_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                    self.ui.label_logo.setPixmap(scaled_pixmap)
+                    self.ui.label_logo.setAlignment(Qt.AlignCenter)
+                else:
+                    print(f"! 로고 파일을 찾을 수 없습니다: {logo_path}")
                 
                 # 스토어 타입에 따라 다른 처리 메서드 호출
                 if self.store_type == "naver":
