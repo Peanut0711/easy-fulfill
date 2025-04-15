@@ -6,8 +6,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>880</width>
-    <height>560</height>
+    <width>970</width>
+    <height>718</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -35,8 +35,8 @@
        <widget class="QPushButton" name="selectFileButton">
         <property name="geometry">
          <rect>
-          <x>570</x>
-          <y>30</y>
+          <x>510</x>
+          <y>50</y>
           <width>91</width>
           <height>41</height>
          </rect>
@@ -60,8 +60,8 @@
        <widget class="QPushButton" name="generateButton">
         <property name="geometry">
          <rect>
-          <x>570</x>
-          <y>130</y>
+          <x>630</x>
+          <y>100</y>
           <width>91</width>
           <height>41</height>
          </rect>
@@ -85,8 +85,8 @@
        <widget class="QPushButton" name="exportInvoiceButton">
         <property name="geometry">
          <rect>
-          <x>570</x>
-          <y>80</y>
+          <x>630</x>
+          <y>50</y>
           <width>91</width>
           <height>41</height>
          </rect>
@@ -104,8 +104,8 @@
        <widget class="QLabel" name="filePathLabel">
         <property name="geometry">
          <rect>
-          <x>120</x>
-          <y>30</y>
+          <x>50</x>
+          <y>50</y>
           <width>431</width>
           <height>40</height>
          </rect>
@@ -143,6 +143,16 @@
         </property>
         <property name="margin">
          <number>5</number>
+        </property>
+       </widget>
+       <widget class="QPlainTextEdit" name="plainTextEdit">
+        <property name="geometry">
+         <rect>
+          <x>50</x>
+          <y>140</y>
+          <width>551</width>
+          <height>441</height>
+         </rect>
         </property>
        </widget>
       </widget>
@@ -227,16 +237,16 @@
            </font>
           </property>
           <property name="editTriggers">
-           <set>QAbstractItemView::DoubleClicked</set>
+           <set>QAbstractItemView::EditTrigger::DoubleClicked</set>
           </property>
           <property name="alternatingRowColors">
            <bool>true</bool>
           </property>
           <property name="selectionMode">
-           <enum>QAbstractItemView::SingleSelection</enum>
+           <enum>QAbstractItemView::SelectionMode::SingleSelection</enum>
           </property>
           <property name="selectionBehavior">
-           <enum>QAbstractItemView::SelectRows</enum>
+           <enum>QAbstractItemView::SelectionBehavior::SelectRows</enum>
           </property>
           <property name="sortingEnabled">
            <bool>true</bool>
@@ -281,7 +291,7 @@
           <item>
            <spacer name="horizontalSpacer_5">
             <property name="orientation">
-             <enum>Qt::Horizontal</enum>
+             <enum>Qt::Orientation::Horizontal</enum>
             </property>
             <property name="sizeHint" stdset="0">
              <size>
@@ -344,7 +354,7 @@
           <item>
            <spacer name="horizontalSpacer_6">
             <property name="orientation">
-             <enum>Qt::Horizontal</enum>
+             <enum>Qt::Orientation::Horizontal</enum>
             </property>
             <property name="sizeHint" stdset="0">
              <size>
@@ -367,7 +377,7 @@
     <rect>
      <x>0</x>
      <y>0</y>
-     <width>780</width>
+     <width>970</width>
      <height>33</height>
     </rect>
    </property>

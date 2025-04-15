@@ -312,11 +312,34 @@ class MainWindow(QMainWindow):
         toolbar.setOrientation(Qt.Vertical)  # 툴바를 세로로 설정
         self.addToolBar(Qt.LeftToolBarArea, toolbar)  # 툴바를 좌측에 배치
         
+        # 우체국 홈페이지 액션
+        notionAction = QAction(QIcon('image/Korea_Post.png'), '우체국', self)
+        notionAction.setShortcut('Ctrl+P')
+        notionAction.setStatusTip('우체국 홈페이지로 이동')
+        notionAction.triggered.connect(lambda: QDesktopServices.openUrl(QUrl("https://biz.epost.go.kr/ui/index.jsp")))
+        toolbar.addAction(notionAction)
+        
+        
         # 노션 홈페이지 액션
         notionAction = QAction(QIcon('image/notion.png'), '노션', self)
+        notionAction.setShortcut('Ctrl+N')
         notionAction.setStatusTip('노션 홈페이지로 이동')
         notionAction.triggered.connect(lambda: QDesktopServices.openUrl(QUrl("https://www.notion.so")))
         toolbar.addAction(notionAction)
+        
+        # 열기 액션
+        openAction = QAction(QIcon('image/open.png'), '열기', self)
+        openAction.setShortcut('Ctrl+O')
+        openAction.setStatusTip('파일 열기')
+        openAction.triggered.connect(self.select_excel_file)
+        toolbar.addAction(openAction)
+        
+        # 복사 액션
+        copyAction = QAction(QIcon('image/copy.png'), '복사', self)
+        copyAction.setShortcut('Ctrl+C')
+        copyAction.setStatusTip('클립보드에 복사')
+        copyAction.triggered.connect(self.copy_to_clipboard)
+        toolbar.addAction(copyAction)
         
         # 종료 액션
         exitAction = QAction(QIcon('image/exit.png'), '종료', self)
@@ -324,6 +347,19 @@ class MainWindow(QMainWindow):
         exitAction.setStatusTip('프로그램 종료')
         exitAction.triggered.connect(QApplication.quit)
         toolbar.addAction(exitAction)
+        
+    def copy_to_clipboard(self):
+        """plainTextEdit의 내용을 클립보드에 복사합니다."""
+        try:
+            if hasattr(self.ui, 'plainTextEdit'):
+                text = self.ui.plainTextEdit.toPlainText()
+                clipboard = QApplication.clipboard()
+                clipboard.setText(text)
+                self.statusBar().showMessage("텍스트가 클립보드에 복사되었습니다.")
+            else:
+                QMessageBox.warning(self, "오류", "plainTextEdit 위젯이 존재하지 않습니다.")
+        except Exception as e:
+            QMessageBox.warning(self, "오류", f"복사 중 오류가 발생했습니다: {str(e)}")
         
     def setup_status_bar(self):
         """상태바를 초기화하고 기본 메시지를 설정합니다."""

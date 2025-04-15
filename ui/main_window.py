@@ -18,15 +18,15 @@ from PySide6.QtGui import (QAction, QBrush, QColor, QConicalGradient,
     QTransform)
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QFrame, QHBoxLayout,
     QHeaderView, QLabel, QMainWindow, QMenu,
-    QMenuBar, QPushButton, QSizePolicy, QSpacerItem,
-    QStatusBar, QTabWidget, QTableWidget, QTableWidgetItem,
-    QVBoxLayout, QWidget)
+    QMenuBar, QPlainTextEdit, QPushButton, QSizePolicy,
+    QSpacerItem, QStatusBar, QTabWidget, QTableWidget,
+    QTableWidgetItem, QVBoxLayout, QWidget)
 
 class Ui_MainWindow(object):
     def setupUi(self, MainWindow):
         if not MainWindow.objectName():
             MainWindow.setObjectName(u"MainWindow")
-        MainWindow.resize(880, 560)
+        MainWindow.resize(970, 718)
         self.actionOpenExcel = QAction(MainWindow)
         self.actionOpenExcel.setObjectName(u"actionOpenExcel")
         self.actionExit = QAction(MainWindow)
@@ -43,7 +43,7 @@ class Ui_MainWindow(object):
         self.tab.setObjectName(u"tab")
         self.selectFileButton = QPushButton(self.tab)
         self.selectFileButton.setObjectName(u"selectFileButton")
-        self.selectFileButton.setGeometry(QRect(570, 30, 91, 41))
+        self.selectFileButton.setGeometry(QRect(510, 50, 91, 41))
         sizePolicy = QSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
         sizePolicy.setHorizontalStretch(0)
         sizePolicy.setVerticalStretch(0)
@@ -55,7 +55,7 @@ class Ui_MainWindow(object):
         self.selectFileButton.setFont(font)
         self.generateButton = QPushButton(self.tab)
         self.generateButton.setObjectName(u"generateButton")
-        self.generateButton.setGeometry(QRect(570, 130, 91, 41))
+        self.generateButton.setGeometry(QRect(630, 100, 91, 41))
         sizePolicy1 = QSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         sizePolicy1.setHorizontalStretch(0)
         sizePolicy1.setVerticalStretch(0)
@@ -64,11 +64,11 @@ class Ui_MainWindow(object):
         self.generateButton.setFont(font)
         self.exportInvoiceButton = QPushButton(self.tab)
         self.exportInvoiceButton.setObjectName(u"exportInvoiceButton")
-        self.exportInvoiceButton.setGeometry(QRect(570, 80, 91, 41))
+        self.exportInvoiceButton.setGeometry(QRect(630, 50, 91, 41))
         self.exportInvoiceButton.setFont(font)
         self.filePathLabel = QLabel(self.tab)
         self.filePathLabel.setObjectName(u"filePathLabel")
-        self.filePathLabel.setGeometry(QRect(120, 30, 431, 40))
+        self.filePathLabel.setGeometry(QRect(50, 50, 431, 40))
         self.filePathLabel.setMinimumSize(QSize(300, 40))
         self.filePathLabel.setMaximumSize(QSize(500, 40))
         font1 = QFont()
@@ -80,6 +80,9 @@ class Ui_MainWindow(object):
         self.filePathLabel.setFrameShadow(QFrame.Shadow.Sunken)
         self.filePathLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.filePathLabel.setMargin(5)
+        self.plainTextEdit = QPlainTextEdit(self.tab)
+        self.plainTextEdit.setObjectName(u"plainTextEdit")
+        self.plainTextEdit.setGeometry(QRect(50, 140, 551, 441))
         self.tabWidget.addTab(self.tab, "")
         self.tab_2 = QWidget()
         self.tab_2.setObjectName(u"tab_2")
@@ -130,10 +133,10 @@ class Ui_MainWindow(object):
         font2.setFamilies([u"\ub9d1\uc740 \uace0\ub515"])
         font2.setPointSize(9)
         self.categoryTableWidget.setFont(font2)
-        self.categoryTableWidget.setEditTriggers(QAbstractItemView.DoubleClicked)
+        self.categoryTableWidget.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked)
         self.categoryTableWidget.setAlternatingRowColors(True)
-        self.categoryTableWidget.setSelectionMode(QAbstractItemView.SingleSelection)
-        self.categoryTableWidget.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.categoryTableWidget.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.categoryTableWidget.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.categoryTableWidget.setSortingEnabled(True)
         self.categoryTableWidget.horizontalHeader().setStretchLastSection(True)
 
@@ -175,7 +178,7 @@ class Ui_MainWindow(object):
         MainWindow.setCentralWidget(self.centralwidget)
         self.menubar = QMenuBar(MainWindow)
         self.menubar.setObjectName(u"menubar")
-        self.menubar.setGeometry(QRect(0, 0, 780, 33))
+        self.menubar.setGeometry(QRect(0, 0, 970, 33))
         self.menuFile = QMenu(self.menubar)
         self.menuFile.setObjectName(u"menuFile")
         self.menuHelp = QMenu(self.menubar)
