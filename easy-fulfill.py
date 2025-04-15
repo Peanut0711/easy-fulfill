@@ -392,7 +392,7 @@ class MainWindow(QMainWindow):
         naver_match = re.match(naver_pattern, filename)
         
         # 쿠팡 스토어 파일 형식 검사
-        coupang_pattern = r'^DeliveryList\((\d{4}-\d{2}-\d{2})\)_\(0\)\.xlsx$'
+        coupang_pattern = r'^DeliveryList\((\d{4}-\d{2}-\d{2})\).*\.xlsx$'
         coupang_match = re.match(coupang_pattern, filename)
         
         if naver_match:
@@ -437,7 +437,7 @@ class MainWindow(QMainWindow):
         else:
             print("❌ 파일명 형식이 올바르지 않습니다.")
             print("   - 네이버 스토어 형식: 스마트스토어_전체주문발주발송관리_YYYYMMDD_HHMM.xlsx")
-            print("   - 쿠팡 스토어 형식: DeliveryList(YYYY-MM-DD)_(0).xlsx")
+            print("   - 쿠팡 스토어 형식: DeliveryList(YYYY-MM-DD)로 시작하는 .xlsx 파일")
             return False, None
             
     def open_file_with_default_app(self, file_path):
@@ -778,14 +778,115 @@ class MainWindow(QMainWindow):
             
     def process_coupang_excel_file(self):
         """쿠팡 스토어 엑셀 파일에서 주문번호를 처리합니다."""
-        # 쿠팡 스토어 파일 처리 로직은 추후 구현 예정
-        QMessageBox.information(
-            self,
-            "알림",
-            "쿠팡 스토어 파일 처리 기능은 아직 구현되지 않았습니다.\n"
-            "추후 업데이트를 기대해주세요."
-        )
-        print("❌ 쿠팡 스토어 파일 처리 기능은 아직 구현되지 않았습니다.")
+        try:
+            print(f"\n[쿠팡 스토어 엑셀 파일 처리 시작] 파일: {self.selected_file_path}")
+            
+            # 파일 정보 출력
+            file_size = os.path.getsize(self.selected_file_path)
+            print(f"파일 크기: {file_size:,} 바이트")
+            
+            # 파일 헤더 확인
+            try:
+                with open(self.selected_file_path, 'rb') as f:
+                    header = f.read(8)
+                    print(f"파일 헤더 (16진수): {header.hex()}")
+                    if header.startswith(b'PK\x03\x04'):
+                        print("✓ 파일이 ZIP 형식(.xlsx)으로 확인됨")
+                    elif header.startswith(b'\xD0\xCF\x11\xE0'):
+                        print("✓ 파일이 OLE2 형식(.xls)으로 확인됨")
+                    else:
+                        print("! 알 수 없는 파일 형식")
+            except Exception as e:
+                print(f"! 파일 헤더 확인 실패: {str(e)}")
+            
+            # 엑셀 파일 읽기
+            df = pd.read_excel(self.selected_file_path)
+            print(f"\n[열 정보]")
+            print(f"감지된 열 목록: {', '.join(str(col) for col in df.columns)}")
+            
+            # 필요한 열 찾기
+            required_columns = {
+                '주문번호': None,
+                '수취인이름': None,
+                '등록상품명': None,
+                '등록옵션명': None,
+                '구매수(수량)': None
+            }
+            
+            for col in df.columns:
+                col_str = str(col)
+                for key in required_columns.keys():
+                    if key in col_str:
+                        required_columns[key] = col
+                        print(f"✓ '{key}' 열을 찾았습니다: {col}")
+            
+            # 필수 열이 모두 있는지 확인
+            missing_columns = [key for key, value in required_columns.items() if value is None]
+            if missing_columns:
+                print(f"❌ 다음 열을 찾을 수 없습니다: {', '.join(missing_columns)}")
+                QMessageBox.warning(self, "오류", f"다음 열을 찾을 수 없습니다:\n{', '.join(missing_columns)}")
+                return
+            
+            # 주문 정보 정리
+            print("\n[주문 정보 정리]")
+            self.orders = {}
+            
+            # 주문번호별로 주문 정보 정리
+            for _, row in df.iterrows():
+                order_number = str(row[required_columns['주문번호']])
+                if pd.isna(order_number) or order_number.strip() == '':
+                    continue
+                
+                if order_number not in self.orders:
+                    self.orders[order_number] = {
+                        '수취인이름': str(row[required_columns['수취인이름']]),
+                        '상품목록': []
+                    }
+                
+                # 상품 정보 추가
+                product_name = str(row[required_columns['등록상품명']])
+                option = str(row[required_columns['등록옵션명']])
+                quantity = int(row[required_columns['구매수(수량)']]) if not pd.isna(row[required_columns['구매수(수량)']]) else 1
+                
+                self.orders[order_number]['상품목록'].append({
+                    '상품명': product_name,
+                    '옵션': option,
+                    '수량': quantity
+                })
+            
+            # 마크다운 형식으로 주문 정보 생성
+            markdown_text = ""
+            
+            for order_number, info in self.orders.items():
+                # 수취인명 표시
+                markdown_text += f"- [ ] {info['수취인이름']}\n"
+                
+                # 상품 목록 표시
+                for product in info['상품목록']:
+                    product_name = product['상품명']
+                    option = product['옵션']
+                    quantity = product['수량']
+                    
+                    markdown_text += f"{product_name} ( 옵션 : {option} ) - {quantity} 개\n"
+                
+                markdown_text += "\n"  # 주문 간 구분을 위한 빈 줄
+            
+            # plainTextEdit에 마크다운 텍스트 표시
+            self.ui.plainTextEdit.setPlainText(markdown_text)
+            
+            # 클립보드에 자동 복사
+            clipboard = QApplication.clipboard()
+            clipboard.setText(markdown_text)
+            self.statusBar().showMessage("주문 정보가 클립보드에 복사되었습니다.", 2000)
+            
+        except Exception as e:
+            error_msg = str(e)
+            print(f"❌ 엑셀 파일 처리 중 오류 발생: {error_msg}")
+            QMessageBox.critical(
+                self,
+                "오류",
+                "엑셀 파일 처리 중 오류가 발생했습니다.\n\n{error_msg}"
+            )
 
     def generate_work_order(self):
         """작업지시서 생성 버튼 클릭 시 실행되는 함수입니다."""
