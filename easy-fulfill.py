@@ -15,8 +15,8 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QFileDialog, QMessageB
                               QInputDialog, QLineEdit, QTableWidgetItem, QLabel, 
                               QDialog, QVBoxLayout, QHBoxLayout, QPushButton)
 from PySide6.QtUiTools import QUiLoader
-from PySide6.QtCore import QFile, QIODevice, Qt, QSize
-from PySide6.QtGui import QPixmap, QImage
+from PySide6.QtCore import QFile, QIODevice, Qt, QSize, QUrl
+from PySide6.QtGui import QPixmap, QImage, QIcon, QAction, QDesktopServices
 import requests
 from io import BytesIO
 import warnings
@@ -297,9 +297,33 @@ class MainWindow(QMainWindow):
         # 메인 윈도우 설정
         self.setCentralWidget(window.centralwidget)
         self.setMenuBar(window.menubar)
+        
+        # 툴바 설정
+        self.setup_toolbar()
+        
         self.setStatusBar(window.statusbar)
         self.setWindowTitle(window.windowTitle())
         self.resize(window.size())
+        
+    def setup_toolbar(self):
+        """툴바를 설정합니다."""
+        # 툴바 생성
+        toolbar = self.addToolBar('툴바')
+        toolbar.setOrientation(Qt.Vertical)  # 툴바를 세로로 설정
+        self.addToolBar(Qt.LeftToolBarArea, toolbar)  # 툴바를 좌측에 배치
+        
+        # 노션 홈페이지 액션
+        notionAction = QAction(QIcon('image/notion.png'), '노션', self)
+        notionAction.setStatusTip('노션 홈페이지로 이동')
+        notionAction.triggered.connect(lambda: QDesktopServices.openUrl(QUrl("https://www.notion.so")))
+        toolbar.addAction(notionAction)
+        
+        # 종료 액션
+        exitAction = QAction(QIcon('image/exit.png'), '종료', self)
+        exitAction.setShortcut('Ctrl+Q')
+        exitAction.setStatusTip('프로그램 종료')
+        exitAction.triggered.connect(QApplication.quit)
+        toolbar.addAction(exitAction)
         
     def setup_status_bar(self):
         """상태바를 초기화하고 기본 메시지를 설정합니다."""

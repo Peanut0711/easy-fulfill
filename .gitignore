@@ -1,3 +1,7 @@
 output/
 input/
 ui/__pycache__/
+build/
+easy-fulfill.spec
+dist/
+dist.7z
