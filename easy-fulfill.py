@@ -13,7 +13,7 @@ import tempfile
 import msoffcrypto
 from PySide6.QtWidgets import (QApplication, QMainWindow, QFileDialog, QMessageBox, 
                               QInputDialog, QLineEdit, QTableWidgetItem, QLabel, 
-                              QDialog, QVBoxLayout, QHBoxLayout, QPushButton)
+                              QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QWidget)
 from PySide6.QtUiTools import QUiLoader
 from PySide6.QtCore import QFile, QIODevice, Qt, QSize, QUrl
 from PySide6.QtGui import QPixmap, QImage, QIcon, QAction, QDesktopServices
@@ -296,7 +296,7 @@ class MainWindow(QMainWindow):
         
         # 메인 윈도우 설정
         self.setCentralWidget(window.centralwidget)
-        self.setMenuBar(window.menubar)
+        # self.setMenuBar(window.menubar)
         
         # 툴바 설정
         self.setup_toolbar()
@@ -309,10 +309,54 @@ class MainWindow(QMainWindow):
         """툴바를 설정합니다."""
         # 툴바 생성
         toolbar = self.addToolBar('툴바')
-        # toolbar.setOrientation(Qt.Vertical)  # 툴바를 세로로 설정
-        # self.addToolBar(Qt.LeftToolBarArea, toolbar)  # 툴바를 좌측에 배치
-                
-        # 열기 액션
+        toolbar.setIconSize(QSize(24, 24))  # 아이콘 크기를 24x24로 축소
+        
+        # 툴바를 세로로 설정하고 좌측에 배치
+        # toolbar.setOrientation(Qt.Vertical)
+        # self.addToolBar(Qt.LeftToolBarArea, toolbar)
+        
+        # 툴바 스타일 설정
+        toolbar.setStyleSheet("""
+            QToolBar {
+                spacing: 5px;
+                padding: 5px;
+                background-color: #f5f5f5;
+                border: none;
+            }
+            QToolBar QToolButton {
+                min-width: 40px;
+                min-height: 40px;
+                padding: 5px;
+                margin: 2px;
+                border: 1.5px solid #dcdcdc;
+                border-radius: 8px;
+                background-color: white;
+            }
+            QToolBar QToolButton:hover {
+                background-color: #e8e8e8;
+                border-color: #c0c0c0;
+            }
+            QToolBar QToolButton:pressed {
+                background-color: #d0d0d0;
+                border-color: #a0a0a0;
+            }
+        """)
+        
+        # 불러오기 액션
+        loadAction = QAction(QIcon('image/load.png'), '불러오기', self)
+        loadAction.setShortcut('Ctrl+O')
+        loadAction.setStatusTip('불러오기 (Ctrl+O)')
+        loadAction.triggered.connect(self.select_excel_file)
+        toolbar.addAction(loadAction)
+
+        # 엑셀 송장 출력 액션
+        exportAction = QAction(QIcon('image/excel.png'), '엑셀 송장 출력', self)
+        exportAction.setShortcut('Ctrl+E')
+        exportAction.setStatusTip('엑셀 송장 출력 (Ctrl+E)')
+        exportAction.triggered.connect(self.export_invoice_excel)
+        toolbar.addAction(exportAction)
+
+        # 폴더 열기 액션
         openAction = QAction(QIcon('image/open.png'), '폴더 열기', self)
         openAction.setShortcut('Ctrl+F')
         openAction.setStatusTip('output 폴더 열기 (Ctrl+F)')
@@ -326,6 +370,13 @@ class MainWindow(QMainWindow):
         copyAction.triggered.connect(self.copy_to_clipboard)
         toolbar.addAction(copyAction)
 
+        # 초기화 액션
+        clearAction = QAction(QIcon('image/reset.png'), '초기화', self)
+        clearAction.setShortcut('Ctrl+R')
+        clearAction.setStatusTip('초기화 (Ctrl+R)')
+        clearAction.triggered.connect(self.clear_list)
+        toolbar.addAction(clearAction)
+
         # 노션 홈페이지 액션
         notionAction = QAction(QIcon('image/notion.png'), '노션', self)
         notionAction.setShortcut('Ctrl+N')
@@ -334,9 +385,9 @@ class MainWindow(QMainWindow):
         toolbar.addAction(notionAction)
 
         # 우체국 홈페이지 액션
-        notionAction = QAction(QIcon('image/Korea_Post.png'), '우체국', self)
-        notionAction.setShortcut('Ctrl+E')
-        notionAction.setStatusTip('우체국 홈페이지로 이동 (Ctrl+E)')
+        notionAction = QAction(QIcon('image/korea_post.png'), '우체국', self)
+        notionAction.setShortcut('Ctrl+P')
+        notionAction.setStatusTip('우체국 홈페이지로 이동 (Ctrl+P)')
         notionAction.triggered.connect(lambda: QDesktopServices.openUrl(QUrl("https://biz.epost.go.kr/ui/index.jsp")))
         toolbar.addAction(notionAction)
         
@@ -362,14 +413,58 @@ class MainWindow(QMainWindow):
         
     def setup_status_bar(self):
         """상태바를 초기화하고 기본 메시지를 설정합니다."""
-        self.statusBar().showMessage("준비")
+        statusbar = self.statusBar()
+        
+        # 기본 레이블 생성 및 설정
+        self.status_label = QLabel()
+        self.status_label.setAlignment(Qt.AlignCenter)  # 중앙 정렬
+        self.status_label.setMinimumHeight(30)  # 최소 높이 설정
+        self.status_label.setStyleSheet("""
+            QLabel {
+                color: #333333;
+                font-size: 12pt;
+                font-weight: bold;
+                font-family: Arial;
+                padding: 0 10px;
+                background-color: #f5f5f5;
+                width: 100%;
+            }
+        """)
+        
+        # 상태바에 레이블을 추가하고 너비를 최대로 설정
+        statusbar.removeWidget(self.status_label)  # 기존 위젯 제거
+        statusbar.addWidget(self.status_label, 1)  # stretch factor 1로 설정하여 최대 너비 사용
+        
+        # 상태바 스타일 설정
+        statusbar.setStyleSheet("""
+            QStatusBar {
+                background-color: #f5f5f5;
+                min-height: 35px;
+                border-top: 1px solid #dcdcdc;
+            }
+            QStatusBar::item {
+                border: none;
+                width: 100%;
+            }
+        """)
+        
+        def update_status_label(message):
+            """상태바 메시지 업데이트 시 레이블도 함께 업데이트"""
+            if message:  # 메시지가 있을 때만 업데이트
+                self.status_label.setText(message)
+                statusbar.clearMessage()  # 기본 메시지 클리어
+        
+        # 상태바 메시지 변경 시그널 연결
+        statusbar.messageChanged.connect(update_status_label)
+        statusbar.showMessage("준비")  # 초기 메시지 설정
         
     def setup_connections(self):
         """버튼과 메뉴 동작을 연결합니다."""
         # 버튼 연결
-        self.ui.selectFileButton.clicked.connect(self.select_excel_file)
-        self.ui.generateButton.clicked.connect(self.generate_work_order)
-        self.ui.exportInvoiceButton.clicked.connect(self.export_invoice_excel)
+        # self.ui.selectFileButton.clicked.connect(self.select_excel_file)        
+        # self.ui.exportInvoiceButton.clicked.connect(self.export_invoice_excel)
+        # self.ui.generateButton.clicked.connect(self.generate_work_order)
+        # self.ui.clearButton.clicked.connect(self.clear_list)
         
         # 상품 분류 탭 버튼 연결
         self.ui.selectProductFileButton.clicked.connect(self.select_product_file)
@@ -833,7 +928,7 @@ class MainWindow(QMainWindow):
                 return
             
             # 주문 정보 정리
-            print("\n[주문 정보 정리]")
+            # print("\n[주문 정보 정리]")
             self.orders = {}
             
             # 주문번호별로 주문 정보 정리
@@ -844,7 +939,7 @@ class MainWindow(QMainWindow):
                 
                 if order_number not in self.orders:
                     phone_value = row[required_columns['수취인전화번호']]
-                    print(f"수취인전화번호 값: {phone_value}, 타입: {type(phone_value)}")
+                    # print(f"수취인전화번호 값: {phone_value}, 타입: {type(phone_value)}")
                     self.orders[order_number] = {
                         '수취인이름': str(row[required_columns['수취인이름']]),
                         '수취인주소': str(row[required_columns['수취인 주소']]),
@@ -907,7 +1002,23 @@ class MainWindow(QMainWindow):
         print("작업지시서 생성됨")
         self.statusBar().showMessage("작업지시서 생성 완료")
         # 여기에 실제 작업지시서 생성 로직이 추가될 예정입니다.
+
+    def clear_list(self):
+        """리스트 초기화 버튼 클릭 시 실행되는 함수입니다."""
+        # 주문 정보 초기화
+        self.orders = {}
         
+        # 파일 관련 정보 초기화
+        self.selected_file_path = None
+        self.store_type = None
+        
+        # UI 요소 초기화
+        self.ui.filePathLabel.setText("선택된 파일 없음")
+        self.ui.plainTextEdit.setPlainText("")
+        
+        # 상태바 메시지 업데이트
+        self.statusBar().showMessage("모든 정보가 초기화되었습니다.")
+
     def show_about(self):
         """프로그램 정보를 보여주는 대화상자를 표시합니다."""
         QMessageBox.about(
@@ -1106,7 +1217,7 @@ class MainWindow(QMainWindow):
             msg.setIcon(QMessageBox.Information)
             msg.setWindowTitle("완료")
             msg.setText("송장 엑셀 파일이 생성되었습니다.")
-            msg.setInformativeText(f"파일 위치:\n{output_file}")
+            # msg.setInformativeText(f"파일 위치:\n{output_file}")
             
             # 버튼 추가
             open_location_button = msg.addButton("폴더 열기", QMessageBox.ActionRole)
