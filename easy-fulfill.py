@@ -263,6 +263,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         print("초기화 시작")
         self.selected_file_path = None
+        self.store_type = None
         self.orders = {}  # orders 변수를 인스턴스 변수로 초기화
         self.load_ui()
         self.setup_connections()
@@ -469,7 +470,7 @@ class MainWindow(QMainWindow):
             print(f"\n[파일 선택됨] 경로: {file_path}")
             filename = os.path.basename(file_path)
             
-            is_valid, store_type = self.is_valid_filename(filename)
+            is_valid, self.store_type = self.is_valid_filename(filename)
             
             if is_valid:
                 self.selected_file_path = file_path
@@ -478,10 +479,10 @@ class MainWindow(QMainWindow):
                 print("✓ 파일이 성공적으로 선택되었습니다.")
                 
                 # 스토어 타입에 따라 다른 처리 메서드 호출
-                if store_type == "naver":
+                if self.store_type == "naver":
                     print("✓ 네이버 스토어 파일 처리 시작")
                     self.process_naver_excel_file()
-                elif store_type == "coupang":
+                elif self.store_type == "coupang":
                     print("✓ 쿠팡 스토어 파일 처리 시작")
                     self.process_coupang_excel_file()
             else:
@@ -951,64 +952,66 @@ class MainWindow(QMainWindow):
             # 데이터프레임 생성을 위한 데이터 준비
             invoice_data = []
             
-            # 수취인 정보 기준으로 주문 통합 (시간 무관)
-            consolidated_orders = {}
-            
-            # 주문 통합 처리
-            for pattern, info in self.orders.items():
-                # 수취인명과 연락처로 키 생성 (주소는 제외 - 같은 사람이 다른 주소로 배송 요청할 수 있음)
-                key = (info['수취인명'], info['수취인연락처1'])
+            if self.store_type == "naver":
+                # 수취인 정보 기준으로 주문 통합 (시간 무관)
+                consolidated_orders = {}
                 
-                if key not in consolidated_orders:
-                    consolidated_orders[key] = {
-                        '수취인명': info['수취인명'],
-                        '수취인연락처1': info['수취인연락처1'],
-                        '통합배송지': info['통합배송지'],  # 첫 번째 주문의 주소 사용
-                        '구매자연락처': info['구매자연락처'],
-                        '배송메세지': info['배송메세지'],
-                        '주문번호목록': info['주문번호목록'],
-                        '상품목록': info['상품목록'].copy(),
-                        '주문시간': min(info['주문번호목록'])  # 가장 빠른 주문 시간 기준
-                    }
-                else:
-                    # 기존 주문에 상품 정보 추가
-                    consolidated_orders[key]['주문번호목록'].extend(info['주문번호목록'])
-                    consolidated_orders[key]['상품목록'].extend(info['상품목록'])
+                # 주문 통합 처리
+                for pattern, info in self.orders.items():
+                    # 수취인명과 연락처로 키 생성 (주소는 제외 - 같은 사람이 다른 주소로 배송 요청할 수 있음)
+                    key = (info['수취인명'], info['수취인연락처1'])
                     
-                    # 주문시간이 더 빠른 경우 주소와 배송메시지 업데이트
-                    earliest_order = min(info['주문번호목록'])
-                    if earliest_order < consolidated_orders[key]['주문시간']:
-                        consolidated_orders[key]['통합배송지'] = info['통합배송지']
-                        consolidated_orders[key]['배송메세지'] = info['배송메세지']
-                        consolidated_orders[key]['주문시간'] = earliest_order
-                    # 기존 주문이 더 빠르고 현재 주문에 배송메시지가 있는 경우에만 업데이트
-                    elif info['배송메세지'].strip():
-                        consolidated_orders[key]['배송메세지'] = info['배송메세지']
+                    if key not in consolidated_orders:
+                        consolidated_orders[key] = {
+                            '수취인명': info['수취인명'],
+                            '수취인연락처1': info['수취인연락처1'],
+                            '통합배송지': info['통합배송지'],
+                            '배송메세지': info['배송메세지'],
+                            '상품목록': info['상품목록'].copy()
+                        }
+                    else:
+                        # 기존 주문에 상품 정보 추가
+                        consolidated_orders[key]['상품목록'].extend(info['상품목록'])
+                        # 배송메시지가 있는 경우에만 업데이트
+                        if info['배송메세지'].strip():
+                            consolidated_orders[key]['배송메세지'] = info['배송메세지']
 
-            # 통합된 주문 정보로 송장 데이터 생성
-            for info in consolidated_orders.values():
-                invoice_data.append({
-                    '받는분성명': info['수취인명'],
-                    '받는분전화번호': info['수취인연락처1'],
-                    '받는분기타연락처': '',
-                    '받는분주소(전체, 분할)': info['통합배송지'],
-                    '상품명': '전자제품',
-                    '내품수량': '1',
-                    '배송메세지1': info['배송메세지']
-                })
+                # 통합된 주문 정보로 송장 데이터 생성
+                for info in consolidated_orders.values():
+                    invoice_data.append({
+                        '주문번호': '',
+                        '고객주문처명': '',
+                        '수취인명': info['수취인명'],
+                        '우편번호': '',
+                        '수취인 주소': info['통합배송지'],
+                        '수취인 전화번호': info['수취인연락처1'],
+                        '수취인 이동통신': info['수취인연락처1'],
+                        '상품명': info['상품목록'][0]['상품명'],  # 첫 번째 상품명 사용
+                        '상품모델': '전자제품',
+                        '배송메세지': info['배송메세지'],
+                        '비고': ''
+                    })
+            elif self.store_type == "coupang":
+                # 쿠팡 스토어 처리 (추후 구현)
+                QMessageBox.warning(self, "경고", "쿠팡 스토어는 아직 지원되지 않습니다.")
+                return
             
             # 데이터프레임 생성
             df_invoice = pd.DataFrame(invoice_data)
             
             # 열 순서 지정
             columns = [
-                '받는분성명',
-                '받는분전화번호',
-                '받는분기타연락처',
-                '받는분주소(전체, 분할)',
+                '주문번호',
+                '고객주문처명',
+                '수취인명',
+                '우편번호',
+                '수취인 주소',
+                '수취인 전화번호',
+                '수취인 이동통신',
                 '상품명',
-                '내품수량',
-                '배송메세지1'
+                '상품모델',
+                '배송메세지',
+                '비고'
             ]
             df_invoice = df_invoice[columns]
             
