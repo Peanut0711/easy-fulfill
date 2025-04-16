@@ -343,61 +343,81 @@ class MainWindow(QMainWindow):
         """)
         
         # 불러오기 액션
-        loadAction = QAction(QIcon('image/load.png'), '불러오기', self)
+        loadAction = QAction(QIcon('image/open-file-icon.png'), '파일 불러오기', self)
         loadAction.setShortcut('Ctrl+O')
-        loadAction.setStatusTip('불러오기 (Ctrl+O)')
+        loadAction.setStatusTip('파일 불러오기 (Ctrl+O)')
         loadAction.triggered.connect(self.select_excel_file)
         toolbar.addAction(loadAction)
 
         # 복사 액션
-        copyAction = QAction(QIcon('image/copy.png'), '복사', self)
+        copyAction = QAction(QIcon('image/copy-icon.png'), '클립보드에 복사', self)
         copyAction.setShortcut('Ctrl+C')
         copyAction.setStatusTip('클립보드에 복사 (Ctrl+C)')
         copyAction.triggered.connect(self.copy_to_clipboard)
-        toolbar.addAction(copyAction)
-
-        # 노션 홈페이지 액션
-        notionAction = QAction(QIcon('image/notion.png'), '노션', self)
-        notionAction.setShortcut('Ctrl+N')
-        notionAction.setStatusTip('노션 홈페이지로 이동 (Ctrl+N)')
-        notionAction.triggered.connect(lambda: QDesktopServices.openUrl(QUrl("https://www.notion.so")))
-        toolbar.addAction(notionAction)
+        toolbar.addAction(copyAction)        
 
         # 엑셀 송장 출력 액션
-        exportAction = QAction(QIcon('image/excel.png'), '엑셀 송장 출력', self)
+        exportAction = QAction(QIcon('image/microsoft-excel-icon.png'), '엑셀 송장 출력', self)
         exportAction.setShortcut('Ctrl+E')
         exportAction.setStatusTip('엑셀 송장 출력 (Ctrl+E)')
         exportAction.triggered.connect(self.export_invoice_excel)
         toolbar.addAction(exportAction)
 
         # 폴더 열기 액션
-        openAction = QAction(QIcon('image/open.png'), '폴더 열기', self)
+        openAction = QAction(QIcon('image/folder-icon.png'), '출력된 폴더 열기', self)
         openAction.setShortcut('Ctrl+F')
-        openAction.setStatusTip('output 폴더 열기 (Ctrl+F)')
+        openAction.setStatusTip('출력된 폴더 열기 (Ctrl+F)')
         openAction.triggered.connect(self.open_output_folder)
-        toolbar.addAction(openAction)                
-
+        toolbar.addAction(openAction)                                
+        
+        # 구분자 추가
+        toolbar.addSeparator()
+        
+        # 노션 홈페이지 액션
+        notionAction = QAction(QIcon('image/notion.png'), '노션 홈페이지로 이동', self)
+        notionAction.setShortcut('Ctrl+N')
+        notionAction.setStatusTip('노션 홈페이지로 이동 (Ctrl+N)')
+        notionAction.triggered.connect(lambda: QDesktopServices.openUrl(QUrl("https://www.notion.so")))
+        toolbar.addAction(notionAction)
+        
         # 우체국 홈페이지 액션
-        notionAction = QAction(QIcon('image/korea_post.png'), '우체국', self)
+        notionAction = QAction(QIcon('image/korea-post.png'), '우체국 홈페이지로 이동', self)
         notionAction.setShortcut('Ctrl+P')
         notionAction.setStatusTip('우체국 홈페이지로 이동 (Ctrl+P)')
         notionAction.triggered.connect(lambda: QDesktopServices.openUrl(QUrl("https://biz.epost.go.kr/ui/index.jsp")))
         toolbar.addAction(notionAction)
-
+        
+        # 네이버 스마트스토어 액션
+        naverStoreAction = QAction(QIcon('image/smart_store_icon.png'), '네이버 스마트스토어 페이지로 이동', self)        
+        naverStoreAction.setStatusTip('네이버 스마트스토어 페이지로 이동')
+        naverStoreAction.triggered.connect(lambda: QDesktopServices.openUrl(QUrl("https://sell.smartstore.naver.com/#/home/about")))
+        toolbar.addAction(naverStoreAction)
+        
+        # 쿠팡 스토어 액션
+        coupangStoreAction = QAction(QIcon('image/coupang_wing.png'), '쿠팡 스토어 페이지로 이동', self)        
+        coupangStoreAction.setStatusTip('쿠팡 스토어 페이지로 이동')
+        coupangStoreAction.triggered.connect(lambda: QDesktopServices.openUrl(QUrl("https://wing.coupang.com/")))
+        toolbar.addAction(coupangStoreAction)
+        
+         # 구분자 추가
+        toolbar.addSeparator()
+        
         # 초기화 액션
-        clearAction = QAction(QIcon('image/reset.png'), '초기화', self)
+        clearAction = QAction(QIcon('image/reset-icon-2.png'), '주문 정보 초기화', self)
         clearAction.setShortcut('Ctrl+R')
-        clearAction.setStatusTip('초기화 (Ctrl+R)')
+        clearAction.setStatusTip('주문 정보 초기화 (Ctrl+R)')
         clearAction.triggered.connect(self.clear_list)
-        toolbar.addAction(clearAction)
+        toolbar.addAction(clearAction)  
         
         # 종료 액션
-        exitAction = QAction(QIcon('image/exit.png'), '종료', self)
+        exitAction = QAction(QIcon('image/exit-icon.png'), '프로그램 종료', self)
         exitAction.setShortcut('Ctrl+Q')
         exitAction.setStatusTip('프로그램 종료 (Ctrl+Q)')
         exitAction.triggered.connect(QApplication.quit)
         toolbar.addAction(exitAction)
         
+        
+
     def copy_to_clipboard(self):
         """plainTextEdit의 내용을 클립보드에 복사합니다."""
         try:
@@ -1031,7 +1051,7 @@ class MainWindow(QMainWindow):
         
         # 로고 초기화
         self.ui.label_logo.clear()
-        self.ui.label_logo.setText("로고")
+        self.ui.label_logo.setText("주문 정보 없음")
         
         # 상태바 메시지 업데이트
         self.statusBar().showMessage("모든 정보가 초기화되었습니다.")
