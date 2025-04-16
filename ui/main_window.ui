@@ -26,7 +26,7 @@
     <item>
      <widget class="QTabWidget" name="tabWidget">
       <property name="currentIndex">
-       <number>0</number>
+       <number>1</number>
       </property>
       <widget class="QWidget" name="tab">
        <attribute name="title">
@@ -35,7 +35,7 @@
        <widget class="QLabel" name="filePathLabel">
         <property name="geometry">
          <rect>
-          <x>190</x>
+          <x>180</x>
           <y>20</y>
           <width>491</width>
           <height>40</height>
@@ -56,7 +56,7 @@
         <property name="font">
          <font>
           <family>맑은 고딕</family>
-          <pointsize>10</pointsize>
+          <pointsize>13</pointsize>
           <bold>true</bold>
          </font>
         </property>
@@ -124,6 +124,68 @@
         </property>
         <property name="alignment">
          <set>Qt::AlignmentFlag::AlignCenter</set>
+        </property>
+       </widget>
+      </widget>
+      <widget class="QWidget" name="tab_3">
+       <attribute name="title">
+        <string>발송처리</string>
+       </attribute>
+       <widget class="QLabel" name="label_invoice">
+        <property name="geometry">
+         <rect>
+          <x>110</x>
+          <y>30</y>
+          <width>331</width>
+          <height>40</height>
+         </rect>
+        </property>
+        <property name="frameShape">
+         <enum>QFrame::Shape::Panel</enum>
+        </property>
+        <property name="frameShadow">
+         <enum>QFrame::Shadow::Sunken</enum>
+        </property>
+        <property name="text">
+         <string>TextLabel</string>
+        </property>
+        <property name="alignment">
+         <set>Qt::AlignmentFlag::AlignCenter</set>
+        </property>
+       </widget>
+       <widget class="QPushButton" name="pushButton_load_invoice">
+        <property name="geometry">
+         <rect>
+          <x>490</x>
+          <y>30</y>
+          <width>111</width>
+          <height>40</height>
+         </rect>
+        </property>
+        <property name="text">
+         <string>불러오기</string>
+        </property>
+       </widget>
+       <widget class="QPlainTextEdit" name="plainTextEdit_invoice">
+        <property name="geometry">
+         <rect>
+          <x>30</x>
+          <y>90</y>
+          <width>641</width>
+          <height>421</height>
+         </rect>
+        </property>
+        <property name="sizePolicy">
+         <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+          <horstretch>0</horstretch>
+          <verstretch>0</verstretch>
+         </sizepolicy>
+        </property>
+        <property name="frameShape">
+         <enum>QFrame::Shape::StyledPanel</enum>
+        </property>
+        <property name="frameShadow">
+         <enum>QFrame::Shadow::Plain</enum>
         </property>
        </widget>
       </widget>

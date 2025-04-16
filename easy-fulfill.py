@@ -484,6 +484,9 @@ class MainWindow(QMainWindow):
         # self.ui.generateButton.clicked.connect(self.generate_work_order)
         # self.ui.clearButton.clicked.connect(self.clear_list)
         
+        # 발송 처리 탭 버튼 연결
+        self.ui.pushButton_load_invoice.clicked.connect(self.load_invoice_file)
+        
         # 상품 분류 탭 버튼 연결
         self.ui.selectProductFileButton.clicked.connect(self.select_product_file)
         self.ui.categorizeButton.clicked.connect(self.categorize_products)
@@ -1280,6 +1283,108 @@ class MainWindow(QMainWindow):
                 "오류",
                 f"송장 엑셀 파일 생성 중 오류가 발생했습니다.\n\n{error_msg}"
             )
+            
+    def load_invoice_file(self):
+        """엑셀 파일을 선택하는 다이얼로그를 표시합니다."""
+        # 다운로드 폴더 경로 설정
+        downloads_path = os.path.join(os.path.expanduser("~"), "Downloads")
+        
+        file_path, _ = QFileDialog.getOpenFileName(
+        self,
+        "엑셀 파일 선택",
+        downloads_path,
+        "Excel Files (*.xlsx *.xls)"
+        )                
+        if file_path:
+            try:
+                # plainTextEdit_invoice 초기화
+                self.ui.plainTextEdit_invoice.setPlainText("")
+                
+                print(f"\n[파일 선택됨] 경로: {file_path}")
+                filename = os.path.basename(file_path)
+                
+                # 파일명 검증
+                if not filename.endswith('.xlsx'):
+                    QMessageBox.warning(self, "오류", "파일 확장자가 .xlsx가 아닙니다.")
+                    return
+                    
+                # 파일명에서 확장자를 제외한 부분 추출
+                base_name = filename[:-5]  # .xlsx를 제외
+                
+                # 13자리 숫자 검증
+                if len(base_name) < 13 or not base_name[:13].isdigit():
+                    QMessageBox.warning(
+                        self,
+                        "오류",
+                        "파일명이 올바른 형식이 아닙니다.\n"
+                        "파일명은 13자리 숫자로 시작해야 합니다.\n"
+                        "예: 1744778498617.xlsx 또는 1744171918081 (1).xlsx"
+                    )
+                    return
+                
+                self.invoice_file_path = file_path
+                self.ui.label_invoice.setText(filename)
+                
+                # 엑셀 파일 읽기
+                df = pd.read_excel(file_path, header=6)  # 7번째 행을 헤더로 사용
+                
+                # 필요한 열 찾기
+                required_columns = {
+                    '등기번호': None,
+                    '수취인명': None,
+                    '이동통신': None,
+                    '수취인상세주소': None
+                }
+                
+                # 열 이름 매칭
+                for col in df.columns:
+                    col_str = str(col).strip()
+                    for key in required_columns.keys():
+                        if key in col_str:  # 부분 일치로 검색
+                            required_columns[key] = col
+                            print(f"✓ '{key}' 열을 찾았습니다: {col}")
+                
+                # 필수 열이 모두 있는지 확인
+                missing_columns = [key for key, value in required_columns.items() if value is None]
+                if missing_columns:
+                    print(f"❌ 다음 열을 찾을 수 없습니다: {', '.join(missing_columns)}")
+                    QMessageBox.warning(self, "오류", f"다음 열을 찾을 수 없습니다:\n{', '.join(missing_columns)}")
+                    return
+                
+                # 마크다운 형식으로 주문 정보 생성
+                markdown_text = ""
+                
+                # 각 행을 순회하며 주문 정보 생성
+                for _, row in df.iterrows():
+                    # 빈 행 건너뛰기
+                    if pd.isna(row[required_columns['등기번호']]):
+                        continue
+                        
+                    # 주문 정보 추가
+                    markdown_text += f"- [ ] {row[required_columns['수취인명']]}\n"
+                    markdown_text += f"  송장번호: {row[required_columns['등기번호']]}\n"
+                    markdown_text += f"  전화번호: {row[required_columns['이동통신']]}\n"
+                    markdown_text += f"  주소: {row[required_columns['수취인상세주소']]}\n\n"
+                
+                # plainTextEdit_invoice 마크다운 텍스트 표시
+                self.ui.plainTextEdit_invoice.setPlainText(markdown_text)
+                
+                # 클립보드에 자동 복사
+                clipboard = QApplication.clipboard()
+                clipboard.setText(markdown_text)
+                
+                self.statusBar().showMessage(f"송장 파일 선택됨: {filename}")
+                print("✓ 송장 파일이 성공적으로 선택되었습니다.")
+                
+            except Exception as e:
+                error_msg = str(e)
+                print(f"❌ 엑셀 파일 처리 중 오류 발생: {error_msg}")
+                # 사용자에게는 간단한 메시지만 표시
+                QMessageBox.warning(
+                    self,
+                    "오류",
+                    "올바르지 않은 파일 형식입니다."
+                )
 
     def select_product_file(self):
         """상품 파일을 선택하는 다이얼로그를 표시합니다."""
