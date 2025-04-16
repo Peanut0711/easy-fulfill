@@ -6,8 +6,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>732</width>
-    <height>682</height>
+    <width>726</width>
+    <height>674</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -67,7 +67,7 @@
          <enum>QFrame::Shadow::Sunken</enum>
         </property>
         <property name="text">
-         <string>선택된 파일 없음 ( Ctrl + O )</string>
+         <string>주문 정보가 없습니다. ( Ctrl + O )</string>
         </property>
         <property name="alignment">
          <set>Qt::AlignmentFlag::AlignCenter</set>
@@ -79,11 +79,23 @@
        <widget class="QPlainTextEdit" name="plainTextEdit">
         <property name="geometry">
          <rect>
-          <x>20</x>
+          <x>30</x>
           <y>80</y>
-          <width>661</width>
-          <height>481</height>
+          <width>641</width>
+          <height>421</height>
          </rect>
+        </property>
+        <property name="sizePolicy">
+         <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+          <horstretch>0</horstretch>
+          <verstretch>0</verstretch>
+         </sizepolicy>
+        </property>
+        <property name="frameShape">
+         <enum>QFrame::Shape::StyledPanel</enum>
+        </property>
+        <property name="frameShadow">
+         <enum>QFrame::Shadow::Plain</enum>
         </property>
        </widget>
        <widget class="QLabel" name="label_logo">
@@ -108,7 +120,7 @@
          <enum>QFrame::Shadow::Plain</enum>
         </property>
         <property name="text">
-         <string>주문 정보 없음</string>
+         <string>image</string>
         </property>
         <property name="alignment">
          <set>Qt::AlignmentFlag::AlignCenter</set>
@@ -336,7 +348,7 @@
     <rect>
      <x>0</x>
      <y>0</y>
-     <width>732</width>
+     <width>726</width>
      <height>33</height>
     </rect>
    </property>

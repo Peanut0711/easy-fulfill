@@ -623,7 +623,7 @@ class MainWindow(QMainWindow):
                     "쿠팡 스토어: DeliveryList(YYYY-MM-DD)_(0).xlsx"
                 )
                 self.selected_file_path = None
-                self.ui.filePathLabel.setText("선택된 파일 없음 ( Ctrl + O )")
+                self.ui.filePathLabel.setText("주문 정보가 없습니다. ( Ctrl + O )")
                 self.statusBar().showMessage("잘못된 파일명")
                 print("❌ 파일 선택이 취소되었습니다.")
         else:
@@ -1044,12 +1044,12 @@ class MainWindow(QMainWindow):
         self.store_type = None
         
         # UI 요소 초기화
-        self.ui.filePathLabel.setText("선택된 파일 없음 ( Ctrl + O )")
+        self.ui.filePathLabel.setText("주문 정보가 없습니다. ( Ctrl + O )")
         self.ui.plainTextEdit.setPlainText("")
         
         # 로고 초기화
         self.ui.label_logo.clear()
-        self.ui.label_logo.setText("주문 정보 없음")
+        self.ui.label_logo.setText("image")
         
         # 상태바 메시지 업데이트
         self.statusBar().showMessage("모든 정보가 초기화되었습니다.")
