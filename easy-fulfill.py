@@ -751,6 +751,7 @@ class MainWindow(QMainWindow):
                 '구매자연락처': None,
                 '배송메세지': None,
                 '상품명': None,
+                '옵션정보': None,
                 '수량': None
             }
             
@@ -824,12 +825,14 @@ class MainWindow(QMainWindow):
                         # 상품 정보
                         product_name = str(row[required_columns['상품명']])
                         quantity = int(row[required_columns['수량']]) if not pd.isna(row[required_columns['수량']]) else 1
+                        option = str(row[required_columns['옵션정보']]) if not pd.isna(row[required_columns['옵션정보']]) else "없음"
                         
                         # 상품 정보 추가
                         self.orders[pattern]['상품수'] += 1  # orders를 self.orders로 변경
                         self.orders[pattern]['상품목록'].append({  # orders를 self.orders로 변경
                             '상품명': product_name,
-                            '수량': quantity
+                            '수량': quantity,
+                            '옵션': option
                         })
                         
                         # 수취인 정보가 다른 경우 경고
@@ -855,17 +858,9 @@ class MainWindow(QMainWindow):
                 for product in info['상품목록']:
                     product_name = product['상품명']
                     quantity = product['수량']
+                    option = product['옵션']
                     
-                    # 옵션 정보 추출 (상품명에서 괄호 안의 내용)
-                    option_match = re.search(r'\((.*?)\)', product_name)
-                    if option_match:
-                        option = option_match.group(1)
-                        # 원래 상품명에서 옵션 부분 제거
-                        product_name = re.sub(r'\s*\(.*?\)', '', product_name)
-                    else:
-                        option = "없음"
-                    
-                    markdown_text += f"{product_name} ( 옵션: {option} ) - {quantity} 개\n"
+                    markdown_text += f"{product_name} ( 옵션 : {option} ) - {quantity} 개\n"
                 
                 markdown_text += "\n"  # 주문 간 구분을 위한 빈 줄
             
