@@ -11,6 +11,7 @@ import numpy as np
 import subprocess
 import tempfile
 import msoffcrypto
+import shutil
 from PySide6.QtWidgets import (QApplication, QMainWindow, QFileDialog, QMessageBox, 
                               QInputDialog, QLineEdit, QTableWidgetItem, QLabel, 
                               QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QWidget)
@@ -264,6 +265,8 @@ class MainWindow(QMainWindow):
         self.selected_file_path = None
         self.store_type = None
         self.orders = {}  # orders 변수를 인스턴스 변수로 초기화
+        self.is_order_file_valid = False  # 주문서 파일 유효성 플래그
+        self.is_invoice_file_valid = False  # 송장 파일 유효성 플래그
         self.load_ui()
         self.setup_connections()
         self.setup_status_bar()
@@ -364,7 +367,7 @@ class MainWindow(QMainWindow):
         toolbar.addAction(exportAction)
 
         # 폴더 열기 액션
-        openAction = QAction(QIcon('image/folder-icon.png'), '출력된 폴더 열기', self)
+        openAction = QAction(QIcon('image/folder-icon.png'), '출력된 폴더 열기', self)        
         openAction.setShortcut('Ctrl+F')
         openAction.setStatusTip('출력된 폴더 열기 (Ctrl+F)')
         openAction.triggered.connect(self.open_output_folder)
@@ -486,6 +489,7 @@ class MainWindow(QMainWindow):
         
         # 발송 처리 탭 버튼 연결
         self.ui.pushButton_load_invoice.clicked.connect(self.load_invoice_file)
+        self.ui.pushButton_generate_invoice.clicked.connect(self.generate_invoice_file)
         
         # 상품 분류 탭 버튼 연결
         self.ui.selectProductFileButton.clicked.connect(self.select_product_file)
@@ -571,7 +575,7 @@ class MainWindow(QMainWindow):
             return False
             
     def select_excel_file(self):
-        """엑셀 파일을 선택하는 다이얼로그를 표시합니다."""
+        """주문서 엑셀 파일을 선택하는 다이얼로그를 표시합니다."""
         # 다운로드 폴더 경로 설정
         downloads_path = os.path.join(os.path.expanduser("~"), "Downloads")
         
@@ -611,13 +615,21 @@ class MainWindow(QMainWindow):
                     print(f"! 로고 파일을 찾을 수 없습니다: {logo_path}")
                 
                 # 스토어 타입에 따라 다른 처리 메서드 호출
-                if self.store_type == "naver":
-                    print("✓ 네이버 스토어 파일 처리 시작")
-                    self.process_naver_excel_file()
-                elif self.store_type == "coupang":
-                    print("✓ 쿠팡 스토어 파일 처리 시작")
-                    self.process_coupang_excel_file()
+                try:
+                    if self.store_type == "naver":
+                        print("✓ 네이버 스토어 파일 처리 시작")
+                        self.process_naver_excel_file()
+                        self.is_order_file_valid = True  # 파일 처리 성공 시 플래그 설정
+                    elif self.store_type == "coupang":
+                        print("✓ 쿠팡 스토어 파일 처리 시작")
+                        self.process_coupang_excel_file()
+                        self.is_order_file_valid = True  # 파일 처리 성공 시 플래그 설정
+                except Exception as e:
+                    self.is_order_file_valid = False
+                    print(f"❌ 파일 처리 중 오류 발생: {str(e)}")
+                    QMessageBox.warning(self, "오류", f"파일 처리 중 오류가 발생했습니다: {str(e)}")
             else:
+                self.is_order_file_valid = False
                 QMessageBox.warning(
                     self,
                     "잘못된 파일명",
@@ -630,6 +642,7 @@ class MainWindow(QMainWindow):
                 self.statusBar().showMessage("잘못된 파일명")
                 print("❌ 파일 선택이 취소되었습니다.")
         else:
+            self.is_order_file_valid = False
             print("\n[알림] 파일 선택이 취소되었습니다.")
             
     def process_naver_excel_file(self):
@@ -1305,6 +1318,7 @@ class MainWindow(QMainWindow):
                 
                 # 파일명 검증
                 if not filename.endswith('.xlsx'):
+                    self.is_invoice_file_valid = False
                     QMessageBox.warning(self, "오류", "파일 확장자가 .xlsx가 아닙니다.")
                     return
                     
@@ -1313,6 +1327,7 @@ class MainWindow(QMainWindow):
                 
                 # 13자리 숫자 검증
                 if len(base_name) < 13 or not base_name[:13].isdigit():
+                    self.is_invoice_file_valid = False
                     QMessageBox.warning(
                         self,
                         "오류",
@@ -1347,6 +1362,7 @@ class MainWindow(QMainWindow):
                 # 필수 열이 모두 있는지 확인
                 missing_columns = [key for key, value in required_columns.items() if value is None]
                 if missing_columns:
+                    self.is_invoice_file_valid = False
                     print(f"❌ 다음 열을 찾을 수 없습니다: {', '.join(missing_columns)}")
                     QMessageBox.warning(self, "오류", f"다음 열을 찾을 수 없습니다:\n{', '.join(missing_columns)}")
                     return
@@ -1375,9 +1391,11 @@ class MainWindow(QMainWindow):
                 clipboard.setText(markdown_text)
                 
                 self.statusBar().showMessage(f"송장 파일 선택됨: {filename}")
-                print("✓ 송장 파일이 성공적으로 선택되었습니다.")                
+                print("✓ 송장 파일이 성공적으로 선택되었습니다.")
+                self.is_invoice_file_valid = True  # 파일 처리 성공 시 플래그 설정
                 
             except Exception as e:
+                self.is_invoice_file_valid = False
                 error_msg = str(e)
                 print(f"❌ 엑셀 파일 처리 중 오류 발생: {error_msg}")
                 # 사용자에게는 간단한 메시지만 표시
@@ -1386,6 +1404,179 @@ class MainWindow(QMainWindow):
                     "오류",
                     "올바르지 않은 파일 형식입니다."
                 )
+                
+    def generate_invoice_file(self):
+        """일괄 발송 파일을 생성합니다."""
+        if not self.is_order_file_valid or not self.is_invoice_file_valid:
+            QMessageBox.warning(self, "경고", "먼저 유효한 주문서와 송장 파일을 선택해주세요.")
+            return
+            
+        try:
+            # 임시 디렉토리 생성
+            temp_dir = Path("temp")
+            temp_dir.mkdir(exist_ok=True)
+            
+            # 파일 복사
+            temp_order_file = temp_dir / "temp_order.xlsx"
+            temp_invoice_file = temp_dir / "temp_invoice.xlsx"
+            shutil.copy2(self.selected_file_path, temp_order_file)
+            shutil.copy2(self.invoice_file_path, temp_invoice_file)
+            
+            # 주문서 파일 읽기
+            print("\n[주문서 파일 처리]")
+            password = "1234"
+            decrypted_order_file = temp_dir / "decrypted_order.xlsx"
+            
+            with open(temp_order_file, 'rb') as file:
+                office_file = msoffcrypto.OfficeFile(file)
+                office_file.load_key(password=password)
+                with open(decrypted_order_file, 'wb') as output_file:
+                    office_file.decrypt(output_file)
+            
+            # 주문서 데이터프레임 생성
+            order_df = pd.read_excel(decrypted_order_file, sheet_name='발주발송관리', header=None)
+            order_df = order_df.drop(0).reset_index(drop=True)
+            
+            # 열 이름 설정
+            new_columns = []
+            for i in range(len(order_df.columns)):
+                col_name = str(order_df.iloc[0, i]).strip()
+                new_columns.append(col_name if col_name and not col_name.startswith('Unnamed') else f'Column_{i}')
+            
+            order_df.columns = new_columns
+            order_df = order_df.drop(0).reset_index(drop=True)
+            
+            # 송장 파일 읽기
+            print("\n[송장 파일 처리]")
+            invoice_df = pd.read_excel(temp_invoice_file, header=6)
+            
+            # 필요한 열 매핑
+            column_mapping = {
+                'order': {
+                    '수취인명': None,
+                    '수취인연락처1': None,
+                    '통합배송지': None
+                },
+                'invoice': {
+                    '등기번호': None,
+                    '수취인명': None,
+                    '이동통신': None,
+                    '수취인상세주소': None
+                }
+            }
+            
+            # 열 이름 매핑
+            for col in order_df.columns:
+                col_str = str(col).strip()
+                for key in column_mapping['order'].keys():
+                    if key in col_str:
+                        column_mapping['order'][key] = col
+                        print(f"✓ 주문서 '{key}' 열 찾음: {col}")
+            
+            for col in invoice_df.columns:
+                col_str = str(col).strip()
+                for key in column_mapping['invoice'].keys():
+                    if key in col_str:
+                        column_mapping['invoice'][key] = col
+                        print(f"✓ 송장서 '{key}' 열 찾음: {col}")
+            
+            # 송장 정보 매칭
+            print("\n[송장 정보 매칭]")
+            for _, invoice_row in invoice_df.iterrows():
+                invoice_name = str(invoice_row[column_mapping['invoice']['수취인명']])
+                invoice_phone = str(invoice_row[column_mapping['invoice']['이동통신']])
+                invoice_number = str(invoice_row[column_mapping['invoice']['등기번호']])
+                
+                # 매칭되는 행 찾기
+                matching_rows = order_df[
+                    (order_df[column_mapping['order']['수취인명']] == invoice_name) &
+                    (order_df[column_mapping['order']['수취인연락처1']] == invoice_phone)
+                ]
+                
+                if not matching_rows.empty:
+                    order_df.loc[matching_rows.index, '송장번호'] = invoice_number
+                    print(f"✓ 매칭 성공: {invoice_name} ({invoice_phone})")
+                else:
+                    # 수취인명만 일치하는 경우 출력
+                    name_matching_rows = order_df[order_df[column_mapping['order']['수취인명']] == invoice_name]
+                    if not name_matching_rows.empty:
+                        print(f"! 수취인명은 일치하지만 전화번호가 다른 경우: {invoice_name}")
+                        print(f"  송장 전화번호: {invoice_phone}")
+                        print(f"  주문서 전화번호: {name_matching_rows[column_mapping['order']['수취인연락처1']].iloc[0]}\n")
+            
+            # 결과 파일 저장
+            output_dir = Path("output")
+            output_dir.mkdir(exist_ok=True)
+            
+            current_time = datetime.now().strftime("%Y%m%d%H%M%S")
+            output_file = output_dir / f"일괄발송_{current_time}.xlsx"
+            
+            with pd.ExcelWriter(output_file, engine='xlsxwriter') as writer:
+                order_df.to_excel(writer, index=False, sheet_name='발송처리')
+                
+                worksheet = writer.sheets['발송처리']
+                workbook = writer.book
+                
+                # 포맷 설정
+                center_format = workbook.add_format({
+                    'align': 'center',
+                    'valign': 'vcenter'
+                })
+                
+                header_format = workbook.add_format({
+                    'align': 'center',
+                    'valign': 'vcenter',
+                    'bold': True
+                })
+                
+                # 열 너비 및 포맷 적용
+                for idx, col in enumerate(order_df.columns):
+                    max_length = max(
+                        order_df[col].astype(str).apply(len).max(),
+                        len(str(col))
+                    )
+                    adjusted_width = max_length * 2 if any('\u3131' <= c <= '\u318E' or '\uAC00' <= c <= '\uD7A3' for c in str(col)) else max_length
+                    worksheet.set_column(idx, idx, adjusted_width + 2, center_format)
+                
+                for col_num, value in enumerate(order_df.columns.values):
+                    worksheet.write(0, col_num, value, header_format)
+                
+                worksheet.set_default_row(20)
+            
+            # 임시 파일 정리
+            decrypted_order_file.unlink()
+            temp_order_file.unlink()
+            temp_invoice_file.unlink()
+            temp_dir.rmdir()
+            
+            # 성공 메시지 표시
+            msg = QMessageBox()
+            msg.setIcon(QMessageBox.Information)
+            msg.setWindowTitle("완료")
+            msg.setText("일괄 발송 파일이 생성되었습니다.")
+            
+            open_location_button = msg.addButton("폴더 열기", QMessageBox.ActionRole)
+            open_file_button = msg.addButton("파일 열기", QMessageBox.ActionRole)
+            close_button = msg.addButton("닫기", QMessageBox.RejectRole)
+            
+            msg.setDefaultButton(close_button)
+            msg.exec()
+            
+            if msg.clickedButton() == open_location_button:
+                if not self.open_file_location(output_file):
+                    QMessageBox.warning(self, "오류", "파일 위치를 열 수 없습니다.")
+            elif msg.clickedButton() == open_file_button:
+                if not self.open_file_with_default_app(output_file):
+                    QMessageBox.warning(self, "오류", "파일을 열 수 없습니다.\n엑셀이 설치되어 있는지 확인해주세요.")
+            
+        except Exception as e:
+            error_msg = str(e)
+            print(f"❌ 일괄 발송 파일 생성 중 오류 발생: {error_msg}")
+            QMessageBox.critical(
+                self,
+                "오류",
+                f"일괄 발송 파일 생성 중 오류가 발생했습니다.\n\n{error_msg}"
+            )
 
     def select_product_file(self):
         """상품 파일을 선택하는 다이얼로그를 표시합니다."""
