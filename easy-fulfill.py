@@ -482,37 +482,38 @@ class MainWindow(QMainWindow):
         print(f"\n[파일명 검증 시작] 파일명: {filename}")
         
         # 네이버 스토어 파일 형식 검사
-        naver_pattern = r'^스마트스토어_(전체|선택)주문발주발송관리_(\d{8})_(\d{4})\.xlsx$'
+        naver_pattern = r'^스마트스토어_(전체|선택)주문발주발송관리_(\d{8}).*\.xlsx$'
         naver_match = re.match(naver_pattern, filename)
+        
+        print("\n[네이버 스토어 패턴 검사]")
+        print(f"패턴: {naver_pattern}")
+        print(f"매칭 결과: {naver_match}")
+        if naver_match:
+            print(f"매칭된 그룹: {naver_match.groups()}")
         
         # 쿠팡 스토어 파일 형식 검사
         coupang_pattern = r'^DeliveryList\((\d{4}-\d{2}-\d{2})\).*\.xlsx$'
         coupang_match = re.match(coupang_pattern, filename)
         
+        print("\n[쿠팡 스토어 패턴 검사]")
+        print(f"패턴: {coupang_pattern}")
+        print(f"매칭 결과: {coupang_match}")
+        if coupang_match:
+            print(f"매칭된 그룹: {coupang_match.groups()}")
+        
         if naver_match:
-            # 날짜와 시간 유효성 검사
+            # 날짜 유효성 검사
             date_str = naver_match.group(2)
-            time_str = naver_match.group(3)
             
             try:
                 # 날짜 형식 검증 (YYYYMMDD)
                 date = datetime.strptime(date_str, '%Y%m%d')
                 print(f"✓ 날짜 형식 검증 완료: {date.strftime('%Y년 %m월 %d일')}")
-                
-                # 시간 형식 검증 (HHMM)
-                hour = int(time_str[:2])
-                minute = int(time_str[2:])
-                
-                if hour < 0 or hour > 23 or minute < 0 or minute > 59:
-                    print(f"❌ 잘못된 시간 형식: {hour:02d}:{minute:02d}")
-                    return False, None
-                    
-                print(f"✓ 시간 형식 검증 완료: {hour:02d}시 {minute:02d}분")
                 print("✓ 네이버 스토어 파일명 검증 성공")
                 return True, "naver"
                 
             except ValueError:
-                print("❌ 날짜/시간 형식이 올바르지 않습니다.")
+                print("❌ 날짜 형식이 올바르지 않습니다.")
                 return False, None
         elif coupang_match:
             # 날짜 유효성 검사
@@ -530,7 +531,7 @@ class MainWindow(QMainWindow):
                 return False, None
         else:
             print("❌ 파일명 형식이 올바르지 않습니다.")
-            print("   - 네이버 스토어 형식: 스마트스토어_전체주문발주발송관리_YYYYMMDD_HHMM.xlsx")
+            print("   - 네이버 스토어 형식: 스마트스토어_전체주문발주발송관리_YYYYMMDD로 시작하는 .xlsx 파일")
             print("   - 쿠팡 스토어 형식: DeliveryList(YYYY-MM-DD)로 시작하는 .xlsx 파일")
             return False, None
             
@@ -662,7 +663,7 @@ class MainWindow(QMainWindow):
                 print(f"데이터프레임 정보:")
                 print(f"- 행 수: {len(df)}")
                 print(f"- 열 수: {len(df.columns)}")
-                print(f"- 열 이름: {list(df.columns)}")
+                # print(f"- 열 이름: {list(df.columns)}")
                 
                 # 임시 파일 삭제
                 os.unlink(temp_path)
@@ -753,8 +754,8 @@ class MainWindow(QMainWindow):
                 '수량': None
             }
             
-            print("\n[열 정보]")
-            print(f"감지된 열 목록: {', '.join(str(col) for col in df.columns)}")
+            # print("\n[열 정보]")
+            # print(f"감지된 열 목록: {', '.join(str(col) for col in df.columns)}")
             
             for col in df.columns:
                 col_str = str(col)
@@ -1032,6 +1033,10 @@ class MainWindow(QMainWindow):
         # UI 요소 초기화
         self.ui.filePathLabel.setText("선택된 파일 없음")
         self.ui.plainTextEdit.setPlainText("")
+        
+        # 로고 초기화
+        self.ui.label_logo.clear()
+        self.ui.label_logo.setText("로고")
         
         # 상태바 메시지 업데이트
         self.statusBar().showMessage("모든 정보가 초기화되었습니다.")
