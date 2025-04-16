@@ -67,7 +67,7 @@
          <enum>QFrame::Shadow::Sunken</enum>
         </property>
         <property name="text">
-         <string>선택된 파일 없음</string>
+         <string>선택된 파일 없음 ( Ctrl + O )</string>
         </property>
         <property name="alignment">
          <set>Qt::AlignmentFlag::AlignCenter</set>

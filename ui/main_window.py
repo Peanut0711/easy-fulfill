@@ -205,7 +205,7 @@ class Ui_MainWindow(object):
         self.actionExit.setShortcut(QCoreApplication.translate("MainWindow", u"Alt+F4", None))
 #endif // QT_CONFIG(shortcut)
         self.actionAbout.setText(QCoreApplication.translate("MainWindow", u"\ud504\ub85c\uadf8\ub7a8 \uc815\ubcf4(&A)", None))
-        self.filePathLabel.setText(QCoreApplication.translate("MainWindow", u"\uc120\ud0dd\ub41c \ud30c\uc77c \uc5c6\uc74c", None))
+        self.filePathLabel.setText(QCoreApplication.translate("MainWindow", u"\uc120\ud0dd\ub41c \ud30c\uc77c \uc5c6\uc74c ( Ctrl + O )", None))
         self.label_logo.setText(QCoreApplication.translate("MainWindow", u"\uc8fc\ubb38 \uc815\ubcf4 \uc5c6\uc74c", None))
         self.tabWidget.setTabText(self.tabWidget.indexOf(self.tab), QCoreApplication.translate("MainWindow", u"\uc8fc\ubb38\ucc98\ub9ac", None))
         self.productFileLabel.setText(QCoreApplication.translate("MainWindow", u"\uc120\ud0dd\ub41c \ud30c\uc77c \uc5c6\uc74c", None))

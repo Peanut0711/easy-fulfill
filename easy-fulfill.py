@@ -619,11 +619,11 @@ class MainWindow(QMainWindow):
                     self,
                     "잘못된 파일명",
                     "올바른 파일명 형식이 아닙니다.\n\n"
-                    "네이버 스토어: 스마트스토어_전체주문발주발송관리_20240405_1509.xlsx\n"
-                    "쿠팡 스토어: DeliveryList(2025-04-06)_(0).xlsx"
+                    "네이버 스토어: 스마트스토어_전체주문발주발송관리_YYYYMMDD_HHMM.xlsx\n"
+                    "쿠팡 스토어: DeliveryList(YYYY-MM-DD)_(0).xlsx"
                 )
                 self.selected_file_path = None
-                self.ui.filePathLabel.setText("선택된 파일 없음")
+                self.ui.filePathLabel.setText("선택된 파일 없음 ( Ctrl + O )")
                 self.statusBar().showMessage("잘못된 파일명")
                 print("❌ 파일 선택이 취소되었습니다.")
         else:
@@ -1044,7 +1044,7 @@ class MainWindow(QMainWindow):
         self.store_type = None
         
         # UI 요소 초기화
-        self.ui.filePathLabel.setText("선택된 파일 없음")
+        self.ui.filePathLabel.setText("선택된 파일 없음 ( Ctrl + O )")
         self.ui.plainTextEdit.setPlainText("")
         
         # 로고 초기화
