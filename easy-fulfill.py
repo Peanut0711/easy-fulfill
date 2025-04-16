@@ -309,7 +309,7 @@ class MainWindow(QMainWindow):
         """툴바를 설정합니다."""
         # 툴바 생성
         toolbar = self.addToolBar('툴바')
-        toolbar.setIconSize(QSize(28, 28))
+        toolbar.setIconSize(QSize(32, 32))
         
         # 툴바를 세로로 설정하고 좌측에 배치
         # toolbar.setOrientation(Qt.Vertical)
@@ -374,27 +374,25 @@ class MainWindow(QMainWindow):
         toolbar.addSeparator()
         
         # 노션 홈페이지 액션
-        notionAction = QAction(QIcon('image/notion.png'), '노션 홈페이지로 이동', self)
-        notionAction.setShortcut('Ctrl+N')
-        notionAction.setStatusTip('노션 홈페이지로 이동 (Ctrl+N)')
+        notionAction = QAction(QIcon('image/notion-icon.png'), '노션 홈페이지로 이동', self)        
+        notionAction.setStatusTip('노션 홈페이지로 이동')
         notionAction.triggered.connect(lambda: QDesktopServices.openUrl(QUrl("https://www.notion.so")))
         toolbar.addAction(notionAction)
         
         # 우체국 홈페이지 액션
-        notionAction = QAction(QIcon('image/korea-post.png'), '우체국 홈페이지로 이동', self)
-        notionAction.setShortcut('Ctrl+P')
-        notionAction.setStatusTip('우체국 홈페이지로 이동 (Ctrl+P)')
+        notionAction = QAction(QIcon('image/korea-post-icon.png'), '우체국 홈페이지로 이동', self)
+        notionAction.setStatusTip('우체국 홈페이지로 이동')
         notionAction.triggered.connect(lambda: QDesktopServices.openUrl(QUrl("https://biz.epost.go.kr/ui/index.jsp")))
         toolbar.addAction(notionAction)
         
         # 네이버 스마트스토어 액션
-        naverStoreAction = QAction(QIcon('image/smart_store_icon.png'), '네이버 스마트스토어 페이지로 이동', self)        
+        naverStoreAction = QAction(QIcon('image/smart-store-icon.png'), '네이버 스마트스토어 페이지로 이동', self)        
         naverStoreAction.setStatusTip('네이버 스마트스토어 페이지로 이동')
         naverStoreAction.triggered.connect(lambda: QDesktopServices.openUrl(QUrl("https://sell.smartstore.naver.com/#/home/about")))
         toolbar.addAction(naverStoreAction)
         
         # 쿠팡 스토어 액션
-        coupangStoreAction = QAction(QIcon('image/coupang_wing.png'), '쿠팡 스토어 페이지로 이동', self)        
+        coupangStoreAction = QAction(QIcon('image/coupang-wing-icon.png'), '쿠팡 스토어 페이지로 이동', self)        
         coupangStoreAction.setStatusTip('쿠팡 스토어 페이지로 이동')
         coupangStoreAction.triggered.connect(lambda: QDesktopServices.openUrl(QUrl("https://wing.coupang.com/")))
         toolbar.addAction(coupangStoreAction)
@@ -403,7 +401,7 @@ class MainWindow(QMainWindow):
         toolbar.addSeparator()
         
         # 초기화 액션
-        clearAction = QAction(QIcon('image/reset-icon-2.png'), '주문 정보 초기화', self)
+        clearAction = QAction(QIcon('image/reset-icon.png'), '주문 정보 초기화', self)
         clearAction.setShortcut('Ctrl+R')
         clearAction.setStatusTip('주문 정보 초기화 (Ctrl+R)')
         clearAction.triggered.connect(self.clear_list)
@@ -594,11 +592,11 @@ class MainWindow(QMainWindow):
                 
                 # 스토어 타입에 따라 로고 표시
                 if self.store_type == "naver":
-                    logo_path = "image/naver_logo.png"
+                    logo_path = "image/naver-logo.png"
                     logo_size = QSize(120, 40)  # 네이버 로고 크기
                 else:  # coupang
-                    logo_path = "image/coupang_logo.png"
-                    logo_size = QSize(150, 40)  # 쿠팡 로고 크기
+                    logo_path = "image/coupang-logo.png"
+                    logo_size = QSize(120, 40)  # 쿠팡 로고 크기
                 
                 # 로고 이미지 로드 및 표시
                 if os.path.exists(logo_path):
