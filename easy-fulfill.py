@@ -1182,7 +1182,7 @@ class MainWindow(QMainWindow):
                 consolidated_orders = {}
                 
                 for order_number, info in self.orders.items():
-                    print(f"\n[주문 처리 시작] 주문번호: {order_number}")
+                    print(f"[주문 처리 시작] 주문번호: {order_number}")
                     
                     # 수취인명, 연락처, 주문번호로 키 생성
                     key = (info['수취인이름'], info['수취인전화번호'], order_number)
