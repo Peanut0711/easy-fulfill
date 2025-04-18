@@ -787,7 +787,7 @@ class MainWindow(QMainWindow):
                 '상품명': None,
                 '옵션정보': None,
                 '수량': None,
-                '우편번호': None  # 우편번호 열 추가
+                '우편번호': None
             }
             
             # print("\n[열 정보]")
