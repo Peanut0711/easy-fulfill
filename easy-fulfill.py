@@ -1457,18 +1457,55 @@ class MainWindow(QMainWindow):
             
             # 주문서 파일 읽기
             print("\n[주문서 파일 처리]")
-            password = "1234"
-            decrypted_order_file = temp_dir / "decrypted_order.xlsx"
+            if self.store_type == "naver":
+                print("\n[네이버 주문서 파일 읽기]")
+                print(f"파일 경로: {temp_order_file}")
+                password = "1234"
+                decrypted_order_file = temp_dir / "decrypted_order.xlsx"
+                
+                print("파일 복호화 시도 중...")
+                try:
+                    with open(temp_order_file, 'rb') as file:
+                        office_file = msoffcrypto.OfficeFile(file)
+                        office_file.load_key(password=password)
+                        with open(decrypted_order_file, 'wb') as output_file:
+                            office_file.decrypt(output_file)
+                    print("✓ 파일 복호화 성공")
+                except Exception as e:
+                    print(f"❌ 파일 복호화 실패: {str(e)}")
+                    raise
+                
+                print("\n엑셀 파일 읽기 시도 중...")
+                try:
+                    order_df = pd.read_excel(decrypted_order_file, sheet_name='발주발송관리', header=None)
+                    print("✓ 엑셀 파일 읽기 성공")
+                    print(f"데이터프레임 구조:")
+                    print(f"- 행 수: {len(order_df)}")
+                    print(f"- 열 수: {len(order_df.columns)}")
+                    print(f"- 첫 번째 행: {order_df.iloc[0].tolist()}")
+                except Exception as e:
+                    print(f"❌ 엑셀 파일 읽기 실패: {str(e)}")
+                    raise
+            elif self.store_type == "coupang":
+                # 쿠팡 스토어는 비밀번호가 없으므로 바로 파일 읽기
+                print("\n[쿠팡 주문서 파일 읽기]")
+                print(f"파일 경로: {temp_order_file}")
+                order_df = pd.read_excel(temp_order_file, header=None)
+                print(f"데이터프레임 구조:")
+                print(f"- 행 수: {len(order_df)}")
+                print(f"- 열 수: {len(order_df.columns)}")
+                print(f"- 열 이름: {order_df.iloc[0].tolist()}")
             
-            with open(temp_order_file, 'rb') as file:
-                office_file = msoffcrypto.OfficeFile(file)
-                office_file.load_key(password=password)
-                with open(decrypted_order_file, 'wb') as output_file:
-                    office_file.decrypt(output_file)
+            print("\n[데이터프레임 전처리]")
+            print("첫 번째 행 삭제 전:")
+            print(f"- 행 수: {len(order_df)}")
+            print(f"- 첫 번째 행: {order_df.iloc[0].tolist()}")
             
-            # 주문서 데이터프레임 생성
-            order_df = pd.read_excel(decrypted_order_file, sheet_name='발주발송관리', header=None)
             order_df = order_df.drop(0).reset_index(drop=True)
+            
+            print("\n첫 번째 행 삭제 후:")
+            print(f"- 행 수: {len(order_df)}")
+            print(f"- 첫 번째 행: {order_df.iloc[0].tolist()}")
             
             # 열 이름 설정
             new_columns = []
@@ -1476,12 +1513,34 @@ class MainWindow(QMainWindow):
                 col_name = str(order_df.iloc[0, i]).strip()
                 new_columns.append(col_name if col_name and not col_name.startswith('Unnamed') else f'Column_{i}')
             
+            print("\n[열 이름 설정]")
+            print(f"설정된 열 이름: {new_columns}")
+            
             order_df.columns = new_columns
             order_df = order_df.drop(0).reset_index(drop=True)
             
+            print("\n[최종 데이터프레임 정보]")
+            print(f"- 행 수: {len(order_df)}")
+            print(f"- 열 수: {len(order_df.columns)}")
+            print(f"- 열 이름: {order_df.columns.tolist()}")
+            print("\n데이터 샘플 (첫 3행):")
+            print(order_df.head(3))
+            
             # 송장 파일 읽기
             print("\n[송장 파일 처리]")
-            invoice_df = pd.read_excel(temp_invoice_file, header=6)
+            print(f"송장 파일 경로: {temp_invoice_file}")
+            try:
+                invoice_df = pd.read_excel(temp_invoice_file, header=6)
+                print("✓ 송장 파일 읽기 성공")
+                print(f"송장 데이터프레임 구조:")
+                print(f"- 행 수: {len(invoice_df)}")
+                print(f"- 열 수: {len(invoice_df.columns)}")
+                print(f"- 열 이름: {invoice_df.columns.tolist()}")
+                print("\n송장 데이터 샘플 (첫 3행):")
+                print(invoice_df.head(3))
+            except Exception as e:
+                print(f"❌ 송장 파일 읽기 실패: {str(e)}")
+                raise
             
             # 필요한 열 매핑
             column_mapping = {
@@ -1498,44 +1557,135 @@ class MainWindow(QMainWindow):
                 }
             }
             
+            # 스토어 타입에 따라 다른 열 매핑 설정
+            if self.store_type == "naver":
+                print("\n[네이버 스토어 열 매핑 설정]")
+                column_mapping['order'] = {
+                    '수취인명': None,
+                    '수취인연락처1': None,
+                    '통합배송지': None
+                }
+            elif self.store_type == "coupang":
+                print("\n[쿠팡 스토어 열 매핑 설정]")
+                column_mapping['order'] = {
+                    '수취인명': None,  # 수취인명으로 변경
+                    '수취인전화번호': None,  # 수취인전화번호로 변경
+                    '수취인주소': None  # 수취인주소로 변경
+                }
+            
             # 열 이름 매핑
+            print("\n[주문서 열 매핑]")
             for col in order_df.columns:
                 col_str = str(col).strip()
+                print(f"검사 중인 열: {col_str}")
                 for key in column_mapping['order'].keys():
                     if key in col_str:
                         column_mapping['order'][key] = col
                         print(f"✓ 주문서 '{key}' 열 찾음: {col}")
             
+            # 매핑되지 않은 열이 있는 경우 추가 검사
+            missing_mappings = [key for key, value in column_mapping['order'].items() if value is None]
+            if missing_mappings:
+                print("\n[추가 열 매핑 시도]")
+                print("매핑되지 않은 열:", missing_mappings)
+                print("사용 가능한 열 목록:", order_df.columns.tolist())
+                
+                # 수취인명 매핑 시도
+                if '수취인명' in missing_mappings:
+                    for col in order_df.columns:
+                        col_str = str(col).strip()
+                        if '수취인' in col_str and '명' in col_str:
+                            column_mapping['order']['수취인명'] = col
+                            print(f"✓ 수취인명 매핑: {col}")
+                            break
+                
+                # 전화번호 매핑 시도
+                if '수취인전화번호' in missing_mappings:
+                    for col in order_df.columns:
+                        col_str = str(col).strip()
+                        if '전화' in col_str or '연락처' in col_str:
+                            column_mapping['order']['수취인전화번호'] = col
+                            print(f"✓ 전화번호 매핑: {col}")
+                            break
+                
+                # 주소 매핑 시도
+                if '수취인주소' in missing_mappings:
+                    for col in order_df.columns:
+                        col_str = str(col).strip()
+                        if '주소' in col_str:
+                            column_mapping['order']['수취인주소'] = col
+                            print(f"✓ 주소 매핑: {col}")
+                            break
+            
+            print("\n[송장서 열 매핑]")
             for col in invoice_df.columns:
                 col_str = str(col).strip()
+                print(f"검사 중인 열: {col_str}")
                 for key in column_mapping['invoice'].keys():
                     if key in col_str:
                         column_mapping['invoice'][key] = col
                         print(f"✓ 송장서 '{key}' 열 찾음: {col}")
             
+            # 매핑된 열 확인
+            print("\n[매핑 결과 확인]")
+            print("주문서 매핑:")
+            for key, value in column_mapping['order'].items():
+                print(f"- {key}: {value}")
+            print("\n송장서 매핑:")
+            for key, value in column_mapping['invoice'].items():
+                print(f"- {key}: {value}")
+            
+            # 매핑 누락 확인
+            missing_mappings = []
+            for key, value in column_mapping['order'].items():
+                if value is None:
+                    missing_mappings.append(f"주문서: {key}")
+            for key, value in column_mapping['invoice'].items():
+                if value is None:
+                    missing_mappings.append(f"송장서: {key}")
+            
+            if missing_mappings:
+                print("\n❌ 매핑되지 않은 열:")
+                for mapping in missing_mappings:
+                    print(f"- {mapping}")
+                raise ValueError("필수 열이 매핑되지 않았습니다.")
+            
             # 송장 정보 매칭
             print("\n[송장 정보 매칭]")
-            for _, invoice_row in invoice_df.iterrows():
+            for idx, invoice_row in invoice_df.iterrows():
+                print(f"\n처리 중인 송장 행: {idx + 1}")
                 invoice_name = str(invoice_row[column_mapping['invoice']['수취인명']])
                 invoice_phone = str(invoice_row[column_mapping['invoice']['이동통신']])
                 invoice_number = str(invoice_row[column_mapping['invoice']['등기번호']])
                 
-                # 매칭되는 행 찾기
-                matching_rows = order_df[
-                    (order_df[column_mapping['order']['수취인명']] == invoice_name) &
-                    (order_df[column_mapping['order']['수취인연락처1']] == invoice_phone)
-                ]
+                print(f"송장 정보:")
+                print(f"- 수취인명: {invoice_name}")
+                print(f"- 전화번호: {invoice_phone}")
+                print(f"- 송장번호: {invoice_number}")
                 
-                if not matching_rows.empty:
-                    order_df.loc[matching_rows.index, '송장번호'] = invoice_number
-                    print(f"✓ 매칭 성공: {invoice_name} ({invoice_phone})")
-                else:
-                    # 수취인명만 일치하는 경우 출력
-                    name_matching_rows = order_df[order_df[column_mapping['order']['수취인명']] == invoice_name]
-                    if not name_matching_rows.empty:
-                        print(f"! 수취인명은 일치하지만 전화번호가 다른 경우: {invoice_name}")
-                        print(f"  송장 전화번호: {invoice_phone}")
-                        print(f"  주문서 전화번호: {name_matching_rows[column_mapping['order']['수취인연락처1']].iloc[0]}\n")
+                # 매칭되는 행 찾기
+                if self.store_type == "naver":
+                    print("\n네이버 주문서 매칭 시도:")
+                    print(f"검색 조건:")
+                    print(f"- 수취인명: {invoice_name}")
+                    print(f"- 수취인연락처1: {invoice_phone}")
+                    
+                    matching_rows = order_df[
+                        (order_df[column_mapping['order']['수취인명']] == invoice_name) &
+                        (order_df[column_mapping['order']['수취인연락처1']] == invoice_phone)
+                    ]
+                    print(f"매칭된 행 수: {len(matching_rows)}")
+                elif self.store_type == "coupang":
+                    print("\n쿠팡 주문서 매칭 시도:")
+                    print(f"검색 조건:")
+                    print(f"- 수취인이름: {invoice_name}")
+                    print(f"- 수취인전화번호: {invoice_phone}")
+                    
+                    matching_rows = order_df[
+                        (order_df[column_mapping['order']['수취인이름']] == invoice_name) &
+                        (order_df[column_mapping['order']['수취인전화번호']] == invoice_phone)
+                    ]
+                    print(f"매칭된 행 수: {len(matching_rows)}")
             
             # 결과 파일 저장
             output_dir = Path("output")

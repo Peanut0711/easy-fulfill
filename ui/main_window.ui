@@ -56,8 +56,8 @@
         <property name="font">
          <font>
           <family>맑은 고딕</family>
-          <pointsize>13</pointsize>
-          <bold>true</bold>
+          <pointsize>9</pointsize>
+          <bold>false</bold>
          </font>
         </property>
         <property name="frameShape">
@@ -109,8 +109,8 @@
         </property>
         <property name="font">
          <font>
-          <pointsize>10</pointsize>
-          <bold>true</bold>
+          <pointsize>9</pointsize>
+          <bold>false</bold>
          </font>
         </property>
         <property name="frameShape">
