@@ -1130,8 +1130,8 @@ class MainWindow(QMainWindow):
                 
                 # 주문 통합 처리
                 for pattern, info in self.orders.items():
-                    # 수취인명과 연락처로 키 생성 (주소는 제외 - 같은 사람이 다른 주소로 배송 요청할 수 있음)
-                    key = (info['수취인명'], info['수취인연락처1'])
+                    # 수취인명, 연락처, 주문번호로 키 생성
+                    key = (info['수취인명'], info['수취인연락처1'], pattern)
                     
                     if key not in consolidated_orders:
                         # 우편번호를 5자리로 고정 (앞에 0 채우기)
@@ -1140,6 +1140,7 @@ class MainWindow(QMainWindow):
                             zipcode = zipcode.zfill(5)
                         
                         consolidated_orders[key] = {
+                            '주문번호': pattern,
                             '수취인명': info['수취인명'],
                             '수취인연락처1': info['수취인연락처1'],
                             '통합배송지': info['통합배송지'],
@@ -1161,7 +1162,7 @@ class MainWindow(QMainWindow):
                         delivery_msg = ''
                         
                     invoice_data.append({
-                        '주문번호': '',
+                        '주문번호': info['주문번호'],
                         '고객주문처명': '',
                         '수취인명': info['수취인명'],
                         '우편번호': info['우편번호'],
@@ -1176,37 +1177,49 @@ class MainWindow(QMainWindow):
             elif self.store_type == "coupang":
                 # 쿠팡 스토어 처리
                 print("\n[쿠팡 스토어 데이터 구조 확인]")
+                
+                # 주문 통합 처리
+                consolidated_orders = {}
+                
                 for order_number, info in self.orders.items():
                     print(f"\n[주문 처리 시작] 주문번호: {order_number}")
                     
-                    # # 우편번호 처리 디버그
-                    # print("\n[우편번호 처리]")
-                    # print(f"원본 우편번호 값: {info.get('우편번호', '없음')}")
-                    # print(f"우편번호 타입: {type(info.get('우편번호'))}")
+                    # 수취인명, 연락처, 주문번호로 키 생성
+                    key = (info['수취인이름'], info['수취인전화번호'], order_number)
                     
-                    # 우편번호 처리
-                    zipcode = str(info.get('우편번호', '')).strip()
-                    print(f"문자열 변환 후: '{zipcode}'")
-                    
-                    if zipcode.isdigit():
-                        zipcode = zipcode.zfill(5)
-                        print(f"5자리 처리 후: '{zipcode}'")
+                    if key not in consolidated_orders:
+                        # 우편번호 처리
+                        zipcode = str(info.get('우편번호', '')).strip()
+                        if zipcode.isdigit():
+                            zipcode = zipcode.zfill(5)
+                        
+                        consolidated_orders[key] = {
+                            '주문번호': order_number,
+                            '수취인이름': info['수취인이름'],
+                            '수취인전화번호': info['수취인전화번호'],
+                            '수취인주소': info['수취인주소'],
+                            '배송메세지': info.get('배송메세지', ''),
+                            '우편번호': zipcode,
+                            '상품목록': info['상품목록'].copy()
+                        }
                     else:
-                        print("우편번호가 숫자가 아닙니다.")
-                    
-                    # 배송 메시지 처리
+                        # 기존 주문에 상품 정보 추가
+                        consolidated_orders[key]['상품목록'].extend(info['상품목록'])
+                        # 배송메시지가 있는 경우에만 업데이트
+                        if info.get('배송메세지', '').strip():
+                            consolidated_orders[key]['배송메세지'] = info['배송메세지']
+                
+                # 통합된 주문 정보로 송장 데이터 생성
+                for info in consolidated_orders.values():
                     delivery_msg = info.get('배송메세지', '')
                     if pd.isna(delivery_msg) or str(delivery_msg).lower() == 'nan':
                         delivery_msg = ''
-                        print("배송 메시지가 없습니다.")
                     
-                    # 송장 데이터 생성
-                    print("\n[송장 데이터 생성]")
                     invoice_data.append({
-                        '주문번호': '',
+                        '주문번호': info['주문번호'],
                         '고객주문처명': '',
                         '수취인명': info['수취인이름'],
-                        '우편번호': zipcode,
+                        '우편번호': info['우편번호'],
                         '수취인 주소': info['수취인주소'],
                         '수취인 전화번호': info['수취인전화번호'],
                         '수취인 이동통신': info['수취인전화번호'],
@@ -1215,7 +1228,6 @@ class MainWindow(QMainWindow):
                         '배송메세지': delivery_msg,
                         '비고': ''
                     })
-                    # print(f"우편번호 '{zipcode}'가 포함된 송장 데이터가 생성되었습니다.")
             
             # 데이터프레임 생성
             df_invoice = pd.DataFrame(invoice_data)
