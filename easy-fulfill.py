@@ -1652,10 +1652,10 @@ class MainWindow(QMainWindow):
                 raise ValueError(f"송장서에서 다음 컬럼을 찾을 수 없습니다: {', '.join(missing_columns)}")
             
             # 샘플 데이터 출력
-            print("\n[송장서 샘플 데이터]")
-            sample_data = invoice_df[[required_invoice_columns['수취인명'], 
-                                    required_invoice_columns['수취인 전화번호']]].head()
-            print(sample_data)
+            # print("\n[송장서 샘플 데이터]")
+            # sample_data = invoice_df[[required_invoice_columns['수취인명'], 
+            #                         required_invoice_columns['수취인 전화번호']]].head()
+            # print(sample_data)
             
             # 3. 운송장번호 매칭 및 채우기
             print("\n[운송장번호 매칭 및 채우기]")
@@ -1672,9 +1672,9 @@ class MainWindow(QMainWindow):
                 invoice_name = str(invoice_row[required_invoice_columns['수취인명']]).strip()
                 invoice_phone = str(invoice_row[required_invoice_columns['수취인 전화번호']]).strip()
                 
-                print(f"\n[매칭 시도 {idx + 1}]")
-                print(f"송장서 수취인명: {invoice_name}")
-                print(f"송장서 전화번호: {invoice_phone}")
+                # print(f"\n[매칭 시도 {idx + 1}]")
+                # print(f"송장서 수취인명: {invoice_name}")
+                # print(f"송장서 전화번호: {invoice_phone}")
                 
                 # 수취인명과 전화번호로 매칭
                 matching_rows = order_df[
@@ -1683,16 +1683,16 @@ class MainWindow(QMainWindow):
                 ]
                 
                 if not matching_rows.empty:
-                    print(f"✓ 매칭 성공!")
+                    print(f"✓ 매칭 성공! {idx + 1}번째 송장")
                     print(f"주문서 수취인명: {matching_rows[required_order_columns['수취인이름']].iloc[0]}")
                     print(f"주문서 전화번호: {matching_rows[required_order_columns['수취인전화번호']].iloc[0]}")
                     
                     order_df.loc[matching_rows.index, '운송장번호'] = invoice_number
                     matched_count += len(matching_rows)
-                    print(f"✓ 운송장번호 업데이트 완료: {invoice_number}")
-                else:
-                    print("❌ 매칭 실패")
-                    print("주문서에서 해당 정보를 찾을 수 없습니다.")
+                    print(f"✓ 운송장번호 업데이트 완료: {invoice_number}\n")
+                # else:
+                #     print("❌ 매칭 실패")
+                #     print("주문서에서 해당 정보를 찾을 수 없습니다.")
             
             print(f"\n✓ 총 {matched_count}개의 주문에 운송장번호가 매칭되었습니다.")
             
