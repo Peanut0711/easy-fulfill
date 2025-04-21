@@ -1713,6 +1713,9 @@ class MainWindow(QMainWindow):
         current_time = datetime.now().strftime("%Y%m%d%H%M%S")
         output_file = output_dir / f"일괄발송_{current_time}.xlsx"
         
+        # 택배사 정보 추가
+        order_df['택배사'] = '우체국택배' # 우체국 택배 강제 입력
+        
         with pd.ExcelWriter(output_file, engine='xlsxwriter') as writer:
             order_df.to_excel(writer, index=False, sheet_name='발송처리')
             
