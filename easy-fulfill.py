@@ -964,9 +964,9 @@ class MainWindow(QMainWindow):
             }
             
             for col in df.columns:
-                col_str = str(col)
+                col_str = str(col).strip()
                 for key in required_columns.keys():
-                    if key == col_str:  # 정확히 일치하는 경우에만 매칭
+                    if col_str == key:  # 정확히 일치하는 경우에만 매칭
                         required_columns[key] = col
                         print(f"✓ '{key}' 열을 찾았습니다: {col}")
             
@@ -1380,7 +1380,7 @@ class MainWindow(QMainWindow):
                 required_columns = {
                     '등기번호': None,
                     '수취인명': None,
-                    '이동통신': None,
+                    '수취인 이동통신': None,
                     '수취인상세주소': None
                 }
                 
@@ -1388,7 +1388,7 @@ class MainWindow(QMainWindow):
                 for col in df.columns:
                     col_str = str(col).strip()
                     for key in required_columns.keys():
-                        if key in col_str:  # 부분 일치로 검색
+                        if col_str == key:  # 정확히 일치하는 경우에만 매칭
                             required_columns[key] = col
                             print(f"✓ '{key}' 열을 찾았습니다: {col}")
                 
@@ -1412,7 +1412,7 @@ class MainWindow(QMainWindow):
                     # 주문 정보 추가 (인덱스 포함)
                     markdown_text += f"{idx}. {row[required_columns['수취인명']]}\n"
                     markdown_text += f"  송장번호: {row[required_columns['등기번호']]}\n"
-                    markdown_text += f"  전화번호: {row[required_columns['이동통신']]}\n"
+                    markdown_text += f"  이동통신: {row[required_columns['수취인 이동통신']]}\n"
                     markdown_text += f"  주소: {row[required_columns['수취인상세주소']]}\n\n"
 
                 
@@ -1439,7 +1439,7 @@ class MainWindow(QMainWindow):
                 )
                 
     def generate_invoice_file(self):
-        """일괄 발송 파일을 생성합니다."""
+        """일괄 발송 파일 생성 메인 메소드"""
         if not self.is_order_file_valid or not self.is_invoice_file_valid:
             QMessageBox.warning(self, "경고", "먼저 유효한 주문서와 송장 파일을 선택해주세요.")
             return
@@ -1455,302 +1455,16 @@ class MainWindow(QMainWindow):
             shutil.copy2(self.selected_file_path, temp_order_file)
             shutil.copy2(self.invoice_file_path, temp_invoice_file)
             
-            # 주문서 파일 읽기
-            print("\n[주문서 파일 처리]")
+            # 스토어 타입에 따른 처리 분기
             if self.store_type == "naver":
-                print("\n[네이버 주문서 파일 읽기]")
-                print(f"파일 경로: {temp_order_file}")
-                password = "1234"
-                decrypted_order_file = temp_dir / "decrypted_order.xlsx"
-                
-                print("파일 복호화 시도 중...")
-                try:
-                    with open(temp_order_file, 'rb') as file:
-                        office_file = msoffcrypto.OfficeFile(file)
-                        office_file.load_key(password=password)
-                        with open(decrypted_order_file, 'wb') as output_file:
-                            office_file.decrypt(output_file)
-                    print("✓ 파일 복호화 성공")
-                except Exception as e:
-                    print(f"❌ 파일 복호화 실패: {str(e)}")
-                    raise
-                
-                print("\n엑셀 파일 읽기 시도 중...")
-                try:
-                    order_df = pd.read_excel(decrypted_order_file, sheet_name='발주발송관리', header=None)
-                    print("✓ 엑셀 파일 읽기 성공")
-                    print(f"데이터프레임 구조:")
-                    print(f"- 행 수: {len(order_df)}")
-                    print(f"- 열 수: {len(order_df.columns)}")
-                    print(f"- 첫 번째 행: {order_df.iloc[0].tolist()}")
-                except Exception as e:
-                    print(f"❌ 엑셀 파일 읽기 실패: {str(e)}")
-                    raise
+                self._process_naver_invoice(temp_order_file, temp_invoice_file)
             elif self.store_type == "coupang":
-                # 쿠팡 스토어는 비밀번호가 없으므로 바로 파일 읽기
-                print("\n[쿠팡 주문서 파일 읽기]")
-                print(f"파일 경로: {temp_order_file}")
-                order_df = pd.read_excel(temp_order_file, header=None)
-                print(f"데이터프레임 구조:")
-                print(f"- 행 수: {len(order_df)}")
-                print(f"- 열 수: {len(order_df.columns)}")
-                print(f"- 열 이름: {order_df.iloc[0].tolist()}")
-            
-            print("\n[데이터프레임 전처리]")
-            print("첫 번째 행 삭제 전:")
-            print(f"- 행 수: {len(order_df)}")
-            print(f"- 첫 번째 행: {order_df.iloc[0].tolist()}")
-            
-            order_df = order_df.drop(0).reset_index(drop=True)
-            
-            print("\n첫 번째 행 삭제 후:")
-            print(f"- 행 수: {len(order_df)}")
-            print(f"- 첫 번째 행: {order_df.iloc[0].tolist()}")
-            
-            # 열 이름 설정
-            new_columns = []
-            for i in range(len(order_df.columns)):
-                col_name = str(order_df.iloc[0, i]).strip()
-                new_columns.append(col_name if col_name and not col_name.startswith('Unnamed') else f'Column_{i}')
-            
-            print("\n[열 이름 설정]")
-            print(f"설정된 열 이름: {new_columns}")
-            
-            order_df.columns = new_columns
-            order_df = order_df.drop(0).reset_index(drop=True)
-            
-            print("\n[최종 데이터프레임 정보]")
-            print(f"- 행 수: {len(order_df)}")
-            print(f"- 열 수: {len(order_df.columns)}")
-            print(f"- 열 이름: {order_df.columns.tolist()}")
-            print("\n데이터 샘플 (첫 3행):")
-            print(order_df.head(3))
-            
-            # 송장 파일 읽기
-            print("\n[송장 파일 처리]")
-            print(f"송장 파일 경로: {temp_invoice_file}")
-            try:
-                invoice_df = pd.read_excel(temp_invoice_file, header=6)
-                print("✓ 송장 파일 읽기 성공")
-                print(f"송장 데이터프레임 구조:")
-                print(f"- 행 수: {len(invoice_df)}")
-                print(f"- 열 수: {len(invoice_df.columns)}")
-                print(f"- 열 이름: {invoice_df.columns.tolist()}")
-                print("\n송장 데이터 샘플 (첫 3행):")
-                print(invoice_df.head(3))
-            except Exception as e:
-                print(f"❌ 송장 파일 읽기 실패: {str(e)}")
-                raise
-            
-            # 필요한 열 매핑
-            column_mapping = {
-                'order': {
-                    '수취인명': None,
-                    '수취인연락처1': None,
-                    '통합배송지': None
-                },
-                'invoice': {
-                    '등기번호': None,
-                    '수취인명': None,
-                    '이동통신': None,
-                    '수취인상세주소': None
-                }
-            }
-            
-            # 스토어 타입에 따라 다른 열 매핑 설정
-            if self.store_type == "naver":
-                print("\n[네이버 스토어 열 매핑 설정]")
-                column_mapping['order'] = {
-                    '수취인명': None,
-                    '수취인연락처1': None,
-                    '통합배송지': None
-                }
-            elif self.store_type == "coupang":
-                print("\n[쿠팡 스토어 열 매핑 설정]")
-                column_mapping['order'] = {
-                    '수취인명': None,  # 수취인명으로 변경
-                    '수취인전화번호': None,  # 수취인전화번호로 변경
-                    '수취인주소': None  # 수취인주소로 변경
-                }
-            
-            # 열 이름 매핑
-            print("\n[주문서 열 매핑]")
-            for col in order_df.columns:
-                col_str = str(col).strip()
-                print(f"검사 중인 열: {col_str}")
-                for key in column_mapping['order'].keys():
-                    if key in col_str:
-                        column_mapping['order'][key] = col
-                        print(f"✓ 주문서 '{key}' 열 찾음: {col}")
-            
-            # 매핑되지 않은 열이 있는 경우 추가 검사
-            missing_mappings = [key for key, value in column_mapping['order'].items() if value is None]
-            if missing_mappings:
-                print("\n[추가 열 매핑 시도]")
-                print("매핑되지 않은 열:", missing_mappings)
-                print("사용 가능한 열 목록:", order_df.columns.tolist())
-                
-                # 수취인명 매핑 시도
-                if '수취인명' in missing_mappings:
-                    for col in order_df.columns:
-                        col_str = str(col).strip()
-                        if '수취인' in col_str and '명' in col_str:
-                            column_mapping['order']['수취인명'] = col
-                            print(f"✓ 수취인명 매핑: {col}")
-                            break
-                
-                # 전화번호 매핑 시도
-                if '수취인전화번호' in missing_mappings:
-                    for col in order_df.columns:
-                        col_str = str(col).strip()
-                        if '전화' in col_str or '연락처' in col_str:
-                            column_mapping['order']['수취인전화번호'] = col
-                            print(f"✓ 전화번호 매핑: {col}")
-                            break
-                
-                # 주소 매핑 시도
-                if '수취인주소' in missing_mappings:
-                    for col in order_df.columns:
-                        col_str = str(col).strip()
-                        if '주소' in col_str:
-                            column_mapping['order']['수취인주소'] = col
-                            print(f"✓ 주소 매핑: {col}")
-                            break
-            
-            print("\n[송장서 열 매핑]")
-            for col in invoice_df.columns:
-                col_str = str(col).strip()
-                print(f"검사 중인 열: {col_str}")
-                for key in column_mapping['invoice'].keys():
-                    if key in col_str:
-                        column_mapping['invoice'][key] = col
-                        print(f"✓ 송장서 '{key}' 열 찾음: {col}")
-            
-            # 매핑된 열 확인
-            print("\n[매핑 결과 확인]")
-            print("주문서 매핑:")
-            for key, value in column_mapping['order'].items():
-                print(f"- {key}: {value}")
-            print("\n송장서 매핑:")
-            for key, value in column_mapping['invoice'].items():
-                print(f"- {key}: {value}")
-            
-            # 매핑 누락 확인
-            missing_mappings = []
-            for key, value in column_mapping['order'].items():
-                if value is None:
-                    missing_mappings.append(f"주문서: {key}")
-            for key, value in column_mapping['invoice'].items():
-                if value is None:
-                    missing_mappings.append(f"송장서: {key}")
-            
-            if missing_mappings:
-                print("\n❌ 매핑되지 않은 열:")
-                for mapping in missing_mappings:
-                    print(f"- {mapping}")
-                raise ValueError("필수 열이 매핑되지 않았습니다.")
-            
-            # 송장 정보 매칭
-            print("\n[송장 정보 매칭]")
-            for idx, invoice_row in invoice_df.iterrows():
-                print(f"\n처리 중인 송장 행: {idx + 1}")
-                invoice_name = str(invoice_row[column_mapping['invoice']['수취인명']])
-                invoice_phone = str(invoice_row[column_mapping['invoice']['이동통신']])
-                invoice_number = str(invoice_row[column_mapping['invoice']['등기번호']])
-                
-                print(f"송장 정보:")
-                print(f"- 수취인명: {invoice_name}")
-                print(f"- 전화번호: {invoice_phone}")
-                print(f"- 송장번호: {invoice_number}")
-                
-                # 매칭되는 행 찾기
-                if self.store_type == "naver":
-                    print("\n네이버 주문서 매칭 시도:")
-                    print(f"검색 조건:")
-                    print(f"- 수취인명: {invoice_name}")
-                    print(f"- 수취인연락처1: {invoice_phone}")
-                    
-                    matching_rows = order_df[
-                        (order_df[column_mapping['order']['수취인명']] == invoice_name) &
-                        (order_df[column_mapping['order']['수취인연락처1']] == invoice_phone)
-                    ]
-                    print(f"매칭된 행 수: {len(matching_rows)}")
-                elif self.store_type == "coupang":
-                    print("\n쿠팡 주문서 매칭 시도:")
-                    print(f"검색 조건:")
-                    print(f"- 수취인이름: {invoice_name}")
-                    print(f"- 수취인전화번호: {invoice_phone}")
-                    
-                    matching_rows = order_df[
-                        (order_df[column_mapping['order']['수취인이름']] == invoice_name) &
-                        (order_df[column_mapping['order']['수취인전화번호']] == invoice_phone)
-                    ]
-                    print(f"매칭된 행 수: {len(matching_rows)}")
-            
-            # 결과 파일 저장
-            output_dir = Path("output")
-            output_dir.mkdir(exist_ok=True)
-            
-            current_time = datetime.now().strftime("%Y%m%d%H%M%S")
-            output_file = output_dir / f"일괄발송_{current_time}.xlsx"
-            
-            with pd.ExcelWriter(output_file, engine='xlsxwriter') as writer:
-                order_df.to_excel(writer, index=False, sheet_name='발송처리')
-                
-                worksheet = writer.sheets['발송처리']
-                workbook = writer.book
-                
-                # 포맷 설정
-                center_format = workbook.add_format({
-                    'align': 'center',
-                    'valign': 'vcenter'
-                })
-                
-                header_format = workbook.add_format({
-                    'align': 'center',
-                    'valign': 'vcenter',
-                    'bold': True
-                })
-                
-                # 열 너비 및 포맷 적용
-                for idx, col in enumerate(order_df.columns):
-                    max_length = max(
-                        order_df[col].astype(str).apply(len).max(),
-                        len(str(col))
-                    )
-                    adjusted_width = max_length * 2 if any('\u3131' <= c <= '\u318E' or '\uAC00' <= c <= '\uD7A3' for c in str(col)) else max_length
-                    worksheet.set_column(idx, idx, adjusted_width + 2, center_format)
-                
-                for col_num, value in enumerate(order_df.columns.values):
-                    worksheet.write(0, col_num, value, header_format)
-                
-                worksheet.set_default_row(20)
+                self._process_coupang_invoice(temp_order_file, temp_invoice_file)
             
             # 임시 파일 정리
-            decrypted_order_file.unlink()
             temp_order_file.unlink()
             temp_invoice_file.unlink()
             temp_dir.rmdir()
-            
-            # 성공 메시지 표시
-            msg = QMessageBox()
-            msg.setIcon(QMessageBox.Information)
-            msg.setWindowTitle("완료")
-            msg.setText("일괄 발송 파일이 생성되었습니다.")
-            
-            open_location_button = msg.addButton("폴더 열기", QMessageBox.ActionRole)
-            open_file_button = msg.addButton("파일 열기", QMessageBox.ActionRole)
-            close_button = msg.addButton("닫기", QMessageBox.RejectRole)
-            
-            msg.setDefaultButton(close_button)
-            msg.exec()
-            
-            if msg.clickedButton() == open_location_button:
-                if not self.open_file_location(output_file):
-                    QMessageBox.warning(self, "오류", "파일 위치를 열 수 없습니다.")
-            elif msg.clickedButton() == open_file_button:
-                if not self.open_file_with_default_app(output_file):
-                    QMessageBox.warning(self, "오류", "파일을 열 수 없습니다.\n엑셀이 설치되어 있는지 확인해주세요.")
             
         except Exception as e:
             error_msg = str(e)
@@ -1760,6 +1474,296 @@ class MainWindow(QMainWindow):
                 "오류",
                 f"일괄 발송 파일 생성 중 오류가 발생했습니다.\n\n{error_msg}"
             )
+            
+    def _process_naver_invoice(self, temp_order_file, temp_invoice_file):
+        """네이버 스토어 일괄 발송 파일 처리"""
+        print("\n[네이버 스토어 일괄 발송 파일 처리 시작]")
+        
+        try:
+            # 1. 주문서 파일 복호화
+            password = "1234"
+            decrypted_order_file = Path("temp") / "decrypted_order.xlsx"
+            
+            with open(temp_order_file, 'rb') as file:
+                office_file = msoffcrypto.OfficeFile(file)
+                office_file.load_key(password=password)
+                with open(decrypted_order_file, 'wb') as output_file:
+                    office_file.decrypt(output_file)
+            
+            # 2. 주문서 데이터프레임 생성
+            order_df = pd.read_excel(decrypted_order_file, sheet_name='발주발송관리', header=None)
+            order_df = order_df.drop(0).reset_index(drop=True)
+            
+            # 열 이름 설정
+            new_columns = []
+            for i in range(len(order_df.columns)):
+                col_name = str(order_df.iloc[0, i]).strip()
+                new_columns.append(col_name if col_name and not col_name.startswith('Unnamed') else f'Column_{i}')
+            
+            order_df.columns = new_columns
+            order_df = order_df.drop(0).reset_index(drop=True)
+            
+            # 운송장번호 컬럼 추가 (B열)
+            order_df['운송장번호'] = ''
+            
+            # 3. 송장 파일 읽기
+            invoice_df = pd.read_excel(temp_invoice_file, header=6)
+            
+            # 4. 열 매핑 설정
+            column_mapping = {
+                'order': {
+                    '수취인명': None,
+                    '수취인연락처1': None,
+                    '통합배송지': None
+                },
+                'invoice': {
+                    '등기번호': None,
+                    '수취인명': None,
+                    '수취인 이동통신': None,
+                    '수취인상세주소': None
+                }
+            }
+            
+            # 열 이름 매핑
+            for col in order_df.columns:
+                col_str = str(col).strip()
+                for key in column_mapping['order'].keys():
+                    if col_str == key:  # 정확히 일치하는 경우에만 매칭
+                        column_mapping['order'][key] = col
+            
+            for col in invoice_df.columns:
+                col_str = str(col).strip()
+                for key in column_mapping['invoice'].keys():
+                    if col_str == key:  # 정확히 일치하는 경우에만 매칭
+                        column_mapping['invoice'][key] = col
+            
+            # 5. 매칭된 주문 정보 출력 및 운송장번호 업데이트
+            print("\n[매칭된 주문 정보]")
+            matched_count = 0
+            
+            for idx, invoice_row in invoice_df.iterrows():
+                invoice_name = str(invoice_row[column_mapping['invoice']['수취인명']])
+                invoice_phone = str(invoice_row[column_mapping['invoice']['수취인 이동통신']])
+                invoice_number = str(invoice_row[column_mapping['invoice']['등기번호']])
+                
+                matching_rows = order_df[
+                    (order_df[column_mapping['order']['수취인명']] == invoice_name) &
+                    (order_df[column_mapping['order']['수취인연락처1']] == invoice_phone)
+                ]
+                
+                if not matching_rows.empty:
+                    matched_count += 1
+                    print(f"\n[매칭된 주문 {matched_count}]")
+                    print(f"수취인명: {invoice_name}")
+                    print(f"전화번호: {invoice_phone}")
+                    print(f"송장번호: {invoice_number}")
+                    print(f"주소: {matching_rows[column_mapping['order']['통합배송지']].iloc[0]}")
+                    
+                    # 운송장번호 업데이트
+                    order_df.loc[matching_rows.index, '송장번호'] = invoice_number
+                    print(f"✓ 송장번호 업데이트 완료")
+            
+            print(f"\n✓ 총 {matched_count}개의 주문이 매칭되었습니다.")
+            
+            # 6. 결과 파일 저장
+            self._save_invoice_file(order_df)
+            
+            # 7. 임시 파일 정리
+            decrypted_order_file.unlink()
+            
+        except Exception as e:
+            error_msg = str(e)
+            print(f"❌ 일괄 발송 파일 처리 중 오류 발생: {error_msg}")
+            raise Exception(f"일괄 발송 파일 처리 중 오류가 발생했습니다: {error_msg}")
+
+    def _process_coupang_invoice(self, temp_order_file, temp_invoice_file):
+        """쿠팡 스토어 일괄 발송 파일 처리"""
+        print("\n[쿠팡 스토어 일괄 발송 파일 처리 시작]")
+        
+        try:
+            # 1. 쿠팡 주문서 파일 읽기
+            print("\n[쿠팡 주문서 파일 읽기]")
+            order_df = pd.read_excel(temp_order_file)
+            
+            # 데이터프레임 정보 출력
+            print("\n[주문서 데이터프레임 정보]")
+            print(f"행 수: {len(order_df)}")
+            print(f"열 수: {len(order_df.columns)}")
+            print("열 이름:")
+            for col in order_df.columns:
+                print(f"- {col}")
+            
+            # 필요한 컬럼 확인
+            required_order_columns = {
+                '수취인이름': None,
+                '수취인전화번호': None,
+                '수취인 주소': None
+            }
+            
+            # 컬럼 매핑
+            for col in order_df.columns:
+                col_str = str(col).strip()
+                for key in required_order_columns.keys():
+                    if col_str == key:  # 정확히 일치하는 경우에만 매칭
+                        required_order_columns[key] = col
+                        print(f"✓ 주문서 '{key}' 열 찾음: {col}")
+            
+            # 필수 컬럼 확인
+            missing_columns = [key for key, value in required_order_columns.items() if value is None]
+            if missing_columns:
+                raise ValueError(f"주문서에서 다음 컬럼을 찾을 수 없습니다: {', '.join(missing_columns)}")
+            
+            # 샘플 데이터 출력
+            print("\n[주문서 샘플 데이터]")
+            sample_data = order_df[[required_order_columns['수취인이름'], 
+                                  required_order_columns['수취인전화번호']]].head()
+            print(sample_data)
+            
+            # 2. 우체국 송장 파일 읽기
+            print("\n[우체국 송장 파일 읽기]")
+            invoice_df = pd.read_excel(temp_invoice_file, header=6)
+            
+            # 데이터프레임 정보 출력
+            print("\n[송장서 데이터프레임 정보]")
+            print(f"행 수: {len(invoice_df)}")
+            print(f"열 수: {len(invoice_df.columns)}")
+            print("열 이름:")
+            for col in invoice_df.columns:
+                print(f"- {col}")
+            
+            # 필요한 컬럼 확인
+            required_invoice_columns = {
+                '등기번호': None,
+                '수취인명': None,
+                '수취인 전화번호': None
+            }
+            
+            # 컬럼 매핑
+            for col in invoice_df.columns:
+                col_str = str(col).strip()
+                for key in required_invoice_columns.keys():
+                    if col_str == key:  # 정확히 일치하는 경우에만 매칭
+                        required_invoice_columns[key] = col
+                        print(f"✓ 송장서 '{key}' 열 찾음: {col}")
+            
+            # 필수 컬럼 확인
+            missing_columns = [key for key, value in required_invoice_columns.items() if value is None]
+            if missing_columns:
+                raise ValueError(f"송장서에서 다음 컬럼을 찾을 수 없습니다: {', '.join(missing_columns)}")
+            
+            # 샘플 데이터 출력
+            print("\n[송장서 샘플 데이터]")
+            sample_data = invoice_df[[required_invoice_columns['수취인명'], 
+                                    required_invoice_columns['수취인 전화번호']]].head()
+            print(sample_data)
+            
+            # 3. 운송장번호 매칭 및 채우기
+            print("\n[운송장번호 매칭 및 채우기]")
+            
+            # 운송장번호 컬럼 추가
+            order_df['운송장번호'] = ''
+            
+            # 매칭 카운터
+            matched_count = 0
+            
+            # 각 송장 행에 대해 매칭 시도
+            for idx, invoice_row in invoice_df.iterrows():
+                invoice_number = str(invoice_row[required_invoice_columns['등기번호']])
+                invoice_name = str(invoice_row[required_invoice_columns['수취인명']]).strip()
+                invoice_phone = str(invoice_row[required_invoice_columns['수취인 전화번호']]).strip()
+                
+                print(f"\n[매칭 시도 {idx + 1}]")
+                print(f"송장서 수취인명: {invoice_name}")
+                print(f"송장서 전화번호: {invoice_phone}")
+                
+                # 수취인명과 전화번호로 매칭
+                matching_rows = order_df[
+                    (order_df[required_order_columns['수취인이름']].str.strip() == invoice_name) &
+                    (order_df[required_order_columns['수취인전화번호']].str.strip() == invoice_phone)
+                ]
+                
+                if not matching_rows.empty:
+                    print(f"✓ 매칭 성공!")
+                    print(f"주문서 수취인명: {matching_rows[required_order_columns['수취인이름']].iloc[0]}")
+                    print(f"주문서 전화번호: {matching_rows[required_order_columns['수취인전화번호']].iloc[0]}")
+                    
+                    order_df.loc[matching_rows.index, '운송장번호'] = invoice_number
+                    matched_count += len(matching_rows)
+                    print(f"✓ 운송장번호 업데이트 완료: {invoice_number}")
+                else:
+                    print("❌ 매칭 실패")
+                    print("주문서에서 해당 정보를 찾을 수 없습니다.")
+            
+            print(f"\n✓ 총 {matched_count}개의 주문에 운송장번호가 매칭되었습니다.")
+            
+            # 4. 결과 파일 저장
+            self._save_invoice_file(order_df)
+            
+        except Exception as e:
+            error_msg = str(e)
+            print(f"❌ 일괄 발송 파일 처리 중 오류 발생: {error_msg}")
+            raise Exception(f"일괄 발송 파일 처리 중 오류가 발생했습니다: {error_msg}")
+
+    def _save_invoice_file(self, order_df):
+        """일괄 발송 파일 저장"""
+        # 결과 파일 저장
+        output_dir = Path("output")
+        output_dir.mkdir(exist_ok=True)
+        
+        current_time = datetime.now().strftime("%Y%m%d%H%M%S")
+        output_file = output_dir / f"일괄발송_{current_time}.xlsx"
+        
+        with pd.ExcelWriter(output_file, engine='xlsxwriter') as writer:
+            order_df.to_excel(writer, index=False, sheet_name='발송처리')
+            
+            worksheet = writer.sheets['발송처리']
+            workbook = writer.book
+            
+            # 포맷 설정
+            center_format = workbook.add_format({
+                'align': 'center',
+                'valign': 'vcenter'
+            })
+            
+            header_format = workbook.add_format({
+                'align': 'center',
+                'valign': 'vcenter',
+                'bold': True
+            })
+            
+            # 열 너비 및 포맷 적용
+            for idx, col in enumerate(order_df.columns):
+                max_length = max(
+                    order_df[col].astype(str).apply(len).max(),
+                    len(str(col))
+                )
+                adjusted_width = max_length * 2 if any('\u3131' <= c <= '\u318E' or '\uAC00' <= c <= '\uD7A3' for c in str(col)) else max_length
+                worksheet.set_column(idx, idx, adjusted_width + 2, center_format)
+            
+            for col_num, value in enumerate(order_df.columns.values):
+                worksheet.write(0, col_num, value, header_format)
+            
+            worksheet.set_default_row(20)
+        
+        # 성공 메시지 표시
+        msg = QMessageBox()
+        msg.setIcon(QMessageBox.Information)
+        msg.setWindowTitle("완료")
+        msg.setText("일괄 발송 파일이 생성되었습니다.")
+        
+        open_location_button = msg.addButton("폴더 열기", QMessageBox.ActionRole)
+        open_file_button = msg.addButton("파일 열기", QMessageBox.ActionRole)
+        close_button = msg.addButton("닫기", QMessageBox.RejectRole)
+        
+        msg.setDefaultButton(close_button)
+        msg.exec()
+        
+        if msg.clickedButton() == open_location_button:
+            if not self.open_file_location(output_file):
+                QMessageBox.warning(self, "오류", "파일 위치를 열 수 없습니다.")
+        elif msg.clickedButton() == open_file_button:
+            if not self.open_file_with_default_app(output_file):
+                QMessageBox.warning(self, "오류", "파일을 열 수 없습니다.\n엑셀이 설치되어 있는지 확인해주세요.")
 
     def select_product_file(self):
         """상품 파일을 선택하는 다이얼로그를 표시합니다."""
