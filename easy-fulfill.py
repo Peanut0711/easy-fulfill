@@ -1071,6 +1071,11 @@ class MainWindow(QMainWindow):
         self.ui.label_logo.clear()
         self.ui.label_logo.setText("image")
         
+        # 발송처리 탭 텍스트 초기화
+        self.ui.label_invoice.setText("송장 정보가 없습니다.")
+        self.ui.label_generate_invoice.setText("생성 버튼을 누르세요.")
+        self.ui.plainTextEdit_invoice.setPlainText("")
+        
         # 상태바 메시지 업데이트
         self.statusBar().showMessage("모든 정보가 초기화되었습니다.")
 
@@ -1747,6 +1752,9 @@ class MainWindow(QMainWindow):
                 worksheet.write(0, col_num, value, header_format)
             
             worksheet.set_default_row(20)
+            
+        # label_generate_invoice 텍스트 업데이트
+        self.ui.label_generate_invoice.setText(os.path.basename(output_file))
         
         # 성공 메시지 표시
         msg = QMessageBox()
