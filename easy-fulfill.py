@@ -492,9 +492,9 @@ class MainWindow(QMainWindow):
         self.ui.pushButton_generate_invoice.clicked.connect(self.generate_invoice_file)
         
         # 상품 분류 탭 버튼 연결
-        self.ui.selectProductFileButton.clicked.connect(self.select_product_file)
-        self.ui.categorizeButton.clicked.connect(self.categorize_products)
-        self.ui.exportCategoryButton.clicked.connect(self.export_category_excel)
+        # self.ui.selectProductFileButton.clicked.connect(self.select_product_file)
+        # self.ui.categorizeButton.clicked.connect(self.categorize_products)
+        # self.ui.exportCategoryButton.clicked.connect(self.export_category_excel)
         
         # 메뉴 동작 연결
         self.ui.actionOpenExcel.triggered.connect(self.select_excel_file)
