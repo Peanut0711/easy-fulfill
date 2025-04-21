@@ -82,7 +82,7 @@
           <x>30</x>
           <y>80</y>
           <width>641</width>
-          <height>421</height>
+          <height>401</height>
          </rect>
         </property>
         <property name="sizePolicy">
@@ -247,6 +247,56 @@
         </property>
         <property name="text">
          <string>일괄 발송 출력</string>
+        </property>
+       </widget>
+      </widget>
+      <widget class="QWidget" name="tab_2">
+       <attribute name="title">
+        <string>환경설정</string>
+       </attribute>
+       <widget class="QLabel" name="label_naver_product_csv">
+        <property name="geometry">
+         <rect>
+          <x>40</x>
+          <y>30</y>
+          <width>151</width>
+          <height>21</height>
+         </rect>
+        </property>
+        <property name="frameShape">
+         <enum>QFrame::Shape::StyledPanel</enum>
+        </property>
+        <property name="text">
+         <string>네이버 상품 DB 파일명</string>
+        </property>
+       </widget>
+       <widget class="QCheckBox" name="checkBox">
+        <property name="geometry">
+         <rect>
+          <x>200</x>
+          <y>30</y>
+          <width>111</width>
+          <height>20</height>
+         </rect>
+        </property>
+        <property name="text">
+         <string>상품 DB 사용</string>
+        </property>
+       </widget>
+       <widget class="QLabel" name="label_naver_product_csv_2">
+        <property name="geometry">
+         <rect>
+          <x>40</x>
+          <y>60</y>
+          <width>151</width>
+          <height>21</height>
+         </rect>
+        </property>
+        <property name="frameShape">
+         <enum>QFrame::Shape::StyledPanel</enum>
+        </property>
+        <property name="text">
+         <string>쿠팡 상품 DB 파일명</string>
         </property>
        </widget>
       </widget>

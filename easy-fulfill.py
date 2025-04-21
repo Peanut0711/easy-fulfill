@@ -618,6 +618,7 @@ class MainWindow(QMainWindow):
                 try:
                     if self.store_type == "naver":
                         print("✓ 네이버 스토어 파일 처리 시작")
+                        self.process_naver_product_data_load()
                         self.process_naver_excel_file()
                         self.is_order_file_valid = True  # 파일 처리 성공 시 플래그 설정
                     elif self.store_type == "coupang":
@@ -645,6 +646,50 @@ class MainWindow(QMainWindow):
             self.is_order_file_valid = False
             print("\n[알림] 파일 선택이 취소되었습니다.")
             
+    def process_naver_product_data_load(self):
+        """input 폴더에서 Product_날짜 형식의 CSV 파일을 찾아 가장 최신 파일을 선택합니다.
+        
+        Returns:
+            bool: CSV 파일이 하나라도 존재하면 True, 그렇지 않으면 False
+        """
+        try:
+            # input 폴더 경로 설정
+            input_dir = Path("input")
+            
+            # 폴더가 없으면 생성
+            input_dir.mkdir(exist_ok=True)
+            
+            # Product_날짜 형식의 CSV 파일 찾기
+            product_files = []
+            for file in input_dir.glob("Product_*.csv"):
+                # 파일명에서 날짜 부분 추출 (Product_YYYYMMDD 형식)
+                try:
+                    date_str = file.stem.split('_')[1]  # Product_YYYYMMDD_... 에서 YYYYMMDD 부분 추출
+                    date = datetime.strptime(date_str, '%Y%m%d')
+                    product_files.append((date, file))
+                except (IndexError, ValueError):
+                    continue
+            
+            if not product_files:
+                print("❌ Product_날짜 형식의 CSV 파일을 찾을 수 없습니다.")
+                self.ui.label_naver_product_csv.setText("상품 데이터가 없습니다.")
+                return False
+            
+            # 날짜 기준으로 정렬 (최신순)
+            product_files.sort(reverse=True)
+            latest_file = product_files[0][1]
+            
+            # 라벨 업데이트
+            self.ui.label_naver_product_csv.setText(latest_file.name)
+            print(f"✓ 최신 상품 데이터 파일 선택됨: {latest_file.name}")
+            return True
+            
+        except Exception as e:
+            error_msg = str(e)
+            print(f"❌ 상품 데이터 로드 중 오류 발생: {error_msg}")
+            self.ui.label_naver_product_csv.setText("상품 데이터 로드 실패")
+            return False
+    
     def process_naver_excel_file(self):
         """네이버 스토어 엑셀 파일에서 주문번호를 처리합니다."""
         try:

@@ -16,10 +16,10 @@ from PySide6.QtGui import (QAction, QBrush, QColor, QConicalGradient,
     QIcon, QImage, QKeySequence, QLinearGradient,
     QPainter, QPalette, QPixmap, QRadialGradient,
     QTransform)
-from PySide6.QtWidgets import (QApplication, QFrame, QLabel, QMainWindow,
-    QMenu, QMenuBar, QPlainTextEdit, QPushButton,
-    QSizePolicy, QStatusBar, QTabWidget, QVBoxLayout,
-    QWidget)
+from PySide6.QtWidgets import (QApplication, QCheckBox, QFrame, QLabel,
+    QMainWindow, QMenu, QMenuBar, QPlainTextEdit,
+    QPushButton, QSizePolicy, QStatusBar, QTabWidget,
+    QVBoxLayout, QWidget)
 
 class Ui_MainWindow(object):
     def setupUi(self, MainWindow):
@@ -56,7 +56,7 @@ class Ui_MainWindow(object):
         self.filePathLabel.setMargin(5)
         self.plainTextEdit = QPlainTextEdit(self.tab)
         self.plainTextEdit.setObjectName(u"plainTextEdit")
-        self.plainTextEdit.setGeometry(QRect(30, 80, 641, 421))
+        self.plainTextEdit.setGeometry(QRect(30, 80, 641, 401))
         sizePolicy = QSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         sizePolicy.setHorizontalStretch(0)
         sizePolicy.setVerticalStretch(0)
@@ -109,6 +109,20 @@ class Ui_MainWindow(object):
         self.label_2.setObjectName(u"label_2")
         self.label_2.setGeometry(QRect(40, 90, 91, 41))
         self.tabWidget.addTab(self.tab_3, "")
+        self.tab_2 = QWidget()
+        self.tab_2.setObjectName(u"tab_2")
+        self.label_naver_product_csv = QLabel(self.tab_2)
+        self.label_naver_product_csv.setObjectName(u"label_naver_product_csv")
+        self.label_naver_product_csv.setGeometry(QRect(40, 30, 151, 21))
+        self.label_naver_product_csv.setFrameShape(QFrame.Shape.StyledPanel)
+        self.checkBox = QCheckBox(self.tab_2)
+        self.checkBox.setObjectName(u"checkBox")
+        self.checkBox.setGeometry(QRect(200, 30, 111, 20))
+        self.label_naver_product_csv_2 = QLabel(self.tab_2)
+        self.label_naver_product_csv_2.setObjectName(u"label_naver_product_csv_2")
+        self.label_naver_product_csv_2.setGeometry(QRect(40, 60, 151, 21))
+        self.label_naver_product_csv_2.setFrameShape(QFrame.Shape.StyledPanel)
+        self.tabWidget.addTab(self.tab_2, "")
 
         self.verticalLayout.addWidget(self.tabWidget)
 
@@ -167,6 +181,10 @@ class Ui_MainWindow(object):
         self.label_generate_invoice.setText(QCoreApplication.translate("MainWindow", u"\uc0dd\uc131 \ubc84\ud2bc\uc744 \ub204\ub974\uc138\uc694.", None))
         self.label_2.setText(QCoreApplication.translate("MainWindow", u"\uc77c\uad04 \ubc1c\uc1a1 \ucd9c\ub825", None))
         self.tabWidget.setTabText(self.tabWidget.indexOf(self.tab_3), QCoreApplication.translate("MainWindow", u"\ubc1c\uc1a1\ucc98\ub9ac", None))
+        self.label_naver_product_csv.setText(QCoreApplication.translate("MainWindow", u"\ub124\uc774\ubc84 \uc0c1\ud488 DB \ud30c\uc77c\uba85", None))
+        self.checkBox.setText(QCoreApplication.translate("MainWindow", u"\uc0c1\ud488 DB \uc0ac\uc6a9", None))
+        self.label_naver_product_csv_2.setText(QCoreApplication.translate("MainWindow", u"\ucfe0\ud321 \uc0c1\ud488 DB \ud30c\uc77c\uba85", None))
+        self.tabWidget.setTabText(self.tabWidget.indexOf(self.tab_2), QCoreApplication.translate("MainWindow", u"\ud658\uacbd\uc124\uc815", None))
         self.menuFile.setTitle(QCoreApplication.translate("MainWindow", u"\ud30c\uc77c(&F)", None))
         self.menuHelp.setTitle(QCoreApplication.translate("MainWindow", u"\ub3c4\uc6c0\ub9d0(&H)", None))
         self.statusbar.setStyleSheet(QCoreApplication.translate("MainWindow", u"QStatusBar {\n"
