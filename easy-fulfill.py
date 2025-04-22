@@ -1635,6 +1635,15 @@ class MainWindow(QMainWindow):
             print("\n[쿠팡 주문서 파일 읽기]")
             order_df = pd.read_excel(temp_order_file)
             
+            # 묶음배송번호, 주문번호를 문자열로 변환하여 정확한 값 유지
+            if '묶음배송번호' in order_df.columns:
+                order_df['묶음배송번호'] = order_df['묶음배송번호'].astype(str)
+            if '주문번호' in order_df.columns:
+                order_df['주문번호'] = order_df['주문번호'].astype(str)
+            
+            # 분리배송 열 추가 (모든 값을 'N'으로 설정)
+            order_df['분리배송 Y/N'] = 'N'
+            
             # 데이터프레임 정보 출력
             print("\n[주문서 데이터프레임 정보]")
             print(f"행 수: {len(order_df)}")
@@ -1701,12 +1710,6 @@ class MainWindow(QMainWindow):
             if missing_columns:
                 raise ValueError(f"송장서에서 다음 컬럼을 찾을 수 없습니다: {', '.join(missing_columns)}")
             
-            # 샘플 데이터 출력
-            # print("\n[송장서 샘플 데이터]")
-            # sample_data = invoice_df[[required_invoice_columns['수취인명'], 
-            #                         required_invoice_columns['수취인 전화번호']]].head()
-            # print(sample_data)
-            
             # 3. 운송장번호 매칭 및 채우기
             print("\n[운송장번호 매칭 및 채우기]")
             
@@ -1722,10 +1725,6 @@ class MainWindow(QMainWindow):
                 invoice_name = str(invoice_row[required_invoice_columns['수취인명']]).strip()
                 invoice_phone = str(invoice_row[required_invoice_columns['수취인 전화번호']]).strip()
                 
-                # print(f"\n[매칭 시도 {idx + 1}]")
-                # print(f"송장서 수취인명: {invoice_name}")
-                # print(f"송장서 전화번호: {invoice_phone}")
-                
                 # 수취인명과 전화번호로 매칭
                 matching_rows = order_df[
                     (order_df[required_order_columns['수취인이름']].str.strip() == invoice_name) &
@@ -1733,18 +1732,17 @@ class MainWindow(QMainWindow):
                 ]
                 
                 if not matching_rows.empty:
-                    print(f"✓ 매칭 성공! {idx + 1}번째 송장")
-                    print(f"주문서 수취인명: {matching_rows[required_order_columns['수취인이름']].iloc[0]}")
-                    print(f"주문서 전화번호: {matching_rows[required_order_columns['수취인전화번호']].iloc[0]}")
+                    matched_count += 1
+                    print(f"\n[매칭된 주문 {matched_count}]")
+                    print(f"수취인명: {invoice_name}")
+                    print(f"전화번호: {invoice_phone}")
+                    print(f"송장번호: {invoice_number}")
+                    print(f"주소: {matching_rows[required_order_columns['수취인 주소']].iloc[0]}")
                     
                     order_df.loc[matching_rows.index, '운송장번호'] = invoice_number
-                    matched_count += len(matching_rows)
-                    print(f"✓ 운송장번호 업데이트 완료: {invoice_number}\n")
-                # else:
-                #     print("❌ 매칭 실패")
-                #     print("주문서에서 해당 정보를 찾을 수 없습니다.")
+                    print(f"✓ 송장번호 업데이트 완료")
             
-            print(f"\n✓ 총 {matched_count}개의 주문에 운송장번호가 매칭되었습니다.")
+            print(f"\n✓ 총 {matched_count}개의 주문이 매칭되었습니다.")
             
             # 4. 결과 파일 저장
             self._save_invoice_file(order_df)
@@ -1764,7 +1762,10 @@ class MainWindow(QMainWindow):
         output_file = output_dir / f"일괄발송_{current_time}.xlsx"
         
         # 택배사 정보 추가
-        order_df['택배사'] = '우체국택배' # 우체국 택배 강제 입력
+        if self.store_type == "naver":
+            order_df['택배사'] = '우체국택배'
+        elif self.store_type == "coupang":
+            order_df['택배사'] = '우체국'
         
         with pd.ExcelWriter(output_file, engine='xlsxwriter') as writer:
             order_df.to_excel(writer, index=False, sheet_name='발송처리')
@@ -1772,7 +1773,14 @@ class MainWindow(QMainWindow):
             worksheet = writer.sheets['발송처리']
             workbook = writer.book
             
-            # 포맷 설정
+            # 숫자 형식 설정 (텍스트로 처리)
+            text_format = workbook.add_format({
+                'align': 'center',
+                'valign': 'vcenter',
+                'num_format': '@'  # 텍스트 형식으로 저장
+            })
+            
+            # 일반 셀 포맷 설정
             center_format = workbook.add_format({
                 'align': 'center',
                 'valign': 'vcenter'
@@ -1791,15 +1799,17 @@ class MainWindow(QMainWindow):
                     len(str(col))
                 )
                 adjusted_width = max_length * 2 if any('\u3131' <= c <= '\u318E' or '\uAC00' <= c <= '\uD7A3' for c in str(col)) else max_length
-                worksheet.set_column(idx, idx, adjusted_width + 2, center_format)
+                
+                # 묶음배송번호와 주문번호 열은 텍스트 형식으로 설정
+                if col in ['묶음배송번호', '주문번호']:
+                    worksheet.set_column(idx, idx, adjusted_width + 2, text_format)
+                else:
+                    worksheet.set_column(idx, idx, adjusted_width + 2, center_format)
             
             for col_num, value in enumerate(order_df.columns.values):
                 worksheet.write(0, col_num, value, header_format)
             
             worksheet.set_default_row(20)
-            
-        # label_generate_invoice 텍스트 업데이트
-        self.ui.label_generate_invoice.setText(os.path.basename(output_file))
         
         # 성공 메시지 표시
         msg = QMessageBox()
