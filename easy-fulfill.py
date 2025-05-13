@@ -267,9 +267,21 @@ class MainWindow(QMainWindow):
         self.orders = {}  # orders 변수를 인스턴스 변수로 초기화
         self.is_order_file_valid = False  # 주문서 파일 유효성 플래그
         self.is_invoice_file_valid = False  # 송장 파일 유효성 플래그
+        self.current_idx_naver = 0  # 현재 인덱스 값 저장
+        
         self.load_ui()
         self.setup_connections()
         self.setup_status_bar()
+        
+        # 인덱스 값 로드
+        if hasattr(self.ui, 'lineEdit_idx_naver'):
+            saved_index = self.ui.lineEdit_idx_naver.text().strip()
+            if saved_index and saved_index.isdigit():
+                self.current_index = int(saved_index)
+            else:
+                self.current_index = 1
+                self.ui.lineEdit_idx_naver.setText(str(self.current_index))
+                
         print("초기화 완료")
         
     def load_ui(self):
@@ -931,9 +943,21 @@ class MainWindow(QMainWindow):
             # 마크다운 형식으로 주문 정보 생성
             markdown_text = ""
             
-            for pattern, info in self.orders.items():
-                # 수취인명 표시
-                markdown_text += f"- [ ] {info['수취인명']}\n"
+            # 인덱스 값 다시 로드
+            if hasattr(self.ui, 'lineEdit_idx_naver'):
+                saved_index = self.ui.lineEdit_idx_naver.text().strip()
+                if saved_index and saved_index.isdigit():
+                    self.current_idx_naver = int(saved_index)
+                else:
+                    self.current_idx_naver = 1
+                    self.ui.lineEdit_idx_naver.setText(str(self.current_idx_naver))
+            
+            for pattern, info in self.orders.items():                                
+                markdown_text += f"- [ ] {self.current_idx_naver}.{info['수취인명']}\n"
+                self.current_idx_naver += 1
+                if hasattr(self.ui, 'lineEdit_idx_naver'):
+                    self.ui.lineEdit_idx_naver.setText(str(self.current_idx_naver))
+                # markdown_text += f"- [ ] {info['수취인명']}\n"
                 
                 # 상품 목록 표시
                 for product in info['상품목록']:

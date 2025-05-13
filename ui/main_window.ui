@@ -257,7 +257,7 @@
        <widget class="QLabel" name="label_naver_product_csv">
         <property name="geometry">
          <rect>
-          <x>40</x>
+          <x>410</x>
           <y>30</y>
           <width>151</width>
           <height>21</height>
@@ -273,7 +273,7 @@
        <widget class="QCheckBox" name="checkBox">
         <property name="geometry">
          <rect>
-          <x>200</x>
+          <x>570</x>
           <y>30</y>
           <width>111</width>
           <height>20</height>
@@ -286,7 +286,7 @@
        <widget class="QLabel" name="label_naver_product_csv_2">
         <property name="geometry">
          <rect>
-          <x>40</x>
+          <x>410</x>
           <y>60</y>
           <width>151</width>
           <height>21</height>
@@ -297,6 +297,52 @@
         </property>
         <property name="text">
          <string>쿠팡 상품 DB 파일명</string>
+        </property>
+       </widget>
+       <widget class="QLineEdit" name="lineEdit_idx_naver">
+        <property name="geometry">
+         <rect>
+          <x>110</x>
+          <y>30</y>
+          <width>71</width>
+          <height>21</height>
+         </rect>
+        </property>
+       </widget>
+       <widget class="QLineEdit" name="lineEdit_idx_coupang">
+        <property name="geometry">
+         <rect>
+          <x>110</x>
+          <y>60</y>
+          <width>71</width>
+          <height>21</height>
+         </rect>
+        </property>
+       </widget>
+       <widget class="QLabel" name="label_3">
+        <property name="geometry">
+         <rect>
+          <x>30</x>
+          <y>30</y>
+          <width>71</width>
+          <height>16</height>
+         </rect>
+        </property>
+        <property name="text">
+         <string>네이버 번호</string>
+        </property>
+       </widget>
+       <widget class="QLabel" name="label_4">
+        <property name="geometry">
+         <rect>
+          <x>30</x>
+          <y>60</y>
+          <width>61</width>
+          <height>16</height>
+         </rect>
+        </property>
+        <property name="text">
+         <string>쿠팡 번호</string>
         </property>
        </widget>
       </widget>

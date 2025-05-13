@@ -17,9 +17,9 @@ from PySide6.QtGui import (QAction, QBrush, QColor, QConicalGradient,
     QPainter, QPalette, QPixmap, QRadialGradient,
     QTransform)
 from PySide6.QtWidgets import (QApplication, QCheckBox, QFrame, QLabel,
-    QMainWindow, QMenu, QMenuBar, QPlainTextEdit,
-    QPushButton, QSizePolicy, QStatusBar, QTabWidget,
-    QVBoxLayout, QWidget)
+    QLineEdit, QMainWindow, QMenu, QMenuBar,
+    QPlainTextEdit, QPushButton, QSizePolicy, QStatusBar,
+    QTabWidget, QVBoxLayout, QWidget)
 
 class Ui_MainWindow(object):
     def setupUi(self, MainWindow):
@@ -113,15 +113,27 @@ class Ui_MainWindow(object):
         self.tab_2.setObjectName(u"tab_2")
         self.label_naver_product_csv = QLabel(self.tab_2)
         self.label_naver_product_csv.setObjectName(u"label_naver_product_csv")
-        self.label_naver_product_csv.setGeometry(QRect(40, 30, 151, 21))
+        self.label_naver_product_csv.setGeometry(QRect(410, 30, 151, 21))
         self.label_naver_product_csv.setFrameShape(QFrame.Shape.StyledPanel)
         self.checkBox = QCheckBox(self.tab_2)
         self.checkBox.setObjectName(u"checkBox")
-        self.checkBox.setGeometry(QRect(200, 30, 111, 20))
+        self.checkBox.setGeometry(QRect(570, 30, 111, 20))
         self.label_naver_product_csv_2 = QLabel(self.tab_2)
         self.label_naver_product_csv_2.setObjectName(u"label_naver_product_csv_2")
-        self.label_naver_product_csv_2.setGeometry(QRect(40, 60, 151, 21))
+        self.label_naver_product_csv_2.setGeometry(QRect(410, 60, 151, 21))
         self.label_naver_product_csv_2.setFrameShape(QFrame.Shape.StyledPanel)
+        self.lineEdit_idx_naver = QLineEdit(self.tab_2)
+        self.lineEdit_idx_naver.setObjectName(u"lineEdit_idx_naver")
+        self.lineEdit_idx_naver.setGeometry(QRect(110, 30, 71, 21))
+        self.lineEdit_idx_coupang = QLineEdit(self.tab_2)
+        self.lineEdit_idx_coupang.setObjectName(u"lineEdit_idx_coupang")
+        self.lineEdit_idx_coupang.setGeometry(QRect(110, 60, 71, 21))
+        self.label_3 = QLabel(self.tab_2)
+        self.label_3.setObjectName(u"label_3")
+        self.label_3.setGeometry(QRect(30, 30, 71, 16))
+        self.label_4 = QLabel(self.tab_2)
+        self.label_4.setObjectName(u"label_4")
+        self.label_4.setGeometry(QRect(30, 60, 61, 16))
         self.tabWidget.addTab(self.tab_2, "")
 
         self.verticalLayout.addWidget(self.tabWidget)
@@ -184,6 +196,8 @@ class Ui_MainWindow(object):
         self.label_naver_product_csv.setText(QCoreApplication.translate("MainWindow", u"\ub124\uc774\ubc84 \uc0c1\ud488 DB \ud30c\uc77c\uba85", None))
         self.checkBox.setText(QCoreApplication.translate("MainWindow", u"\uc0c1\ud488 DB \uc0ac\uc6a9", None))
         self.label_naver_product_csv_2.setText(QCoreApplication.translate("MainWindow", u"\ucfe0\ud321 \uc0c1\ud488 DB \ud30c\uc77c\uba85", None))
+        self.label_3.setText(QCoreApplication.translate("MainWindow", u"\ub124\uc774\ubc84 \ubc88\ud638", None))
+        self.label_4.setText(QCoreApplication.translate("MainWindow", u"\ucfe0\ud321 \ubc88\ud638", None))
         self.tabWidget.setTabText(self.tabWidget.indexOf(self.tab_2), QCoreApplication.translate("MainWindow", u"\ud658\uacbd\uc124\uc815", None))
         self.menuFile.setTitle(QCoreApplication.translate("MainWindow", u"\ud30c\uc77c(&F)", None))
         self.menuHelp.setTitle(QCoreApplication.translate("MainWindow", u"\ub3c4\uc6c0\ub9d0(&H)", None))
