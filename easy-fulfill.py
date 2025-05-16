@@ -975,7 +975,7 @@ class MainWindow(QMainWindow):
                     quantity = product['수량']
                     option = product['옵션']
                     
-                    markdown_text += f"{product_name} ( 옵션 : {option} ) - {quantity} 개\n"
+                    markdown_text += f"- {product_name} ( 옵션 : {option} ) - {quantity} 개\n"
                 
                 markdown_text += "\n"  # 주문 간 구분을 위한 빈 줄
             
@@ -1113,7 +1113,7 @@ class MainWindow(QMainWindow):
                     option = product['옵션']
                     quantity = product['수량']
                     
-                    markdown_text += f"{product_name} ( 옵션 : {option} ) - {quantity} 개\n"
+                    markdown_text += f"- {product_name} ( 옵션 : {option} ) - {quantity} 개\n"
                 
                 markdown_text += "\n"  # 주문 간 구분을 위한 빈 줄
             
