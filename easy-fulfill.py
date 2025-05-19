@@ -2105,6 +2105,9 @@ class MainWindow(QMainWindow):
             
             worksheet.set_default_row(20)
         
+        # 주문서 목록 초기화
+        self.clear_list()
+        
         # 성공 메시지 표시
         msg = QMessageBox()
         msg.setIcon(QMessageBox.Information)
