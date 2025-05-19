@@ -389,9 +389,9 @@ class MainWindow(QMainWindow):
         toolbar.addAction(exportAction)
 
         # 폴더 열기 액션
-        openAction = QAction(QIcon('image/folder-icon.png'), '출력된 폴더 열기', self)        
+        openAction = QAction(QIcon('image/folder-icon.png'), '출력 폴더 열기', self)        
         openAction.setShortcut('Ctrl+F')
-        openAction.setStatusTip('출력된 폴더 열기 (Ctrl+F)')
+        openAction.setStatusTip('출력 폴더 열기 (Ctrl+F)')
         openAction.triggered.connect(self.open_output_folder)
         toolbar.addAction(openAction)                                
         
