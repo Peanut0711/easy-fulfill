@@ -963,11 +963,10 @@ class MainWindow(QMainWindow):
                     self.ui.lineEdit_idx_naver.setText(str(self.current_idx_naver))
             
             for pattern, info in self.orders.items():                                
-                markdown_text += f"- [ ] {self.current_idx_naver}.{info['수취인명']}\n"
+                markdown_text += f"[ ] {self.current_idx_naver}.{info['수취인명']}\n"
                 self.current_idx_naver += 1
                 if hasattr(self.ui, 'lineEdit_idx_naver'):
                     self.ui.lineEdit_idx_naver.setText(str(self.current_idx_naver))
-                # markdown_text += f"- [ ] {info['수취인명']}\n"
                 
                 # 상품 목록 표시
                 for product in info['상품목록']:
@@ -975,7 +974,7 @@ class MainWindow(QMainWindow):
                     quantity = product['수량']
                     option = product['옵션']
                     
-                    markdown_text += f"- {product_name} ( 옵션 : {option} ) - {quantity} 개\n"
+                    markdown_text += f"-{product_name} ( 옵션 : {option} ) - {quantity} 개\n"
                 
                 markdown_text += "\n"  # 주문 간 구분을 위한 빈 줄
             
@@ -1102,7 +1101,7 @@ class MainWindow(QMainWindow):
                     self.ui.lineEdit_idx_coupang.setText(str(self.current_idx_coupang))
 
             for order_number, info in self.orders.items():
-                markdown_text += f"- [ ] {self.current_idx_coupang}.{info['수취인이름']}\n"
+                markdown_text += f"[ ] {self.current_idx_coupang}.{info['수취인이름']}\n"
                 self.current_idx_coupang += 1
                 if hasattr(self.ui, 'lineEdit_idx_coupang'):
                     self.ui.lineEdit_idx_coupang.setText(str(self.current_idx_coupang))
@@ -1113,7 +1112,7 @@ class MainWindow(QMainWindow):
                     option = product['옵션']
                     quantity = product['수량']
                     
-                    markdown_text += f"- {product_name} ( 옵션 : {option} ) - {quantity} 개\n"
+                    markdown_text += f"-{product_name} ( 옵션 : {option} ) - {quantity} 개\n"
                 
                 markdown_text += "\n"  # 주문 간 구분을 위한 빈 줄
             
