@@ -2048,7 +2048,13 @@ class MainWindow(QMainWindow):
         output_dir.mkdir(exist_ok=True)
         
         current_time = datetime.now().strftime("%Y%m%d%H%M%S")
-        output_file = output_dir / f"일괄발송_{current_time}.xlsx"
+        # 스토어 타입에 따라 다른 파일명 사용
+        if self.store_type == "naver":
+            output_file = output_dir / f"일괄발송_네이버_{current_time}.xlsx"
+        elif self.store_type == "coupang":
+            output_file = output_dir / f"일괄발송_쿠팡_{current_time}.xlsx"
+        else:
+            output_file = output_dir / f"일괄발송_{current_time}.xlsx"
         
         # 택배사 정보 추가
         if self.store_type == "naver":
