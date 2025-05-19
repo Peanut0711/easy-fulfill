@@ -1035,7 +1035,7 @@ class MainWindow(QMainWindow):
                 '수취인이름': None,
                 '수취인 주소': None,  # '수취인주소'에서 '수취인 주소'로 수정
                 '수취인전화번호': None,
-                '등록상품명': None,
+                '노출상품명(옵션명)': None,
                 '등록옵션명': None,
                 '구매수(수량)': None,
                 '배송메세지': None,
@@ -1079,7 +1079,7 @@ class MainWindow(QMainWindow):
                     }
                 
                 # 상품 정보 추가
-                product_name = str(row[required_columns['등록상품명']])
+                product_name = str(row[required_columns['노출상품명(옵션명)']])
                 option = str(row[required_columns['등록옵션명']])
                 quantity = int(row[required_columns['구매수(수량)']]) if not pd.isna(row[required_columns['구매수(수량)']]) else 1
                 
