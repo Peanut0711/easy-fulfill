@@ -718,7 +718,7 @@ class MainWindow(QMainWindow):
             print(f"\n[네이버 스토어 엑셀 파일 처리 시작] 파일: {self.selected_file_path}")
             
             # store_database.xlsx 파일 읽기
-            store_db_path = Path("input") / "store_database.xlsx"
+            store_db_path = Path("database") / "store_database.xlsx"
             if not store_db_path.exists():
                 raise FileNotFoundError("store_database.xlsx 파일을 찾을 수 없습니다.")
             
@@ -1107,10 +1107,10 @@ class MainWindow(QMainWindow):
                 '우편번호': None
             }
             
-                        for col in df.columns:
+            for col in df.columns:
                 col_str = str(col).strip()
                 for key in required_columns.keys():
-                    if col_str == key:  # 정확히 일치하는 경우에만 매칭
+                    if key in col_str:  # 정확히 일치하는 경우에만 매칭
                         required_columns[key] = col
                         print(f"✓ '{key}' 열을 찾았습니다: {col}")
             
