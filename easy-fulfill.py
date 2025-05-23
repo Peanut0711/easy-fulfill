@@ -717,6 +717,59 @@ class MainWindow(QMainWindow):
         try:
             print(f"\n[네이버 스토어 엑셀 파일 처리 시작] 파일: {self.selected_file_path}")
             
+            # store_database.xlsx 파일 읽기
+            store_db_path = Path("input") / "store_database.xlsx"
+            if not store_db_path.exists():
+                raise FileNotFoundError("store_database.xlsx 파일을 찾을 수 없습니다.")
+            
+            print("\n[store_database.xlsx 파일 읽기]")
+            print(f"파일 경로: {store_db_path}")
+            store_df = pd.read_excel(store_db_path, sheet_name=0)  # 첫 번째 시트
+
+            # 데이터프레임 정보 출력
+            print("\n[데이터프레임 정보]")
+            print(f"행 수: {len(store_df)}")
+            print(f"열 수: {len(store_df.columns)}")
+            print("열 이름:")
+            for col in store_df.columns:
+                print(f"- {col}")
+
+            # 상품번호와 상품코드 매핑 생성
+            product_mapping = {}
+            print("\n[상품번호-상품코드 매핑 생성]")
+            print("\n[데이터 샘플]")
+            print(store_df[['상품번호(스마트스토어)', '상품코드']].head())
+
+            for idx, row in store_df.iterrows():
+                # 상품번호에서 .0 제거
+                product_number = str(row['상품번호(스마트스토어)']).strip()
+                if product_number.endswith('.0'):
+                    product_number = product_number[:-2]
+                
+                # 상품코드 처리
+                product_code = str(row['상품코드']).strip()
+                if product_code == 'nan':
+                    product_code = '        '
+                
+                print(f"\n처리 중인 행 {idx}:")
+                print(f"원본 상품번호: {row['상품번호(스마트스토어)']}")
+                print(f"원본 상품코드: {row['상품코드']}")
+                print(f"변환된 상품번호: {product_number}")
+                print(f"변환된 상품코드: {product_code}")
+                
+                if product_number and product_number != 'nan':
+                    if product_number in product_mapping:
+                        print(f"경고: 중복된 상품번호 발견! {product_number}")
+                        print(f"기존 매핑: {product_mapping[product_number]}")
+                        print(f"새로운 매핑: {product_code}")
+                    product_mapping[product_number] = product_code
+                    print(f"매핑 추가: {product_number} -> {product_mapping[product_number]}")
+
+            print(f"\n총 {len(product_mapping)}개의 상품 매핑이 생성되었습니다.")
+            print("\n[생성된 매핑 목록]")
+            for num, code in product_mapping.items():
+                print(f"{num} -> {code}")
+            
             # 파일 정보 출력
             file_size = os.path.getsize(self.selected_file_path)
             print(f"파일 크기: {file_size:,} 바이트")
@@ -764,7 +817,6 @@ class MainWindow(QMainWindow):
                 print(f"데이터프레임 정보:")
                 print(f"- 행 수: {len(df)}")
                 print(f"- 열 수: {len(df.columns)}")
-                # print(f"- 열 이름: {list(df.columns)}")
                 
                 # 임시 파일 삭제
                 os.unlink(temp_path)
@@ -809,7 +861,11 @@ class MainWindow(QMainWindow):
                         print(f"데이터프레임 정보:")
                         print(f"- 행 수: {len(df)}")
                         print(f"- 열 수: {len(df.columns)}")
-                        print(f"- 열 이름: {list(df.columns)}")
+                        
+                        # 임시 파일 삭제
+                        os.unlink(temp_path)
+                        print("✓ 임시 파일 삭제 완료")
+                        
                         break
                     except Exception as e:
                         print(f"! {engine_name} 엔진 실패: {str(e)}")
@@ -854,11 +910,9 @@ class MainWindow(QMainWindow):
                 '상품명': None,
                 '옵션정보': None,
                 '수량': None,
-                '우편번호': None
+                '우편번호': None,
+                '상품번호': None  # 상품번호 열 추가
             }
-            
-            # print("\n[열 정보]")
-            # print(f"감지된 열 목록: {', '.join(str(col) for col in df.columns)}")
             
             for col in df.columns:
                 col_str = str(col)
@@ -866,7 +920,7 @@ class MainWindow(QMainWindow):
                     if key == col_str:  # 정확히 일치하는 경우에만 매칭
                         required_columns[key] = col
                         print(f"✓ '{key}' 열을 찾았습니다: {col}")
-            
+
             # 필수 열이 모두 있는지 확인
             missing_columns = [key for key, value in required_columns.items() if value is None]
             if missing_columns:
@@ -930,20 +984,31 @@ class MainWindow(QMainWindow):
                         quantity = int(row[required_columns['수량']]) if not pd.isna(row[required_columns['수량']]) else 1
                         option = str(row[required_columns['옵션정보']]) if not pd.isna(row[required_columns['옵션정보']]) else "없음"
                         
+                        # 상품번호 가져오기
+                        product_number = str(row[required_columns['상품번호']]).strip()
+                        print(f"\n[상품번호 매칭]")
+                        print(f"상품명: {product_name}")
+                        print(f"원본 상품번호: {row[required_columns['상품번호']]}")
+                        print(f"변환된 상품번호: {product_number}")
+                        # print(f"매핑 딕셔너리 키 목록: {list(product_mapping.keys())}")
+                        product_code = product_mapping.get(product_number, '        ')
+                        print(f"매칭된 상품코드: {product_code}")
+                        
                         # 상품 정보 추가
-                        self.orders[pattern]['상품수'] += 1  # orders를 self.orders로 변경
-                        self.orders[pattern]['상품목록'].append({  # orders를 self.orders로 변경
+                        self.orders[pattern]['상품수'] += 1
+                        self.orders[pattern]['상품목록'].append({
                             '상품명': product_name,
                             '수량': quantity,
-                            '옵션': option
+                            '옵션': option,
+                            '상품코드': product_code
                         })
                         
                         # 수취인 정보가 다른 경우 경고
-                        if (self.orders[pattern]['수취인명'] != str(row[required_columns['수취인명']]) or  # orders를 self.orders로 변경
+                        if (self.orders[pattern]['수취인명'] != str(row[required_columns['수취인명']]) or
                             self.orders[pattern]['수취인연락처1'] != str(row[required_columns['수취인연락처1']]) or
                             self.orders[pattern]['통합배송지'] != str(row[required_columns['통합배송지']])):
                             print(f"! 주문번호 패턴 {pattern}의 수취인 정보가 다릅니다:")
-                            print(f"  - 기존: {self.orders[pattern]['수취인명']} / {self.orders[pattern]['수취인연락처1']} / {self.orders[pattern]['통합배송지']}")  # orders를 self.orders로 변경
+                            print(f"  - 기존: {self.orders[pattern]['수취인명']} / {self.orders[pattern]['수취인연락처1']} / {self.orders[pattern]['통합배송지']}")
                             print(f"  - 새로운: {row[required_columns['수취인명']]} / {row[required_columns['수취인연락처1']]} / {row[required_columns['통합배송지']]}")
             
             # 주문 정보 출력
@@ -973,8 +1038,9 @@ class MainWindow(QMainWindow):
                     product_name = product['상품명']
                     quantity = product['수량']
                     option = product['옵션']
+                    product_code = product['상품코드']
                     
-                    markdown_text += f"-{product_name} ( 옵션 : {option} ) - {quantity} 개\n"
+                    markdown_text += f"◆ [{product_code}]{product_name} ( 옵션 : {option} ) - {quantity} 개\n"
                 
                 markdown_text += "\n"  # 주문 간 구분을 위한 빈 줄
             
@@ -1041,7 +1107,7 @@ class MainWindow(QMainWindow):
                 '우편번호': None
             }
             
-            for col in df.columns:
+                        for col in df.columns:
                 col_str = str(col).strip()
                 for key in required_columns.keys():
                     if col_str == key:  # 정확히 일치하는 경우에만 매칭
