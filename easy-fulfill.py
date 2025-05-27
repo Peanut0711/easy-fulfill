@@ -1110,7 +1110,7 @@ class MainWindow(QMainWindow):
             for col in df.columns:
                 col_str = str(col).strip()
                 for key in required_columns.keys():
-                    if key in col_str:  # 정확히 일치하는 경우에만 매칭
+                    if col_str == key:  # 정확히 일치하는 경우에만 매칭
                         required_columns[key] = col
                         print(f"✓ '{key}' 열을 찾았습니다: {col}")
             
