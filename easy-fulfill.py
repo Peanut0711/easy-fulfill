@@ -915,9 +915,10 @@ class MainWindow(QMainWindow):
             }
             
             for col in df.columns:
-                col_str = str(col)
+                col_str = str(col).strip()
                 for key in required_columns.keys():
-                    if key == col_str:  # 정확히 일치하는 경우에만 매칭
+                    # if col_str == key:  # 정확히 일치하는 경우에만 매칭
+                    if col_str.replace(' ', '') == key.replace(' ', ''):  # 공백 제거 후 비교
                         required_columns[key] = col
                         print(f"✓ '{key}' 열을 찾았습니다: {col}")
 
@@ -1094,17 +1095,46 @@ class MainWindow(QMainWindow):
             print(f"\n[열 정보]")
             print(f"감지된 열 목록: {', '.join(str(col) for col in df.columns)}")
             
+            # store_database.xlsx 파일 읽기
+            try:
+                db_path = Path("database") / "store_database.xlsx"
+                if not db_path.exists():
+                    raise FileNotFoundError("store_database.xlsx 파일을 찾을 수 없습니다.")
+                
+                # 두 번째 시트 읽기 (시트 이름이 날짜로 변경될 수 있으므로 인덱스로 접근)
+                db_df = pd.read_excel(db_path, sheet_name=1, header=1)
+                print("\n[상품 데이터베이스 로드 완료]")
+                print("데이터베이스 열 목록:")
+                for col in db_df.columns:
+                    print(f"- {col}")
+                
+                # 상품코드와 옵션ID 매핑 생성
+                product_code_map = {}
+                for _, row in db_df.iterrows():
+                    option_id = str(row['옵션 ID']).strip()
+                    product_code = str(row['상품코드']).strip()
+                    if option_id and not pd.isna(option_id):
+                        product_code_map[option_id] = product_code
+                
+                print(f"✓ {len(product_code_map)}개의 상품 매핑 정보를 로드했습니다.")
+                
+            except Exception as e:
+                print(f"! 상품 데이터베이스 로드 중 오류 발생: {str(e)}")
+                QMessageBox.warning(self, "경고", "상품 데이터베이스 로드 중 오류가 발생했습니다.")
+                return
+            
             # 필요한 열 찾기
             required_columns = {
                 '주문번호': None,
                 '수취인이름': None,
-                '수취인 주소': None,  # '수취인주소'에서 '수취인 주소'로 수정
+                '수취인 주소': None,
                 '수취인전화번호': None,
                 '노출상품명(옵션명)': None,
                 '등록옵션명': None,
                 '구매수(수량)': None,
                 '배송메세지': None,
-                '우편번호': None
+                '우편번호': None,
+                '옵션ID': None  # 공백 제거
             }
             
             for col in df.columns:
@@ -1122,7 +1152,6 @@ class MainWindow(QMainWindow):
                 return
             
             # 주문 정보 정리
-            # print("\n[주문 정보 정리]")
             self.orders = {}
             
             # 주문번호별로 주문 정보 정리
@@ -1133,7 +1162,6 @@ class MainWindow(QMainWindow):
                 
                 if order_number not in self.orders:
                     phone_value = row[required_columns['수취인전화번호']]
-                    # print(f"수취인전화번호 값: {phone_value}, 타입: {type(phone_value)}")
                     self.orders[order_number] = {
                         '수취인이름': str(row[required_columns['수취인이름']]),
                         '수취인주소': str(row[required_columns['수취인 주소']]),
@@ -1148,10 +1176,15 @@ class MainWindow(QMainWindow):
                 option = str(row[required_columns['등록옵션명']])
                 quantity = int(row[required_columns['구매수(수량)']]) if not pd.isna(row[required_columns['구매수(수량)']]) else 1
                 
+                # 옵션ID로 상품코드 찾기
+                option_id = str(row[required_columns['옵션ID']]).strip()
+                product_code = product_code_map.get(option_id, '')  # 매칭되는 상품코드가 없으면 빈 문자열
+                
                 self.orders[order_number]['상품목록'].append({
                     '상품명': product_name,
                     '옵션': option,
-                    '수량': quantity
+                    '수량': quantity,
+                    '상품코드': product_code
                 })
             
             # 마크다운 형식으로 주문 정보 생성
@@ -1165,8 +1198,10 @@ class MainWindow(QMainWindow):
                 else:
                     self.current_idx_coupang = 1
                     self.ui.lineEdit_idx_coupang.setText(str(self.current_idx_coupang))
-
+            
             for order_number, info in self.orders.items():
+                # print(f"[주문 처리 시작] 주문번호: {order_number}")                
+                # key = (info['수취인이름'], info['수취인전화번호'], order_number)
                 markdown_text += f"[ ] {self.current_idx_coupang}.{info['수취인이름']}\n"
                 self.current_idx_coupang += 1
                 if hasattr(self.ui, 'lineEdit_idx_coupang'):
@@ -1175,12 +1210,14 @@ class MainWindow(QMainWindow):
                 # 상품 목록 표시
                 for product in info['상품목록']:
                     product_name = product['상품명']
-                    option = product['옵션']
                     quantity = product['수량']
+                    option = product['옵션']
+                    product_code = product['상품코드']                    
                     
-                    markdown_text += f"-{product_name} ( 옵션 : {option} ) - **[ {quantity} 개 ]**\n"
+                    markdown_text += f"◆ [{product_code}]{product_name} ( 옵션 : {option} ) - **[ {quantity} 개 ]**\n"
                 
-                markdown_text += "\n"  # 주문 간 구분을 위한 빈 줄
+                markdown_text += "\n"
+                self.current_idx_coupang += 1
             
             # plainTextEdit에 마크다운 텍스트 표시
             self.ui.plainTextEdit.setPlainText(markdown_text)
@@ -1263,233 +1300,6 @@ class MainWindow(QMainWindow):
             print(f"! 폴더 열기 실패: {str(e)}")
             return False
 
-    # def export_invoice_excel(self):
-    #     """송장 엑셀 파일을 생성합니다."""
-    #     if not self.selected_file_path:
-    #         QMessageBox.warning(self, "경고", "먼저 엑셀 파일을 선택해주세요.")
-    #         return
-
-    #     try:
-    #         # output 디렉토리 생성
-    #         output_dir = Path("output")
-    #         output_dir.mkdir(exist_ok=True)
-            
-    #         # 현재 시간을 파일명에 포함
-    #         current_time = datetime.now().strftime("%Y%m%d%H%M%S")
-    #         output_file = (output_dir / f"하이제니스 폼_{current_time}.xlsx").resolve()
-            
-    #         print(f"\n[송장 엑셀 생성 시작]")
-    #         print(f"출력 파일: {output_file}")
-            
-    #         # 데이터프레임 생성을 위한 데이터 준비
-    #         invoice_data = []
-            
-    #         if self.store_type == "naver":
-    #             # 수취인 정보 기준으로 주문 통합 (시간 무관)
-    #             consolidated_orders = {}
-                
-    #             # 주문 통합 처리
-    #             for pattern, info in self.orders.items():
-    #                 # 수취인명, 연락처, 주문번호로 키 생성
-    #                 key = (info['수취인명'], info['수취인연락처1'], pattern)
-                    
-    #                 if key not in consolidated_orders:
-    #                     # 우편번호를 5자리로 고정 (앞에 0 채우기)
-    #                     zipcode = str(info['우편번호']).strip()
-    #                     if zipcode.isdigit():
-    #                         zipcode = zipcode.zfill(5)
-                        
-    #                     consolidated_orders[key] = {
-    #                         '주문번호': pattern,
-    #                         '수취인명': info['수취인명'],
-    #                         '수취인연락처1': info['수취인연락처1'],
-    #                         '통합배송지': info['통합배송지'],
-    #                         '배송메세지': info['배송메세지'],
-    #                         '우편번호': zipcode,
-    #                         '상품목록': info['상품목록'].copy()
-    #                     }
-    #                 else:
-    #                     # 기존 주문에 상품 정보 추가
-    #                     consolidated_orders[key]['상품목록'].extend(info['상품목록'])
-    #                     # 배송메시지가 있는 경우에만 업데이트
-    #                     if info['배송메세지'].strip():
-    #                         consolidated_orders[key]['배송메세지'] = info['배송메세지']
-
-    #             # 통합된 주문 정보로 송장 데이터 생성
-    #             for info in consolidated_orders.values():
-    #                 delivery_msg = info.get('배송메세지', '')
-    #                 if pd.isna(delivery_msg) or str(delivery_msg).lower() == 'nan':
-    #                     delivery_msg = ''
-                        
-    #                 invoice_data.append({
-    #                     '주문번호': info['주문번호'],
-    #                     '고객주문처명': '',
-    #                     '수취인명': info['수취인명'],
-    #                     '우편번호': info['우편번호'],
-    #                     '수취인 주소': info['통합배송지'],
-    #                     '수취인 전화번호': info['수취인연락처1'],
-    #                     '수취인 이동통신': info['수취인연락처1'],
-    #                     '상품명': info['상품목록'][0]['상품명'],
-    #                     '상품모델': '전자제품',
-    #                     '배송메세지': delivery_msg,
-    #                     '비고': ''
-    #                 })
-    #         elif self.store_type == "coupang":
-    #             # 쿠팡 스토어 처리
-    #             print("\n[쿠팡 스토어 데이터 구조 확인]")
-                
-    #             # 주문 통합 처리
-    #             consolidated_orders = {}
-                
-    #             for order_number, info in self.orders.items():
-    #                 print(f"[주문 처리 시작] 주문번호: {order_number}")
-                    
-    #                 # 수취인명, 연락처, 주문번호로 키 생성
-    #                 key = (info['수취인이름'], info['수취인전화번호'], order_number)
-                    
-    #                 if key not in consolidated_orders:
-    #                     # 우편번호 처리
-    #                     zipcode = str(info.get('우편번호', '')).strip()
-    #                     if zipcode.isdigit():
-    #                         zipcode = zipcode.zfill(5)
-                        
-    #                     consolidated_orders[key] = {
-    #                         '주문번호': order_number,
-    #                         '수취인이름': info['수취인이름'],
-    #                         '수취인전화번호': info['수취인전화번호'],
-    #                         '수취인주소': info['수취인주소'],
-    #                         '배송메세지': info.get('배송메세지', ''),
-    #                         '우편번호': zipcode,
-    #                         '상품목록': info['상품목록'].copy()
-    #                     }
-    #                 else:
-    #                     # 기존 주문에 상품 정보 추가
-    #                     consolidated_orders[key]['상품목록'].extend(info['상품목록'])
-    #                     # 배송메시지가 있는 경우에만 업데이트
-    #                     if info.get('배송메세지', '').strip():
-    #                         consolidated_orders[key]['배송메세지'] = info['배송메세지']
-                
-    #             # 통합된 주문 정보로 송장 데이터 생성
-    #             for info in consolidated_orders.values():
-    #                 delivery_msg = info.get('배송메세지', '')
-    #                 if pd.isna(delivery_msg) or str(delivery_msg).lower() == 'nan':
-    #                     delivery_msg = ''
-                    
-    #                 invoice_data.append({
-    #                     '주문번호': info['주문번호'],
-    #                     '고객주문처명': '',
-    #                     '수취인명': info['수취인이름'],
-    #                     '우편번호': info['우편번호'],
-    #                     '수취인 주소': info['수취인주소'],
-    #                     '수취인 전화번호': info['수취인전화번호'],
-    #                     '수취인 이동통신': info['수취인전화번호'],
-    #                     '상품명': info['상품목록'][0]['상품명'],
-    #                     '상품모델': '전자제품',
-    #                     '배송메세지': delivery_msg,
-    #                     '비고': ''
-    #                 })
-            
-    #         # 데이터프레임 생성
-    #         df_invoice = pd.DataFrame(invoice_data)
-            
-    #         # 'nan' 값을 빈 문자열로 변환
-    #         df_invoice['배송메세지'] = df_invoice['배송메세지'].fillna('')
-            
-    #         # 열 순서 지정
-    #         columns = [
-    #             '주문번호',
-    #             '고객주문처명',
-    #             '수취인명',
-    #             '우편번호',
-    #             '수취인 주소',
-    #             '수취인 전화번호',
-    #             '수취인 이동통신',
-    #             '상품명',
-    #             '상품모델',
-    #             '배송메세지',
-    #             '비고'
-    #         ]
-    #         df_invoice = df_invoice[columns]
-            
-    #         # 엑셀 파일 저장 (with xlsxwriter)
-    #         with pd.ExcelWriter(output_file, engine='xlsxwriter') as writer:
-    #             df_invoice.to_excel(writer, index=False, sheet_name='Sheet1')
-                
-    #             # 워크시트와 워크북 객체 가져오기
-    #             worksheet = writer.sheets['Sheet1']
-    #             workbook = writer.book
-                
-    #             # 가운데 정렬을 위한 셀 포맷 설정
-    #             center_format = workbook.add_format({
-    #                 'align': 'center',
-    #                 'valign': 'vcenter'
-    #             })
-                
-    #             # 헤더 포맷 설정 (가운데 정렬 + 굵게)
-    #             header_format = workbook.add_format({
-    #                 'align': 'center',
-    #                 'valign': 'vcenter',
-    #                 'bold': True
-    #             })
-                
-    #             # 열 너비 자동 조정 및 포맷 적용
-    #             for idx, col in enumerate(df_invoice.columns):
-    #                 # 열 이름의 길이와 데이터의 최대 길이 계산
-    #                 max_length = max(
-    #                     df_invoice[col].astype(str).apply(len).max(),
-    #                     len(str(col))
-    #                 )
-    #                 # 한글은 2배의 너비가 필요하므로 조정
-    #                 adjusted_width = max_length * 2 if any('\u3131' <= c <= '\u318E' or '\uAC00' <= c <= '\uD7A3' for c in str(col)) else max_length
-    #                 worksheet.set_column(idx, idx, adjusted_width + 2, center_format)
-                
-    #             # 헤더에 포맷 적용
-    #             for col_num, value in enumerate(df_invoice.columns.values):
-    #                 worksheet.write(0, col_num, value, header_format)
-                
-    #             # 전체 행 높이 조정
-    #             worksheet.set_default_row(20)
-
-    #         print(f"✓ 송장 엑셀 파일이 생성되었습니다.")
-    #         print(f"  - 파일 위치: {output_file}")
-    #         print(f"  - 행 수: {len(df_invoice)}")
-
-    #         self.statusBar().showMessage(f"송장 엑셀 파일 생성 완료: {output_file}")
-            
-    #         # 성공 메시지 표시 (커스텀 버튼 포함)
-    #         msg = QMessageBox()
-    #         msg.setIcon(QMessageBox.Information)
-    #         msg.setWindowTitle("완료")
-    #         msg.setText("송장 엑셀 파일이 생성되었습니다.")
-    #         # msg.setInformativeText(f"파일 위치:\n{output_file}")
-            
-    #         # 버튼 추가
-    #         open_location_button = msg.addButton("폴더 열기", QMessageBox.ActionRole)
-    #         open_file_button = msg.addButton("엑셀 열기", QMessageBox.ActionRole)
-    #         close_button = msg.addButton("닫기", QMessageBox.RejectRole)
-            
-    #         msg.setDefaultButton(close_button)
-            
-    #         # 메시지 박스 표시
-    #         clicked_button = msg.exec()
-            
-    #         # 버튼 클릭 처리
-    #         if msg.clickedButton() == open_location_button:
-    #             if not self.open_file_location(output_file):
-    #                 QMessageBox.warning(self, "오류", "파일 위치를 열 수 없습니다.")
-    #         elif msg.clickedButton() == open_file_button:
-    #             if not self.open_file_with_default_app(output_file):
-    #                 QMessageBox.warning(self, "오류", "파일을 열 수 없습니다.\n엑셀이 설치되어 있는지 확인해주세요.")
-
-    #     except Exception as e:
-    #         error_msg = str(e)
-    #         print(f"❌ 송장 엑셀 파일 생성 중 오류 발생: {error_msg}")
-    #         QMessageBox.critical(
-    #             self,
-    #             "오류",
-    #             f"송장 엑셀 파일 생성 중 오류가 발생했습니다.\n\n{error_msg}"
-    #         )
-    
     def export_invoice_excel(self):
         """송장 엑셀 파일을 생성합니다."""
         if not self.selected_file_path:
@@ -1792,7 +1602,8 @@ class MainWindow(QMainWindow):
                 for col in df.columns:
                     col_str = str(col).strip()
                     for key in required_columns.keys():
-                        if col_str == key:  # 정확히 일치하는 경우에만 매칭
+                        # if col_str == key:  # 정확히 일치하는 경우에만 매칭
+                        if col_str.replace(' ', '') == key.replace(' ', ''):  # 공백 제거 후 비교
                             required_columns[key] = col
                             print(f"✓ '{key}' 열을 찾았습니다: {col}")
                 
