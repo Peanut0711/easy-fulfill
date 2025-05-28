@@ -640,7 +640,7 @@ class MainWindow(QMainWindow):
                 try:
                     if self.store_type == "naver":
                         print("✓ 네이버 스토어 파일 처리 시작")
-                        self.process_naver_product_data_load()
+                        # self.process_naver_product_data_load()
                         self.process_naver_excel_file()
                         self.is_order_file_valid = True  # 파일 처리 성공 시 플래그 설정
                     elif self.store_type == "coupang":
@@ -911,7 +911,8 @@ class MainWindow(QMainWindow):
                 '옵션정보': None,
                 '수량': None,
                 '우편번호': None,
-                '상품번호': None  # 상품번호 열 추가
+                '상품번호': None,  # 상품번호 열 추가
+                '배송방법(구매자 요청)': None  # 배송 방법 열 추가
             }
             
             for col in df.columns:
@@ -972,6 +973,7 @@ class MainWindow(QMainWindow):
                     '구매자연락처': str(first_order[required_columns['구매자연락처']]),
                     '배송메세지': str(first_order[required_columns['배송메세지']]),
                     '우편번호': str(first_order[required_columns['우편번호']]),
+                    '배송방법': str(first_order[required_columns['배송방법(구매자 요청)']]) if not pd.isna(first_order[required_columns['배송방법(구매자 요청)']]) else '배송방법 오류',
                     '상품수': 0,
                     '상품목록': []
                 }
@@ -1029,7 +1031,13 @@ class MainWindow(QMainWindow):
                     self.ui.lineEdit_idx_naver.setText(str(self.current_idx_naver))
             
             for pattern, info in self.orders.items():                                
-                markdown_text += f"[ ] {self.current_idx_naver}.{info['수취인명']}\n"
+                # 배송 방법이 '택배,등기,소포'인 경우에만 기존 형식으로 표시
+                if info['배송방법'] == '택배,등기,소포':
+                    markdown_text += f"[ ] {self.current_idx_naver}.{info['수취인명']}\n"
+                else:
+                    # 그 외의 경우 배송 방법을 함께 표시
+                    markdown_text += f"[ ] {self.current_idx_naver}.{info['수취인명']} **({info['배송방법']})**\n"
+                
                 self.current_idx_naver += 1
                 if hasattr(self.ui, 'lineEdit_idx_naver'):
                     self.ui.lineEdit_idx_naver.setText(str(self.current_idx_naver))
