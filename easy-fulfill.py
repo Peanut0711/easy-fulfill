@@ -312,10 +312,18 @@ class MainWindow(QMainWindow):
                 print(f"  - 네이버: {self.current_idx_naver}")
                 print(f"  - 쿠팡: {self.current_idx_coupang}")
             else:
-                print("! 인덱스 파일이 없습니다. 기본값(1)을 사용합니다.")
+                print("! 인덱스 파일이 없습니다. 기본값(1)을 사용합니다.")                        
+                if hasattr(self.ui, 'lineEdit_idx_naver'):
+                    self.ui.lineEdit_idx_naver.setText('1')
+                if hasattr(self.ui, 'lineEdit_idx_coupang'):
+                    self.ui.lineEdit_idx_coupang.setText('1')
         except Exception as e:
             print(f"! 인덱스 값 로드 중 오류 발생: {str(e)}")
-            print("! 기본값(1)을 사용합니다.")
+            print("! 기본값(1)을 사용합니다.")                
+            if hasattr(self.ui, 'lineEdit_idx_naver'):
+                self.ui.lineEdit_idx_naver.setText('1')
+            if hasattr(self.ui, 'lineEdit_idx_coupang'):
+                self.ui.lineEdit_idx_coupang.setText('1')
 
     def save_index_values(self):
         """현재 인덱스 값을 저장합니다."""
@@ -325,9 +333,13 @@ class MainWindow(QMainWindow):
             
             # 기존 데이터 로드
             index_data = {}
-            if self.index_file_path.exists():
-                with open(self.index_file_path, 'r', encoding='utf-8') as f:
-                    index_data = json.load(f)
+            if self.index_file_path.exists() and self.index_file_path.stat().st_size > 0:
+                try:
+                    with open(self.index_file_path, 'r', encoding='utf-8') as f:
+                        index_data = json.load(f)
+                except json.JSONDecodeError:
+                    print("! 인덱스 파일이 손상되었습니다. 새로 생성합니다.")
+                    index_data = {}
             
             # 오늘 날짜의 데이터 업데이트
             today = date.today().strftime('%Y-%m-%d')
@@ -347,6 +359,14 @@ class MainWindow(QMainWindow):
             print(f"  - 쿠팡: {self.current_idx_coupang}")
         except Exception as e:
             print(f"! 인덱스 값 저장 중 오류 발생: {str(e)}")
+            # 오류 발생 시 파일이 손상되지 않도록 기존 파일 백업
+            if self.index_file_path.exists():
+                backup_path = self.index_file_path.with_suffix('.json.bak')
+                try:
+                    shutil.copy2(self.index_file_path, backup_path)
+                    print(f"! 기존 인덱스 파일을 백업했습니다: {backup_path}")
+                except Exception as backup_error:
+                    print(f"! 백업 파일 생성 실패: {str(backup_error)}")
 
     def update_naver_index(self):
         """네이버 인덱스 값을 업데이트하고 저장합니다."""
