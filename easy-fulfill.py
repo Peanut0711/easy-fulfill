@@ -4,7 +4,7 @@
 import sys
 import os
 import re
-from datetime import datetime
+from datetime import datetime, date
 from pathlib import Path
 import pandas as pd
 import numpy as np
@@ -22,6 +22,7 @@ import requests
 from io import BytesIO
 import warnings
 import logging
+import json
 
 
 class ImageDialog(QDialog):
@@ -267,33 +268,100 @@ class MainWindow(QMainWindow):
         self.orders = {}  # orders 변수를 인스턴스 변수로 초기화
         self.is_order_file_valid = False  # 주문서 파일 유효성 플래그
         self.is_invoice_file_valid = False  # 송장 파일 유효성 플래그
-        self.current_idx_naver = 1  # 현재 인덱스 값 저장
-        self.current_idx_coupang = 1  # 쿠팡 현재 인덱스 값 저장
+        
+        # 인덱스 파일 경로 설정
+        self.index_file_path = Path("database") / "order_index.json"
+        
+        # 인덱스 값 초기화
+        self.current_idx_naver = 1
+        self.current_idx_coupang = 1
         
         self.load_ui()
         self.setup_connections()
         self.setup_status_bar()
         
-        # 네이버 인덱스 값 로드
-        if hasattr(self.ui, 'lineEdit_idx_naver'):
-            saved_index = self.ui.lineEdit_idx_naver.text().strip()
-            if saved_index and saved_index.isdigit():
-                self.current_idx_naver = int(saved_index)
-            else:
-                self.current_idx_naver = 1
-                self.ui.lineEdit_idx_naver.setText(str(self.current_idx_naver))
+        # 인덱스 값 로드
+        self.load_index_values()
         
-        # 쿠팡 인덱스 값 로드
-        if hasattr(self.ui, 'lineEdit_idx_coupang'):
-            saved_index = self.ui.lineEdit_idx_coupang.text().strip()
-            if saved_index and saved_index.isdigit():
-                self.current_idx_coupang = int(saved_index)
-            else:
-                self.current_idx_coupang = 1
-                self.ui.lineEdit_idx_coupang.setText(str(self.current_idx_coupang))
-                
         print("초기화 완료")
-        
+
+    def load_index_values(self):
+        """저장된 인덱스 값을 로드합니다."""
+        try:
+            if self.index_file_path.exists():
+                with open(self.index_file_path, 'r', encoding='utf-8') as f:
+                    index_data = json.load(f)
+                
+                # 오늘 날짜의 인덱스 값 확인
+                today = date.today().strftime('%Y-%m-%d')
+                
+                if today in index_data:
+                    # 네이버 인덱스
+                    if 'naver' in index_data[today]:
+                        self.current_idx_naver = index_data[today]['naver']
+                        if hasattr(self.ui, 'lineEdit_idx_naver'):
+                            self.ui.lineEdit_idx_naver.setText(str(self.current_idx_naver))
+                    
+                    # 쿠팡 인덱스
+                    if 'coupang' in index_data[today]:
+                        self.current_idx_coupang = index_data[today]['coupang']
+                        if hasattr(self.ui, 'lineEdit_idx_coupang'):
+                            self.ui.lineEdit_idx_coupang.setText(str(self.current_idx_coupang))
+                
+                print(f"✓ 인덱스 값 로드 완료 (날짜: {today})")
+                print(f"  - 네이버: {self.current_idx_naver}")
+                print(f"  - 쿠팡: {self.current_idx_coupang}")
+            else:
+                print("! 인덱스 파일이 없습니다. 기본값(1)을 사용합니다.")
+        except Exception as e:
+            print(f"! 인덱스 값 로드 중 오류 발생: {str(e)}")
+            print("! 기본값(1)을 사용합니다.")
+
+    def save_index_values(self):
+        """현재 인덱스 값을 저장합니다."""
+        try:
+            # database 디렉토리 생성
+            self.index_file_path.parent.mkdir(exist_ok=True)
+            
+            # 기존 데이터 로드
+            index_data = {}
+            if self.index_file_path.exists():
+                with open(self.index_file_path, 'r', encoding='utf-8') as f:
+                    index_data = json.load(f)
+            
+            # 오늘 날짜의 데이터 업데이트
+            today = date.today().strftime('%Y-%m-%d')
+            if today not in index_data:
+                index_data[today] = {}
+            
+            # 인덱스 값 저장
+            index_data[today]['naver'] = self.current_idx_naver
+            index_data[today]['coupang'] = self.current_idx_coupang
+            
+            # 파일에 저장
+            with open(self.index_file_path, 'w', encoding='utf-8') as f:
+                json.dump(index_data, f, ensure_ascii=False, indent=2)
+            
+            print(f"✓ 인덱스 값 저장 완료 (날짜: {today})")
+            print(f"  - 네이버: {self.current_idx_naver}")
+            print(f"  - 쿠팡: {self.current_idx_coupang}")
+        except Exception as e:
+            print(f"! 인덱스 값 저장 중 오류 발생: {str(e)}")
+
+    def update_naver_index(self):
+        """네이버 인덱스 값을 업데이트하고 저장합니다."""
+        self.current_idx_naver += 1
+        if hasattr(self.ui, 'lineEdit_idx_naver'):
+            self.ui.lineEdit_idx_naver.setText(str(self.current_idx_naver))
+        self.save_index_values()
+
+    def update_coupang_index(self):
+        """쿠팡 인덱스 값을 업데이트하고 저장합니다."""
+        self.current_idx_coupang += 1
+        if hasattr(self.ui, 'lineEdit_idx_coupang'):
+            self.ui.lineEdit_idx_coupang.setText(str(self.current_idx_coupang))
+        self.save_index_values()
+
     def load_ui(self):
         """UI 파일을 로드합니다."""
         ui_file_path = Path(__file__).parent / "ui" / "main_window.ui"
@@ -513,17 +581,38 @@ class MainWindow(QMainWindow):
         self.ui.pushButton_load_invoice.clicked.connect(self.load_invoice_file)
         self.ui.pushButton_generate_invoice.clicked.connect(self.generate_invoice_file)
         
-        # 상품 분류 탭 버튼 연결
-        # self.ui.selectProductFileButton.clicked.connect(self.select_product_file)
-        # self.ui.categorizeButton.clicked.connect(self.categorize_products)
-        # self.ui.exportCategoryButton.clicked.connect(self.export_category_excel)
+        # 인덱스 입력 필드 연결
+        if hasattr(self.ui, 'lineEdit_idx_naver'):
+            self.ui.lineEdit_idx_naver.textChanged.connect(self.on_naver_index_changed)
+        if hasattr(self.ui, 'lineEdit_idx_coupang'):
+            self.ui.lineEdit_idx_coupang.textChanged.connect(self.on_coupang_index_changed)
         
         # 메뉴 동작 연결
         self.ui.actionOpenExcel.triggered.connect(self.select_excel_file)
         self.ui.actionExit.triggered.connect(self.close)
         self.ui.actionAbout.triggered.connect(self.show_about)
         print("버튼과 메뉴 연결 완료")
-        
+
+    def on_naver_index_changed(self, text):
+        """네이버 인덱스가 수동으로 변경되었을 때 호출됩니다."""
+        try:
+            if text.strip() and text.strip().isdigit():
+                self.current_idx_naver = int(text.strip())
+                self.save_index_values()
+                print(f"✓ 네이버 인덱스 수동 변경: {self.current_idx_naver}")
+        except Exception as e:
+            print(f"! 네이버 인덱스 변경 중 오류 발생: {str(e)}")
+
+    def on_coupang_index_changed(self, text):
+        """쿠팡 인덱스가 수동으로 변경되었을 때 호출됩니다."""
+        try:
+            if text.strip() and text.strip().isdigit():
+                self.current_idx_coupang = int(text.strip())
+                self.save_index_values()
+                print(f"✓ 쿠팡 인덱스 수동 변경: {self.current_idx_coupang}")
+        except Exception as e:
+            print(f"! 쿠팡 인덱스 변경 중 오류 발생: {str(e)}")
+
     def is_valid_filename(self, filename):
         """파일명이 올바른 형식인지 검사합니다."""
         print(f"\n[파일명 검증 시작] 파일명: {filename}")
@@ -1038,7 +1127,7 @@ class MainWindow(QMainWindow):
                     # 그 외의 경우 배송 방법을 함께 표시
                     markdown_text += f"[ ] {self.current_idx_naver}.{info['수취인명']} **({info['배송방법']})**\n"
                 
-                self.current_idx_naver += 1
+                self.update_naver_index()
                 if hasattr(self.ui, 'lineEdit_idx_naver'):
                     self.ui.lineEdit_idx_naver.setText(str(self.current_idx_naver))
                 
@@ -1211,7 +1300,7 @@ class MainWindow(QMainWindow):
                 # print(f"[주문 처리 시작] 주문번호: {order_number}")                
                 # key = (info['수취인이름'], info['수취인전화번호'], order_number)
                 markdown_text += f"[ ] {self.current_idx_coupang}.{info['수취인이름']}\n"
-                self.current_idx_coupang += 1
+                self.update_coupang_index()
                 if hasattr(self.ui, 'lineEdit_idx_coupang'):
                     self.ui.lineEdit_idx_coupang.setText(str(self.current_idx_coupang))
                 
@@ -1225,7 +1314,7 @@ class MainWindow(QMainWindow):
                     markdown_text += f"▶ [{product_code}]{product_name} ( 옵션 : {option} ) - **[ {quantity} 개 ]**\n"
                 
                 markdown_text += "\n"
-                self.current_idx_coupang += 1
+                # self.update_coupang_index()  # 불필요한 업데이트 제거
             
             # plainTextEdit에 마크다운 텍스트 표시
             self.ui.plainTextEdit.setPlainText(markdown_text)

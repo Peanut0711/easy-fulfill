@@ -6,3 +6,4 @@ easy-fulfill.spec
 dist/
 dist.7z
 temp/
+database/order_index.json
