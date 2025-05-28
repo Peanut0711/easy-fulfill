@@ -1335,6 +1335,11 @@ class MainWindow(QMainWindow):
                 
                 # 주문 통합 처리
                 for pattern, info in self.orders.items():
+                    # 배송 방법이 '택배,등기,소포'가 아닌 경우 건너뛰기
+                    if info['배송방법'] != '택배,등기,소포':
+                        print(f"주문 {pattern} 건너뛰기: 배송방법 '{info['배송방법']}'")
+                        continue
+                        
                     # 수취인명, 연락처, 주문번호로 키 생성
                     key = (info['수취인명'], info['수취인연락처1'], pattern)
                     
