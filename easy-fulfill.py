@@ -1158,7 +1158,7 @@ class MainWindow(QMainWindow):
                     option = product['옵션']
                     product_code = product['상품코드']
                     
-                    markdown_text += f"▶ [{product_code}]{product_name} ( 옵션 : {option} ) - **[ {quantity} 개 ]**\n"
+                    markdown_text += f"▶ [{product_code}]**[ {quantity} 개 ]** - {product_name} ( 옵션 : {option} )\n"
                 
                 markdown_text += "\n"  # 주문 간 구분을 위한 빈 줄
             
@@ -1331,7 +1331,7 @@ class MainWindow(QMainWindow):
                     option = product['옵션']
                     product_code = product['상품코드']                    
                     
-                    markdown_text += f"▶ [{product_code}]{product_name} ( 옵션 : {option} ) - **[ {quantity} 개 ]**\n"
+                    markdown_text += f"▶ [{product_code}]**[ {quantity} 개 ]** - {product_name} ( 옵션 : {option} )\n"
                 
                 markdown_text += "\n"
                 # self.update_coupang_index()  # 불필요한 업데이트 제거
