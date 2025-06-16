@@ -345,6 +345,29 @@
          <string>쿠팡 번호</string>
         </property>
        </widget>
+       <widget class="QLineEdit" name="lineEdit_idx_gmarket">
+        <property name="geometry">
+         <rect>
+          <x>110</x>
+          <y>90</y>
+          <width>71</width>
+          <height>21</height>
+         </rect>
+        </property>
+       </widget>
+       <widget class="QLabel" name="label_5">
+        <property name="geometry">
+         <rect>
+          <x>30</x>
+          <y>90</y>
+          <width>71</width>
+          <height>16</height>
+         </rect>
+        </property>
+        <property name="text">
+         <string>지마켓 번호</string>
+        </property>
+       </widget>
       </widget>
      </widget>
     </item>

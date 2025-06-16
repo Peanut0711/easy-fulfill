@@ -275,6 +275,7 @@ class MainWindow(QMainWindow):
         # 인덱스 값 초기화
         self.current_idx_naver = 1
         self.current_idx_coupang = 1
+        self.current_idx_gmarket = 1
         
         self.load_ui()
         self.setup_connections()
@@ -301,7 +302,11 @@ class MainWindow(QMainWindow):
                         self.current_idx_naver = index_data[today]['naver']
                         if hasattr(self.ui, 'lineEdit_idx_naver'):
                             self.ui.lineEdit_idx_naver.setText(str(self.current_idx_naver))
-                    
+                    # 지마켓 인덱스
+                    if 'gmarket' in index_data[today]:
+                        self.current_idx_gmarket = index_data[today]['gmarket']
+                        if hasattr(self.ui, 'lineEdit_idx_gmarket'):
+                            self.ui.lineEdit_idx_gmarket.setText(str(self.current_idx_gmarket))
                     # 쿠팡 인덱스
                     if 'coupang' in index_data[today]:
                         self.current_idx_coupang = index_data[today]['coupang']
@@ -310,11 +315,14 @@ class MainWindow(QMainWindow):
                 
                 print(f"✓ 인덱스 값 로드 완료 (날짜: {today})")
                 print(f"  - 네이버: {self.current_idx_naver}")
+                print(f"  - 지마켓: {self.current_idx_gmarket}")
                 print(f"  - 쿠팡: {self.current_idx_coupang}")
             else:
                 print("! 인덱스 파일이 없습니다. 기본값(1)을 사용합니다.")                        
                 if hasattr(self.ui, 'lineEdit_idx_naver'):
                     self.ui.lineEdit_idx_naver.setText('1')
+                if hasattr(self.ui, 'lineEdit_idx_gmarket'):
+                    self.ui.lineEdit_idx_gmarket.setText('1')
                 if hasattr(self.ui, 'lineEdit_idx_coupang'):
                     self.ui.lineEdit_idx_coupang.setText('1')
         except Exception as e:
@@ -322,6 +330,8 @@ class MainWindow(QMainWindow):
             print("! 기본값(1)을 사용합니다.")                
             if hasattr(self.ui, 'lineEdit_idx_naver'):
                 self.ui.lineEdit_idx_naver.setText('1')
+            if hasattr(self.ui, 'lineEdit_idx_gmarket'):
+                self.ui.lineEdit_idx_gmarket.setText('1')
             if hasattr(self.ui, 'lineEdit_idx_coupang'):
                 self.ui.lineEdit_idx_coupang.setText('1')
 
@@ -348,6 +358,7 @@ class MainWindow(QMainWindow):
             
             # 인덱스 값 저장
             index_data[today]['naver'] = self.current_idx_naver
+            index_data[today]['gmarket'] = self.current_idx_gmarket
             index_data[today]['coupang'] = self.current_idx_coupang
             
             # 파일에 저장
@@ -356,6 +367,7 @@ class MainWindow(QMainWindow):
             
             print(f"✓ 인덱스 값 저장 완료 (날짜: {today})")
             print(f"  - 네이버: {self.current_idx_naver}")
+            print(f"  - 지마켓: {self.current_idx_gmarket}")
             print(f"  - 쿠팡: {self.current_idx_coupang}")
         except Exception as e:
             print(f"! 인덱스 값 저장 중 오류 발생: {str(e)}")
@@ -380,6 +392,13 @@ class MainWindow(QMainWindow):
         self.current_idx_coupang += 1
         if hasattr(self.ui, 'lineEdit_idx_coupang'):
             self.ui.lineEdit_idx_coupang.setText(str(self.current_idx_coupang))
+        self.save_index_values()
+
+    def update_gmarket_index(self):
+        """지마켓 인덱스 값을 업데이트하고 저장합니다."""
+        self.current_idx_gmarket += 1
+        if hasattr(self.ui, 'lineEdit_idx_gmarket'):
+            self.ui.lineEdit_idx_gmarket.setText(str(self.current_idx_gmarket))
         self.save_index_values()
 
     def load_ui(self):
@@ -590,13 +609,7 @@ class MainWindow(QMainWindow):
         statusbar.showMessage("준비")  # 초기 메시지 설정
         
     def setup_connections(self):
-        """버튼과 메뉴 동작을 연결합니다."""
-        # 버튼 연결
-        # self.ui.selectFileButton.clicked.connect(self.select_excel_file)        
-        # self.ui.exportInvoiceButton.clicked.connect(self.export_invoice_excel)
-        # self.ui.generateButton.clicked.connect(self.generate_work_order)
-        # self.ui.clearButton.clicked.connect(self.clear_list)
-        
+        """버튼과 메뉴 동작을 연결합니다."""        
         # 발송 처리 탭 버튼 연결
         self.ui.pushButton_load_invoice.clicked.connect(self.load_invoice_file)
         self.ui.pushButton_generate_invoice.clicked.connect(self.generate_invoice_file)
@@ -606,6 +619,8 @@ class MainWindow(QMainWindow):
             self.ui.lineEdit_idx_naver.textChanged.connect(self.on_naver_index_changed)
         if hasattr(self.ui, 'lineEdit_idx_coupang'):
             self.ui.lineEdit_idx_coupang.textChanged.connect(self.on_coupang_index_changed)
+        if hasattr(self.ui, 'lineEdit_idx_gmarket'):
+            self.ui.lineEdit_idx_gmarket.textChanged.connect(self.on_gmarket_index_changed)
         
         # 메뉴 동작 연결
         self.ui.actionOpenExcel.triggered.connect(self.select_excel_file)
@@ -632,6 +647,17 @@ class MainWindow(QMainWindow):
                 print(f"✓ 쿠팡 인덱스 수동 변경: {self.current_idx_coupang}")
         except Exception as e:
             print(f"! 쿠팡 인덱스 변경 중 오류 발생: {str(e)}")
+
+
+    def on_gmarket_index_changed(self, text):
+        """지마켓 인덱스가 수동으로 변경되었을 때 호출됩니다."""
+        try:
+            if text.strip() and text.strip().isdigit():
+                self.current_idx_gmarket = int(text.strip())
+                self.save_index_values()
+                print(f"✓ 지마켓 인덱스 수동 변경: {self.current_idx_gmarket}")
+        except Exception as e:
+            print(f"! 지마켓 인덱스 변경 중 오류 발생: {str(e)}")
 
     def is_valid_filename(self, filename):
         """파일명이 올바른 형식인지 검사합니다."""
@@ -766,12 +792,15 @@ class MainWindow(QMainWindow):
                 try:
                     if self.store_type == "naver":
                         print("✓ 네이버 스토어 파일 처리 시작")
-                        # self.process_naver_product_data_load()
                         self.process_naver_excel_file()
                         self.is_order_file_valid = True  # 파일 처리 성공 시 플래그 설정
                     elif self.store_type == "coupang":
                         print("✓ 쿠팡 스토어 파일 처리 시작")
                         self.process_coupang_excel_file()
+                        self.is_order_file_valid = True  # 파일 처리 성공 시 플래그 설정
+                    elif self.store_type == "gmarket":
+                        print("✓ 지마켓 스토어 파일 처리 시작")
+                        self.process_gmarket_excel_file()
                         self.is_order_file_valid = True  # 파일 처리 성공 시 플래그 설정
                 except Exception as e:
                     self.is_order_file_valid = False
@@ -792,51 +821,7 @@ class MainWindow(QMainWindow):
                 print("❌ 파일 선택이 취소되었습니다.")
         else:
             self.is_order_file_valid = False
-            print("\n[알림] 파일 선택이 취소되었습니다.")
-            
-    def process_naver_product_data_load(self):
-        """input 폴더에서 Product_날짜 형식의 CSV 파일을 찾아 가장 최신 파일을 선택합니다.
-        
-        Returns:
-            bool: CSV 파일이 하나라도 존재하면 True, 그렇지 않으면 False
-        """
-        try:
-            # input 폴더 경로 설정
-            input_dir = Path("input")
-            
-            # 폴더가 없으면 생성
-            input_dir.mkdir(exist_ok=True)
-            
-            # Product_날짜 형식의 CSV 파일 찾기
-            product_files = []
-            for file in input_dir.glob("Product_*.csv"):
-                # 파일명에서 날짜 부분 추출 (Product_YYYYMMDD 형식)
-                try:
-                    date_str = file.stem.split('_')[1]  # Product_YYYYMMDD_... 에서 YYYYMMDD 부분 추출
-                    date = datetime.strptime(date_str, '%Y%m%d')
-                    product_files.append((date, file))
-                except (IndexError, ValueError):
-                    continue
-            
-            if not product_files:
-                print("❌ Product_날짜 형식의 CSV 파일을 찾을 수 없습니다.")
-                self.ui.label_naver_product_csv.setText("상품 데이터가 없습니다.")
-                return False
-            
-            # 날짜 기준으로 정렬 (최신순)
-            product_files.sort(reverse=True)
-            latest_file = product_files[0][1]
-            
-            # 라벨 업데이트
-            self.ui.label_naver_product_csv.setText(latest_file.name)
-            print(f"✓ 최신 상품 데이터 파일 선택됨: {latest_file.name}")
-            return True
-            
-        except Exception as e:
-            error_msg = str(e)
-            print(f"❌ 상품 데이터 로드 중 오류 발생: {error_msg}")
-            self.ui.label_naver_product_csv.setText("상품 데이터 로드 실패")
-            return False
+            print("\n[알림] 파일 선택이 취소되었습니다.")     
     
     def process_naver_excel_file(self):
         """네이버 스토어 엑셀 파일에서 주문번호를 처리합니다."""
@@ -1351,7 +1336,6 @@ class MainWindow(QMainWindow):
                     markdown_text += f"▶ [{product_code}]**[ {quantity} 개 ]** - {product_name} ( 옵션 : {option} )\n"
                 
                 markdown_text += "\n"
-                # self.update_coupang_index()  # 불필요한 업데이트 제거
             
             # plainTextEdit에 마크다운 텍스트 표시
             self.ui.plainTextEdit.setPlainText(markdown_text)
@@ -1368,8 +1352,179 @@ class MainWindow(QMainWindow):
                 self,
                 "오류",
                 f"엑셀 파일 처리 중 오류가 발생했습니다.\n\n{error_msg}"
-            )
-
+            )   
+    
+    def process_gmarket_excel_file(self):
+        """지마켓 스토어의 주문 정보 엑셀 파일을 처리합니다."""
+        try:
+            print(f"\n[지마켓 스토어 엑셀 파일 처리 시작] 파일: {self.selected_file_path}")
+            
+            # 파일 정보 출력
+            file_size = os.path.getsize(self.selected_file_path)
+            print(f"파일 크기: {file_size:,} 바이트")
+            
+            # 파일 헤더 확인
+            try:
+                with open(self.selected_file_path, 'rb') as f:
+                    header = f.read(8)
+                    print(f"파일 헤더 (16진수): {header.hex()}")
+                    if header.startswith(b'PK\x03\x04'):
+                        print("✓ 파일이 ZIP 형식(.xlsx)으로 확인됨")
+                    elif header.startswith(b'\xD0\xCF\x11\xE0'):
+                        print("✓ 파일이 OLE2 형식(.xls)으로 확인됨")
+                    else:
+                        print("! 알 수 없는 파일 형식")
+            except Exception as e:
+                print(f"! 파일 헤더 확인 실패: {str(e)}")
+            
+            # 엑셀 파일 읽기
+            df = pd.read_excel(self.selected_file_path)
+            print(f"\n[열 정보]")
+            print(f"감지된 열 목록: {', '.join(str(col) for col in df.columns)}")
+            
+            # store_database.xlsx 파일 읽기
+            # try:
+            #     db_path = Path("database") / "store_database.xlsx"
+            #     if not db_path.exists():
+            #         raise FileNotFoundError("store_database.xlsx 파일을 찾을 수 없습니다.")
+                
+            #     # 두 번째 시트 읽기 (시트 이름이 날짜로 변경될 수 있으므로 인덱스로 접근)
+            #     db_df = pd.read_excel(db_path, sheet_name=1, header=1)
+            #     print("\n[상품 데이터베이스 로드 완료]")
+            #     print("데이터베이스 열 목록:")
+            #     for col in db_df.columns:
+            #         print(f"- {col}")
+                
+            #     # 상품코드와 옵션ID 매핑 생성
+            #     product_code_map = {}
+            #     for _, row in db_df.iterrows():
+            #         option_id = str(row['옵션 ID']).strip()
+            #         product_code = str(row['상품코드']).strip()
+            #         if option_id and not pd.isna(option_id):
+            #             product_code_map[option_id] = product_code
+                
+            #     print(f"✓ {len(product_code_map)}개의 상품 매핑 정보를 로드했습니다.")
+                
+            # except Exception as e:
+            #     print(f"! 상품 데이터베이스 로드 중 오류 발생: {str(e)}")
+            #     QMessageBox.warning(self, "경고", "상품 데이터베이스 로드 중 오류가 발생했습니다.")
+            #     return
+            
+            # 필요한 열 찾기
+            required_columns = {
+                '주문번호': None,
+                '수령인명': None,
+                '주소': None,
+                '수령인 전화번호': None,
+                '상품명': None,
+                '옵션': None,
+                '수량': None,
+                '배송시 요구사항': None,
+                '우편번호': None
+            }
+            
+            for col in df.columns:
+                col_str = str(col).strip()
+                for key in required_columns.keys():
+                    if col_str == key:  # 정확히 일치하는 경우에만 매칭
+                        required_columns[key] = col
+                        print(f"✓ '{key}' 열을 찾았습니다: {col}")
+            
+            # 필수 열이 모두 있는지 확인
+            missing_columns = [key for key, value in required_columns.items() if value is None]
+            if missing_columns:
+                print(f"❌ 다음 열을 찾을 수 없습니다: {', '.join(missing_columns)}")
+                QMessageBox.warning(self, "오류", f"다음 열을 찾을 수 없습니다:\n{', '.join(missing_columns)}")
+                return
+            
+            # 주문 정보 정리
+            self.orders = {}
+            
+            # 주문번호별로 주문 정보 정리
+            for _, row in df.iterrows():
+                order_number = str(row[required_columns['주문번호']])
+                if pd.isna(order_number) or order_number.strip() == '':
+                    continue
+                
+                if order_number not in self.orders:
+                    phone_value = row[required_columns['수령인 전화번호']]
+                    self.orders[order_number] = {
+                        '수령인명': str(row[required_columns['수령인명']]),
+                        '수령인 주소': str(row[required_columns['주소']]),
+                        '수령인 전화번호': str(row[required_columns['수령인 전화번호']]) if not pd.isna(row[required_columns['수령인 전화번호']]) else '',
+                        '배송시 요구사항': str(row[required_columns['배송시 요구사항']]) if not pd.isna(row[required_columns['배송시 요구사항']]) else '',
+                        '우편번호': str(row[required_columns['우편번호']]) if not pd.isna(row[required_columns['우편번호']]) else '',
+                        '상품목록': []
+                    }
+                
+                # 상품 정보 추가
+                product_name = str(row[required_columns['상품명']])
+                option = str(row[required_columns['옵션']])
+                quantity = int(row[required_columns['수량']]) if not pd.isna(row[required_columns['수량']]) else 1
+                
+                # 옵션ID로 상품코드 찾기
+                # option_id = str(row[required_columns['옵션ID']]).strip()
+                # product_code = product_code_map.get(option_id, '')  # 매칭되는 상품코드가 없으면 빈 문자열
+                
+                self.orders[order_number]['상품목록'].append({
+                    '상품명': product_name,
+                    '옵션': option,
+                    '수량': quantity,
+                    # '상품코드': product_code
+                })
+            
+            # 마크다운 형식으로 주문 정보 생성
+            markdown_text = ""
+            
+            # 인덱스 값 다시 로드
+            if hasattr(self.ui, 'lineEdit_idx_gmarket'):
+                saved_index = self.ui.lineEdit_idx_gmarket.text().strip()
+                if saved_index and saved_index.isdigit():
+                    self.current_idx_gmarket = int(saved_index)
+                else:
+                    self.current_idx_gmarket = 1
+                    self.ui.lineEdit_idx_gmarket.setText(str(self.current_idx_gmarket))
+            
+            for order_number, info in self.orders.items():
+                # print(f"[주문 처리 시작] 주문번호: {order_number}")                
+                # key = (info['수취인이름'], info['수취인전화번호'], order_number)
+                markdown_text += f"[ ] {self.current_idx_gmarket}.{info['수령인명']}\n"
+                self.update_gmarket_index()
+                if hasattr(self.ui, 'lineEdit_idx_gmarket'):
+                    self.ui.lineEdit_idx_gmarket.setText(str(self.current_idx_gmarket))
+                
+                # 상품 목록 표시
+                for product in info['상품목록']:
+                    product_name = product['상품명']
+                    quantity = product['수량']
+                    option = product['옵션']
+                    # product_code = product['상품코드'] 
+                    product_code = 'PASS'
+                   
+                                   
+                    
+                    # markdown_text += f"▶ [{product_code}]**[ {quantity} 개 ]** - {product_name} ( 옵션 : {option} )\n"
+                    markdown_text += f"▶ [{product_code}]**[ {quantity} 개 ]** - {product_name} ( 옵션 : {option} )\n"
+                
+                markdown_text += "\n"
+            
+            # plainTextEdit에 마크다운 텍스트 표시
+            self.ui.plainTextEdit.setPlainText(markdown_text)
+            
+            # 클립보드에 자동 복사
+            clipboard = QApplication.clipboard()
+            clipboard.setText(markdown_text)
+            self.statusBar().showMessage("주문 정보가 클립보드에 복사되었습니다.", 2000)
+            
+        except Exception as e:
+            error_msg = str(e)
+            print(f"❌ 엑셀 파일 처리 중 오류 발생: {error_msg}")
+            QMessageBox.critical(
+                self,
+                "오류",
+                f"엑셀 파일 처리 중 오류가 발생했습니다.\n\n{error_msg}"
+            )           
+    
     def generate_work_order(self):
         """작업지시서 생성 버튼 클릭 시 실행되는 함수입니다."""
         if not self.selected_file_path:
