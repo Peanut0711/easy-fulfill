@@ -657,6 +657,16 @@ class MainWindow(QMainWindow):
         if coupang_match:
             print(f"매칭된 그룹: {coupang_match.groups()}")
         
+        # 지마켓 스토어 파일 형식 검사
+        gmarket_pattern = r'^발송관리(?: \((\d+)\))?\.xlsx$'
+        gmarket_match = re.match(gmarket_pattern, filename)
+        
+        print("\n[지마켓 스토어 패턴 검사]")
+        print(f"패턴: {gmarket_pattern}")
+        print(f"매칭 결과: {gmarket_match}")
+        if gmarket_match:
+            print(f"매칭된 그룹: {gmarket_match.groups()}")
+        
         if naver_match:
             # 날짜 유효성 검사
             date_str = naver_match.group(2)
@@ -685,10 +695,14 @@ class MainWindow(QMainWindow):
             except ValueError:
                 print("❌ 날짜 형식이 올바르지 않습니다.")
                 return False, None
+        elif gmarket_match:
+            print("✓ 지마켓 스토어 파일명 검증 성공")
+            return True, "gmarket"
         else:
             print("❌ 파일명 형식이 올바르지 않습니다.")
             print("   - 네이버 스토어 형식: 스마트스토어_전체주문발주발송관리_YYYYMMDD로 시작하는 .xlsx 파일")
             print("   - 쿠팡 스토어 형식: DeliveryList(YYYY-MM-DD)로 시작하는 .xlsx 파일")
+            print("   - 지마켓 스토어 형식: 발송관리.xlsx 또는 발송관리 (숫자).xlsx")
             return False, None
             
     def open_file_with_default_app(self, file_path):
@@ -732,9 +746,12 @@ class MainWindow(QMainWindow):
                 if self.store_type == "naver":
                     logo_path = "image/naver-logo.png"
                     logo_size = QSize(120, 40)  # 네이버 로고 크기
-                else:  # coupang
+                elif self.store_type == "coupang":
                     logo_path = "image/coupang-logo.png"
                     logo_size = QSize(120, 40)  # 쿠팡 로고 크기
+                elif self.store_type == "gmarket":
+                    logo_path = "image/gmarket-logo.png"
+                    logo_size = QSize(120, 40)  # 지마켓 로고 크기
                 
                 # 로고 이미지 로드 및 표시
                 if os.path.exists(logo_path):
