@@ -1450,7 +1450,7 @@ class MainWindow(QMainWindow):
                     phone_value = row[required_columns['수령인 전화번호']]
                     self.orders[order_number] = {
                         '수령인명': str(row[required_columns['수령인명']]),
-                        '수령인 주소': str(row[required_columns['주소']]),
+                        '주소': str(row[required_columns['주소']]),
                         '수령인 전화번호': str(row[required_columns['수령인 전화번호']]) if not pd.isna(row[required_columns['수령인 전화번호']]) else '',
                         '배송시 요구사항': str(row[required_columns['배송시 요구사항']]) if not pd.isna(row[required_columns['배송시 요구사항']]) else '',
                         '우편번호': str(row[required_columns['우편번호']]) if not pd.isna(row[required_columns['우편번호']]) else '',
@@ -1737,7 +1737,70 @@ class MainWindow(QMainWindow):
                         '배송메세지': delivery_msg,
                         '비고': ''
                     })
-            
+            elif self.store_type == "gmarket":
+                # 지마켓 스토어 처리
+                print("\n[지마켓 스토어 데이터 구조 확인]")
+                
+                # 주문 통합 처리
+                consolidated_orders = {}
+                
+                for order_number, info in self.orders.items():
+                    print(f"[주문 처리 시작] 주문번호: {order_number}")
+                    
+                    # 수취인명, 연락처, 주문번호로 키 생성
+                    key = (info['수령인명'], info['수령인 전화번호'], order_number)
+                    
+                    if key not in consolidated_orders:
+                        # 우편번호 처리
+                        zipcode = str(info.get('우편번호', '')).strip()
+                        if zipcode.isdigit():
+                            zipcode = zipcode.zfill(5)
+                        
+                        consolidated_orders[key] = {
+                            '주문번호': order_number,
+                            '수령인명': info['수령인명'],
+                            '수령인 전화번호': info['수령인 전화번호'],
+                            '주소': info['주소'],
+                            '배송시 요구사항': info.get('배송시 요구사항', ''),
+                            '우편번호': zipcode,
+                            '상품목록': info['상품목록'].copy()
+                        }
+                    else:
+                        # 기존 주문에 상품 정보 추가
+                        consolidated_orders[key]['상품목록'].extend(info['상품목록'])
+                        # 배송메시지가 있는 경우에만 업데이트
+                        if info.get('배송시 요구사항', '').strip():
+                            consolidated_orders[key]['배송시 요구사항'] = info['배송시 요구사항']
+                
+                # 통합된 주문 정보로 송장 데이터 생성
+                for info in consolidated_orders.values():
+                    delivery_msg = info.get('배송시 요구사항', '')
+                    if pd.isna(delivery_msg) or str(delivery_msg).lower() == 'nan':
+                        delivery_msg = ''
+                    
+                    # 상품 정보를 하나의 문자열로 결합
+                    product_info = []
+                    for product in info['상품목록']:
+                        product_str = f"{product['상품명']} (옵션: {product['옵션']}) - {product['수량']}개"
+                        product_info.append(product_str)
+                    
+                    # 모든 상품 정보를 줄바꿈으로 구분하여 하나의 문자열로 결합
+                    combined_product_info = '\n'.join(product_info)
+                    
+                    invoice_data.append({
+                        '주문번호': info['주문번호'],
+                        '고객주문처명': '',
+                        '수취인명': info['수령인명'],
+                        '우편번호': info['우편번호'],
+                        '수취인 주소': info['주소'],
+                        '수취인 전화번호': info['수령인 전화번호'],
+                        '수취인 이동통신': info['수령인 전화번호'],
+                        '상품명': combined_product_info,
+                        '상품모델': '전자제품',
+                        '배송메세지': delivery_msg,
+                        '비고': ''
+                    })          
+                
             # 데이터프레임 생성
             df_invoice = pd.DataFrame(invoice_data)
             
