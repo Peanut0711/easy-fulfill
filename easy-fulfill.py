@@ -876,10 +876,11 @@ class MainWindow(QMainWindow):
                     product_mapping[product_number] = product_code
                     print(f"매핑 추가: {product_number} -> {product_mapping[product_number]}")
 
-            print(f"\n총 {len(product_mapping)}개의 상품 매핑이 생성되었습니다.")
-            print("\n[생성된 매핑 목록]")
-            for num, code in product_mapping.items():
-                print(f"{num} -> {code}")
+            
+            # print(f"\n총 {len(product_mapping)}개의 상품 매핑이 생성되었습니다.")
+            # print("\n[생성된 매핑 목록]")
+            # for num, code in product_mapping.items():
+            #     print(f"{num} -> {code}")
             
             # 파일 정보 출력
             file_size = os.path.getsize(self.selected_file_path)
@@ -2081,10 +2082,56 @@ class MainWindow(QMainWindow):
             # 운송장번호 컬럼 추가 (B열)
             order_df['운송장번호'] = ''
             
-            # 3. 송장 파일 읽기
+            # 3. 배송방법 복사 처리
+            print("\n[배송방법 복사 처리]")
+            
+            # 배송방법 관련 컬럼 찾기
+            delivery_method_col = None  # E열: 배송방법
+            delivery_request_col = None  # G열: 배송방법(구매자 요청)
+            
+            for col in order_df.columns:
+                col_str = str(col).strip()
+                if col_str == '배송방법':
+                    delivery_method_col = col
+                    print(f"✓ 배송방법 컬럼 찾음: {col}")
+                elif col_str == '배송방법(구매자 요청)':
+                    delivery_request_col = col
+                    print(f"✓ 배송방법(구매자 요청) 컬럼 찾음: {col}")
+            
+            # 배송방법 복사 처리
+            if delivery_method_col and delivery_request_col:
+                copy_count = 0
+                for idx, row in order_df.iterrows():
+                    current_method = str(row[delivery_method_col]).strip()
+                    requested_method = str(row[delivery_request_col]).strip()
+                    
+                    # NaN 값 처리
+                    if pd.isna(row[delivery_method_col]) or current_method == 'nan':
+                        current_method = ''
+                    if pd.isna(row[delivery_request_col]) or requested_method == 'nan':
+                        requested_method = ''
+                    
+                    # G열과 E열의 값이 다른 경우에만 복사
+                    if current_method != requested_method and requested_method:
+                        # print(f"행 {idx+1}: 배송방법 복사")
+                        # print(f"  - 기존(E열): '{current_method}'")
+                        # print(f"  - 요청(G열): '{requested_method}'")
+                        
+                        order_df.loc[idx, delivery_method_col] = requested_method
+                        copy_count += 1
+                
+                print(f"✓ 총 {copy_count}개의 배송방법이 복사되었습니다.")
+            else:
+                print("! 배송방법 관련 컬럼을 찾을 수 없습니다.")
+                if not delivery_method_col:
+                    print("  - 배송방법 컬럼 없음")
+                if not delivery_request_col:
+                    print("  - 배송방법(구매자 요청) 컬럼 없음")
+            
+            # 4. 송장 파일 읽기
             invoice_df = pd.read_excel(temp_invoice_file, header=6)
             
-            # 4. 열 매핑 설정
+            # 5. 열 매핑 설정
             column_mapping = {
                 'order': {
                     '수취인명': None,
@@ -2112,7 +2159,7 @@ class MainWindow(QMainWindow):
                     if col_str == key:  # 정확히 일치하는 경우에만 매칭
                         column_mapping['invoice'][key] = col
             
-            # 5. 매칭된 주문 정보 출력 및 운송장번호 업데이트
+            # 6. 매칭된 주문 정보 출력 및 운송장번호 업데이트
             print("\n[매칭된 주문 정보]")
             matched_count = 0
             
@@ -2140,10 +2187,10 @@ class MainWindow(QMainWindow):
             
             print(f"\n✓ 총 {matched_count}개의 주문이 매칭되었습니다.")
             
-            # 6. 결과 파일 저장
+            # 7. 결과 파일 저장
             self._save_invoice_file(order_df)
             
-            # 7. 임시 파일 정리
+            # 8. 임시 파일 정리
             decrypted_order_file.unlink()
             
         except Exception as e:
