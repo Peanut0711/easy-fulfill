@@ -2101,7 +2101,9 @@ class MainWindow(QMainWindow):
             # 배송방법 복사 처리
             if delivery_method_col and delivery_request_col:
                 copy_count = 0
-                clear_count = 0
+                delete_count = 0
+                rows_to_delete = []  # 삭제할 행 인덱스 저장
+                
                 for idx, row in order_df.iterrows():
                     requested_method = str(row[delivery_request_col]).strip()
                     
@@ -2115,15 +2117,18 @@ class MainWindow(QMainWindow):
                             order_df.loc[idx, delivery_method_col] = requested_method
                             copy_count += 1
                         else:
-                            # G열의 값이 '택배,등기,소포'가 아닌 경우 E열을 무조건 공란으로 처리
-                            print(f"행 {idx+1}: 배송방법 공란 처리")
+                            # G열의 값이 '택배,등기,소포'가 아닌 경우 해당 행 삭제
+                            print(f"행 {idx+1}: 배송방법이 '택배,등기,소포'가 아님 - 행 삭제")
                             print(f"  - 요청(G열): '{requested_method}' (택배,등기,소포 아님)")
-                            
-                            order_df.loc[idx, delivery_method_col] = ''
-                            clear_count += 1
+                            rows_to_delete.append(idx)
+                            delete_count += 1
+                
+                # 삭제할 행들을 역순으로 삭제 (인덱스가 변경되지 않도록)
+                for idx in reversed(rows_to_delete):
+                    order_df = order_df.drop(idx).reset_index(drop=True)
                 
                 print(f"✓ 총 {copy_count}개의 배송방법이 복사되었습니다.")
-                print(f"✓ 총 {clear_count}개의 배송방법이 공란으로 처리되었습니다.")
+                print(f"✓ 총 {delete_count}개의 행이 삭제되었습니다.")
             else:
                 print("! 배송방법 관련 컬럼을 찾을 수 없습니다.")
                 if not delivery_method_col:
