@@ -2101,26 +2101,29 @@ class MainWindow(QMainWindow):
             # 배송방법 복사 처리
             if delivery_method_col and delivery_request_col:
                 copy_count = 0
+                clear_count = 0
                 for idx, row in order_df.iterrows():
-                    current_method = str(row[delivery_method_col]).strip()
                     requested_method = str(row[delivery_request_col]).strip()
                     
                     # NaN 값 처리
-                    if pd.isna(row[delivery_method_col]) or current_method == 'nan':
-                        current_method = ''
                     if pd.isna(row[delivery_request_col]) or requested_method == 'nan':
                         requested_method = ''
-                    
-                    # G열과 E열의 값이 다른 경우에만 복사
-                    if current_method != requested_method and requested_method:
-                        # print(f"행 {idx+1}: 배송방법 복사")
-                        # print(f"  - 기존(E열): '{current_method}'")
-                        # print(f"  - 요청(G열): '{requested_method}'")
-                        
-                        order_df.loc[idx, delivery_method_col] = requested_method
-                        copy_count += 1
+                                        
+                    if requested_method:
+                        # G열의 값이 '택배,등기,소포'인 경우 E열에 무조건 복사
+                        if requested_method == '택배,등기,소포':                            
+                            order_df.loc[idx, delivery_method_col] = requested_method
+                            copy_count += 1
+                        else:
+                            # G열의 값이 '택배,등기,소포'가 아닌 경우 E열을 무조건 공란으로 처리
+                            print(f"행 {idx+1}: 배송방법 공란 처리")
+                            print(f"  - 요청(G열): '{requested_method}' (택배,등기,소포 아님)")
+                            
+                            order_df.loc[idx, delivery_method_col] = ''
+                            clear_count += 1
                 
                 print(f"✓ 총 {copy_count}개의 배송방법이 복사되었습니다.")
+                print(f"✓ 총 {clear_count}개의 배송방법이 공란으로 처리되었습니다.")
             else:
                 print("! 배송방법 관련 컬럼을 찾을 수 없습니다.")
                 if not delivery_method_col:
