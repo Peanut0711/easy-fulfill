@@ -1231,9 +1231,20 @@ class MainWindow(QMainWindow):
                 # 상품코드와 옵션ID 매핑 생성
                 product_code_map = {}
                 for _, row in db_df.iterrows():
-                    option_id = str(row['옵션 ID']).strip()
+                    option_id_raw = row['옵션 ID']
                     product_code = str(row['상품코드']).strip()
-                    if option_id and not pd.isna(option_id):
+                    
+                    # NaN 값 처리
+                    if pd.isna(option_id_raw):
+                        continue
+                    
+                    # float로 읽힌 경우 정수로 변환 후 문자열로 변환
+                    if isinstance(option_id_raw, float):
+                        option_id = str(int(option_id_raw))
+                    else:
+                        option_id = str(option_id_raw).strip()
+                    
+                    if option_id and option_id != 'nan':
                         product_code_map[option_id] = product_code
                 
                 print(f"✓ {len(product_code_map)}개의 상품 매핑 정보를 로드했습니다.")
@@ -1297,7 +1308,18 @@ class MainWindow(QMainWindow):
                 quantity = int(row[required_columns['구매수(수량)']]) if not pd.isna(row[required_columns['구매수(수량)']]) else 1
                 
                 # 옵션ID로 상품코드 찾기
-                option_id = str(row[required_columns['옵션ID']]).strip()
+                option_id_raw = row[required_columns['옵션ID']]
+                
+                # NaN 값 처리
+                if pd.isna(option_id_raw):
+                    option_id = ''
+                else:
+                    # float로 읽힌 경우 정수로 변환 후 문자열로 변환
+                    if isinstance(option_id_raw, float):
+                        option_id = str(int(option_id_raw))
+                    else:
+                        option_id = str(option_id_raw).strip()
+                
                 product_code = product_code_map.get(option_id, '')  # 매칭되는 상품코드가 없으면 빈 문자열
                 
                 self.orders[order_number]['상품목록'].append({
