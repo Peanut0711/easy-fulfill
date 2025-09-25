@@ -2160,8 +2160,14 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, "오류", "기존 DB 파일(store_database.xlsx)을 찾을 수 없습니다.")
                 return
             
-            # 기존 DB 읽기 (1번 시트)
-            existing_df = pd.read_excel(existing_db_path, sheet_name=0)
+            # 기존 DB 읽기 (모든 시트)
+            print(f"[디버깅] 기존 DB 파일의 모든 시트 읽기 시작")
+            all_sheets = pd.read_excel(existing_db_path, sheet_name=None)
+            print(f"[디버깅] 발견된 시트: {list(all_sheets.keys())}")
+            
+            # 1번 시트 (첫 번째 시트) 가져오기
+            first_sheet_name = list(all_sheets.keys())[0]
+            existing_df = all_sheets[first_sheet_name]
             print(f"기존 DB 행 수: {len(existing_df)}")
             
             # 신규 DB에서 추가할 데이터 추출
@@ -2202,9 +2208,16 @@ class MainWindow(QMainWindow):
             shutil.copy2(existing_db_path, backup_path)
             print(f"✓ 백업 파일 생성: {backup_path}")
             
-            # 업데이트된 데이터를 원본 파일에 저장
+            # 업데이트된 데이터를 원본 파일에 저장 (모든 시트 보존)
             with pd.ExcelWriter(existing_db_path, engine='openpyxl', mode='w') as writer:
-                updated_df.to_excel(writer, sheet_name='Sheet1', index=False)
+                # 1번 시트는 업데이트된 데이터로 저장
+                updated_df.to_excel(writer, sheet_name=first_sheet_name, index=False)
+                
+                # 나머지 시트들은 기존 데이터 그대로 저장
+                for sheet_name, sheet_df in all_sheets.items():
+                    if sheet_name != first_sheet_name:
+                        print(f"[디버깅] 시트 '{sheet_name}' 보존 중...")
+                        sheet_df.to_excel(writer, sheet_name=sheet_name, index=False)
             
             print(f"✓ 기존 DB 업데이트 완료: {len(new_rows_to_add)}개 상품 추가")
             
