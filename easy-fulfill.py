@@ -269,6 +269,11 @@ class MainWindow(QMainWindow):
         self.is_order_file_valid = False  # 주문서 파일 유효성 플래그
         self.is_invoice_file_valid = False  # 송장 파일 유효성 플래그
         
+        # DB 비교 관련 변수들
+        self.current_store_type = None  # 현재 선택된 스토어 타입
+        self.new_db_data = None  # 신규 DB 데이터
+        self.new_only_products = set()  # 신규 DB에만 존재하는 상품번호들
+        
         # 인덱스 파일 경로 설정
         self.index_file_path = Path("database") / "order_index.json"
         
@@ -615,7 +620,8 @@ class MainWindow(QMainWindow):
         self.ui.pushButton_generate_invoice.clicked.connect(self.generate_invoice_file)
         
         # 환경설정 탭 버튼 연결
-        self.ui.pushButton_load_database.clicked.connect(self.load_database_file)
+        self.ui.pushButton_database_load.clicked.connect(self.load_database_file)
+        self.ui.pushButton_database_apply.clicked.connect(self.apply_database_changes)
         
         # 인덱스 입력 필드 연결
         if hasattr(self.ui, 'lineEdit_idx_naver'):
@@ -2081,11 +2087,17 @@ class MainWindow(QMainWindow):
                 # label_database_name에 파일명 표시 (확장자 포함)
                 self.ui.label_database_name.setText(f"{filename}")
                 
+                # 현재 스토어 타입 저장
+                self.current_store_type = store_type
+                
                 # 스토어 타입에 따른 DB 비교 분석
                 if store_type == "네이버":
                     self.compare_naver_databases(file_path)
                 elif store_type == "쿠팡":
                     self.compare_coupang_databases(file_path)
+                
+                # DB 비교가 성공적으로 완료되면 적용 버튼 활성화
+                self.ui.pushButton_database_apply.setEnabled(True)
                 
                 self.statusBar().showMessage(f"[{store_type}] 데이터베이스 파일 선택됨: - {filename}")
                 print(f"✓ [{store_type}] 데이터베이스 파일이 성공적으로 선택되었습니다: - {filename}")
@@ -2098,6 +2110,270 @@ class MainWindow(QMainWindow):
                     "오류",
                     "파일을 처리하는 중 오류가 발생했습니다."
                 )
+    
+    def apply_database_changes(self):
+        """신규 DB의 데이터를 기존 DB에 적용합니다."""
+        try:
+            if self.current_store_type is None:
+                QMessageBox.warning(self, "오류", "먼저 데이터베이스 파일을 불러와주세요.")
+                return
+            
+            # 디버깅을 위한 값 확인
+            print(f"[디버깅] current_store_type: {self.current_store_type}")
+            print(f"[디버깅] new_db_data is None: {self.new_db_data is None}")
+            print(f"[디버깅] new_only_products: {self.new_only_products}")
+            print(f"[디버깅] new_only_products length: {len(self.new_only_products) if self.new_only_products else 0}")
+            
+            if self.new_db_data is None or not self.new_only_products:
+                QMessageBox.warning(self, "오류", f"신규 DB 데이터가 없거나 추가할 상품이 없습니다.\n\n"
+                                               f"new_db_data: {'None' if self.new_db_data is None else '있음'}\n"
+                                               f"new_only_products: {len(self.new_only_products) if self.new_only_products else 0}개")
+                return
+            
+            # 스토어 타입에 따른 데이터 적용
+            if self.current_store_type == "네이버":
+                self.apply_naver_database_changes()
+            elif self.current_store_type == "쿠팡":
+                self.apply_coupang_database_changes()
+            else:
+                QMessageBox.warning(self, "오류", f"지원되지 않는 스토어 타입: {self.current_store_type}")
+                return
+                
+        except Exception as e:
+            error_msg = str(e)
+            print(f"❌ DB 변경사항 적용 중 오류 발생: {error_msg}")
+            QMessageBox.warning(
+                self,
+                "오류",
+                f"DB 변경사항 적용 중 오류가 발생했습니다.\n\n{error_msg}"
+            )
+    
+    def apply_naver_database_changes(self):
+        """네이버 DB의 신규 데이터를 기존 DB에 적용합니다."""
+        try:
+            print(f"\n[네이버 DB 데이터 적용 시작]")
+            print(f"추가할 상품 수: {len(self.new_only_products)}개")
+            
+            # 기존 DB 파일 경로
+            existing_db_path = Path("database") / "store_database.xlsx"
+            if not existing_db_path.exists():
+                QMessageBox.warning(self, "오류", "기존 DB 파일(store_database.xlsx)을 찾을 수 없습니다.")
+                return
+            
+            # 기존 DB 읽기 (1번 시트)
+            existing_df = pd.read_excel(existing_db_path, sheet_name=0)
+            print(f"기존 DB 행 수: {len(existing_df)}")
+            
+            # 신규 DB에서 추가할 데이터 추출
+            new_rows_to_add = []
+            
+            for product_number in self.new_only_products:
+                # 신규 DB에서 해당 상품번호의 행 찾기
+                product_row = self.find_naver_product_row_by_number(product_number)
+                if product_row is not None:
+                    # 신규 DB에서 필요한 데이터 추출 (B, D, BJ열)
+                    product_name = self.extract_naver_product_name(product_row)
+                    image_url = self.extract_naver_image_url(product_row)
+                    
+                    # 기존 DB 형식에 맞는 새 행 생성
+                    new_row = self.create_naver_existing_db_row(product_number, product_name, image_url, existing_df)
+                    if new_row is not None:
+                        new_rows_to_add.append(new_row)
+                        print(f"✓ 상품 추가 준비: {product_number} - {product_name}")
+                    else:
+                        print(f"❌ 상품 행 생성 실패: {product_number}")
+            
+            print(f"[디버깅] new_rows_to_add 개수: {len(new_rows_to_add)}")
+            if not new_rows_to_add:
+                print("[디버깅] new_rows_to_add가 비어있습니다!")
+                QMessageBox.information(self, "정보", "추가할 상품 데이터가 없습니다.")
+                return
+            
+            # 기존 DB에 새 행들 추가
+            updated_df = pd.concat([existing_df, pd.DataFrame(new_rows_to_add)], ignore_index=True)
+            
+            # 기존 DB 파일에 저장 (백업 생성)
+            backup_path = existing_db_path.with_suffix('.xlsx.backup')
+            if backup_path.exists():
+                backup_path.unlink()  # 기존 백업 삭제
+            
+            # 원본 파일을 백업으로 복사
+            import shutil
+            shutil.copy2(existing_db_path, backup_path)
+            print(f"✓ 백업 파일 생성: {backup_path}")
+            
+            # 업데이트된 데이터를 원본 파일에 저장
+            with pd.ExcelWriter(existing_db_path, engine='openpyxl', mode='w') as writer:
+                updated_df.to_excel(writer, sheet_name='Sheet1', index=False)
+            
+            print(f"✓ 기존 DB 업데이트 완료: {len(new_rows_to_add)}개 상품 추가")
+            
+            # 성공 메시지 표시
+            QMessageBox.information(
+                self,
+                "네이버 DB 적용 완료",
+                f"네이버 DB에 {len(new_rows_to_add)}개의 신규 상품이 성공적으로 추가되었습니다.\n\n"
+                f"백업 파일: {backup_path.name}"
+            )
+            
+            # 상태바 업데이트
+            self.statusBar().showMessage(f"네이버 DB 적용 완료: {len(new_rows_to_add)}개 상품 추가")
+            
+        except Exception as e:
+            error_msg = str(e)
+            print(f"❌ 네이버 DB 데이터 적용 중 오류 발생: {error_msg}")
+            QMessageBox.warning(
+                self,
+                "오류",
+                f"네이버 DB 데이터 적용 중 오류가 발생했습니다.\n\n{error_msg}"
+            )
+    
+    def find_naver_product_row_by_number(self, product_number):
+        """신규 DB에서 상품번호로 해당 행을 찾습니다."""
+        try:
+            # 신규 DB에서 상품번호(스마트스토어) 열 찾기
+            product_number_col = None
+            for col in self.new_db_data.columns:
+                col_str = str(col).strip()
+                if '상품번호' in col_str and '스마트스토어' in col_str:
+                    product_number_col = col
+                    break
+            
+            if product_number_col is None:
+                print(f"❌ 신규 DB에서 상품번호 열을 찾을 수 없습니다.")
+                return None
+            
+            # 해당 상품번호의 행 찾기
+            for idx, row in self.new_db_data.iterrows():
+                row_product_number = str(row[product_number_col]).strip()
+                if row_product_number.endswith('.0'):
+                    row_product_number = row_product_number[:-2]
+                
+                if row_product_number == product_number:
+                    return row
+            
+            print(f"❌ 상품번호 {product_number}에 해당하는 행을 찾을 수 없습니다.")
+            return None
+            
+        except Exception as e:
+            print(f"❌ 상품 행 찾기 중 오류 발생: {str(e)}")
+            return None
+    
+    def extract_naver_product_name(self, row):
+        """신규 DB 행에서 상품명을 추출합니다 (D열)."""
+        try:
+            # D열 찾기 (상품명)
+            for col in self.new_db_data.columns:
+                col_str = str(col).strip()
+                if '상품명' in col_str:
+                    product_name = str(row[col]).strip()
+                    return product_name if product_name != 'nan' else ""
+            
+            print(f"❌ 상품명 열을 찾을 수 없습니다.")
+            return ""
+            
+        except Exception as e:
+            print(f"❌ 상품명 추출 중 오류 발생: {str(e)}")
+            return ""
+    
+    def extract_naver_image_url(self, row):
+        """신규 DB 행에서 대표이미지 URL을 추출합니다 (BJ열)."""
+        try:
+            # BJ열 찾기 (대표이미지 URL)
+            for col in self.new_db_data.columns:
+                col_str = str(col).strip()
+                if '대표이미지' in col_str and 'URL' in col_str:
+                    image_url = str(row[col]).strip()
+                    return image_url if image_url != 'nan' else ""
+            
+            print(f"❌ 대표이미지 URL 열을 찾을 수 없습니다.")
+            return ""
+            
+        except Exception as e:
+            print(f"❌ 대표이미지 URL 추출 중 오류 발생: {str(e)}")
+            return ""
+    
+    def create_naver_existing_db_row(self, product_number, product_name, image_url, existing_df):
+        """기존 DB 형식에 맞는 새 행을 생성합니다."""
+        try:
+            print(f"[디버깅] create_naver_existing_db_row 호출: {product_number}")
+            print(f"[디버깅] 기존 DB 열 목록: {list(existing_df.columns)}")
+            
+            # 기존 DB의 열 구조 파악
+            new_row = {}
+            
+            # 모든 열을 빈 값으로 초기화
+            for col in existing_df.columns:
+                new_row[col] = ""
+            
+            # E열에 상품번호(스마트스토어) 설정
+            product_number_set = False
+            for col in existing_df.columns:
+                col_str = str(col).strip()
+                if '상품번호' in col_str and '스마트스토어' in col_str:
+                    new_row[col] = product_number
+                    product_number_set = True
+                    print(f"[디버깅] 상품번호 설정: {col} = {product_number}")
+                    break
+            
+            if not product_number_set:
+                print(f"[디버깅] 상품번호 열을 찾을 수 없음")
+                return None
+            
+            # C열에 상품명 설정
+            product_name_set = False
+            for col in existing_df.columns:
+                col_str = str(col).strip()
+                if '상품명' in col_str and '스마트스토어' not in col_str:
+                    new_row[col] = product_name
+                    product_name_set = True
+                    print(f"[디버깅] 상품명 설정: {col} = {product_name}")
+                    break
+            
+            if not product_name_set:
+                print(f"[디버깅] 상품명 열을 찾을 수 없음")
+            
+            # D열에 대표이미지 URL 설정
+            image_url_set = False
+            for col in existing_df.columns:
+                col_str = str(col).strip()
+                if '대표이미지' in col_str and 'URL' in col_str:
+                    new_row[col] = image_url
+                    image_url_set = True
+                    print(f"[디버깅] 이미지 URL 설정: {col} = {image_url}")
+                    break
+            
+            if not image_url_set:
+                print(f"[디버깅] 이미지 URL 열을 찾을 수 없음")
+            
+            print(f"[디버깅] 새 행 생성 완료: {new_row}")
+            return new_row
+            
+        except Exception as e:
+            print(f"❌ 기존 DB 행 생성 중 오류 발생: {str(e)}")
+            return None
+    
+    def apply_coupang_database_changes(self):
+        """쿠팡 DB의 신규 데이터를 기존 DB에 적용합니다."""
+        try:
+            print(f"\n[쿠팡 DB 데이터 적용 시작]")
+            print(f"추가할 상품 수: {len(self.new_only_products)}개")
+            
+            # 쿠팡 DB 적용 로직은 추후 구현
+            QMessageBox.information(
+                self,
+                "쿠팡 DB 적용",
+                "쿠팡 DB 적용 기능은 아직 구현되지 않았습니다."
+            )
+            
+        except Exception as e:
+            error_msg = str(e)
+            print(f"❌ 쿠팡 DB 데이터 적용 중 오류 발생: {error_msg}")
+            QMessageBox.warning(
+                self,
+                "오류",
+                f"쿠팡 DB 데이터 적용 중 오류가 발생했습니다.\n\n{error_msg}"
+            )
                 
     def compare_naver_databases(self, new_db_path):
         """네이버 DB 비교 분석을 수행합니다."""
@@ -2128,13 +2404,21 @@ class MainWindow(QMainWindow):
             print(f"신규 DB 행 수: {len(new_df)}")
             print(f"신규 DB 열 목록: {list(new_df.columns)}")
             
+            # 신규 DB 데이터 저장
+            self.new_db_data = new_df
+            print(f"[디버깅] 신규 DB 데이터 저장 완료: {len(new_df)}행")
+            
             # 신규 DB에서 상품번호(스마트스토어) 열 찾기
             new_product_numbers = self.extract_product_numbers(new_df, "신규 DB")
             if new_product_numbers is None:
+                print(f"[디버깅] 신규 DB에서 상품번호 추출 실패")
                 return
+            
+            print(f"[디버깅] 신규 DB 상품번호 추출 완료: {len(new_product_numbers)}개")
             
             # 3. 차이점 분석 (기존 DB 데이터도 함께 전달)
             self.analyze_database_differences(existing_product_numbers, new_product_numbers, existing_df)
+            print(f"[디버깅] 차이점 분석 완료, new_only_products: {len(self.new_only_products)}개")
             
         except Exception as e:
             error_msg = str(e)
@@ -2233,6 +2517,9 @@ class MainWindow(QMainWindow):
             
             # 신규 DB에만 있는 상품번호 (기존 DB에는 없지만 신규 DB에는 존재)
             new_only = new_numbers - existing_numbers
+            
+            # 신규 DB에만 존재하는 상품번호들 저장
+            self.new_only_products = new_only
             
             # 기존 DB에만 있는 상품번호 (신규 DB에는 없지만 기존 DB에는 존재)
             existing_only = existing_numbers - new_numbers

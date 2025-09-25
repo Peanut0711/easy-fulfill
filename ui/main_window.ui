@@ -26,7 +26,7 @@
     <item>
      <widget class="QTabWidget" name="tabWidget">
       <property name="currentIndex">
-       <number>0</number>
+       <number>2</number>
       </property>
       <widget class="QWidget" name="tab">
        <attribute name="title">
@@ -390,12 +390,12 @@
          <set>Qt::AlignmentFlag::AlignCenter</set>
         </property>
        </widget>
-       <widget class="QPushButton" name="pushButton_load_database">
+       <widget class="QPushButton" name="pushButton_database_load">
         <property name="geometry">
          <rect>
-          <x>540</x>
+          <x>520</x>
           <y>160</y>
-          <width>111</width>
+          <width>71</width>
           <height>40</height>
          </rect>
         </property>
@@ -408,12 +408,28 @@
          <rect>
           <x>40</x>
           <y>160</y>
-          <width>61</width>
+          <width>81</width>
           <height>40</height>
          </rect>
         </property>
         <property name="text">
-         <string>DB 갱신</string>
+         <string>신규 DB 반영</string>
+        </property>
+       </widget>
+       <widget class="QPushButton" name="pushButton_database_apply">
+        <property name="enabled">
+         <bool>false</bool>
+        </property>
+        <property name="geometry">
+         <rect>
+          <x>600</x>
+          <y>160</y>
+          <width>71</width>
+          <height>40</height>
+         </rect>
+        </property>
+        <property name="text">
+         <string>적용하기</string>
         </property>
        </widget>
       </widget>

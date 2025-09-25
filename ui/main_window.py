@@ -146,12 +146,16 @@ class Ui_MainWindow(object):
         self.label_database_name.setFrameShape(QFrame.Shape.Panel)
         self.label_database_name.setFrameShadow(QFrame.Shadow.Sunken)
         self.label_database_name.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.pushButton_load_database = QPushButton(self.tab_2)
-        self.pushButton_load_database.setObjectName(u"pushButton_load_database")
-        self.pushButton_load_database.setGeometry(QRect(540, 160, 111, 40))
+        self.pushButton_database_load = QPushButton(self.tab_2)
+        self.pushButton_database_load.setObjectName(u"pushButton_database_load")
+        self.pushButton_database_load.setGeometry(QRect(520, 160, 71, 40))
         self.label_database = QLabel(self.tab_2)
         self.label_database.setObjectName(u"label_database")
-        self.label_database.setGeometry(QRect(40, 160, 61, 40))
+        self.label_database.setGeometry(QRect(40, 160, 81, 40))
+        self.pushButton_database_apply = QPushButton(self.tab_2)
+        self.pushButton_database_apply.setObjectName(u"pushButton_database_apply")
+        self.pushButton_database_apply.setEnabled(False)
+        self.pushButton_database_apply.setGeometry(QRect(600, 160, 71, 40))
         self.tabWidget.addTab(self.tab_2, "")
 
         self.verticalLayout.addWidget(self.tabWidget)
@@ -178,7 +182,7 @@ class Ui_MainWindow(object):
 
         self.retranslateUi(MainWindow)
 
-        self.tabWidget.setCurrentIndex(0)
+        self.tabWidget.setCurrentIndex(2)
 
 
         QMetaObject.connectSlotsByName(MainWindow)
@@ -218,8 +222,9 @@ class Ui_MainWindow(object):
         self.label_4.setText(QCoreApplication.translate("MainWindow", u"\ucfe0\ud321 \ubc88\ud638", None))
         self.label_5.setText(QCoreApplication.translate("MainWindow", u"\uc9c0\ub9c8\ucf13 \ubc88\ud638", None))
         self.label_database_name.setText(QCoreApplication.translate("MainWindow", u"DataBase \uc815\ubcf4\uac00 \uc5c6\uc2b5\ub2c8\ub2e4.", None))
-        self.pushButton_load_database.setText(QCoreApplication.translate("MainWindow", u"\ubd88\ub7ec\uc624\uae30", None))
-        self.label_database.setText(QCoreApplication.translate("MainWindow", u"DB \uac31\uc2e0", None))
+        self.pushButton_database_load.setText(QCoreApplication.translate("MainWindow", u"\ubd88\ub7ec\uc624\uae30", None))
+        self.label_database.setText(QCoreApplication.translate("MainWindow", u"\uc2e0\uaddc DB \ubc18\uc601", None))
+        self.pushButton_database_apply.setText(QCoreApplication.translate("MainWindow", u"\uc801\uc6a9\ud558\uae30", None))
         self.tabWidget.setTabText(self.tabWidget.indexOf(self.tab_2), QCoreApplication.translate("MainWindow", u"\ud658\uacbd\uc124\uc815", None))
         self.menuFile.setTitle(QCoreApplication.translate("MainWindow", u"\ud30c\uc77c(&F)", None))
         self.menuHelp.setTitle(QCoreApplication.translate("MainWindow", u"\ub3c4\uc6c0\ub9d0(&H)", None))
