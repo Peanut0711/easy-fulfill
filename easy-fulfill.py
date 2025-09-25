@@ -2160,9 +2160,9 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, "오류", "기존 DB 파일(store_database.xlsx)을 찾을 수 없습니다.")
                 return
             
-            # 기존 DB 읽기 (모든 시트)
+            # 기존 DB 읽기 (모든 시트) - 헤더 없이 읽기
             print(f"[디버깅] 기존 DB 파일의 모든 시트 읽기 시작")
-            all_sheets = pd.read_excel(existing_db_path, sheet_name=None)
+            all_sheets = pd.read_excel(existing_db_path, sheet_name=None, header=None)
             print(f"[디버깅] 발견된 시트: {list(all_sheets.keys())}")
             
             # 1번 시트 (첫 번째 시트) 가져오기
@@ -2210,14 +2210,14 @@ class MainWindow(QMainWindow):
             
             # 업데이트된 데이터를 원본 파일에 저장 (모든 시트 보존)
             with pd.ExcelWriter(existing_db_path, engine='openpyxl', mode='w') as writer:
-                # 1번 시트는 업데이트된 데이터로 저장
-                updated_df.to_excel(writer, sheet_name=first_sheet_name, index=False)
+                # 1번 시트는 업데이트된 데이터로 저장 (헤더 없이)
+                updated_df.to_excel(writer, sheet_name=first_sheet_name, index=False, header=False)
                 
-                # 나머지 시트들은 기존 데이터 그대로 저장
+                # 나머지 시트들은 기존 데이터 그대로 저장 (헤더 없이)
                 for sheet_name, sheet_df in all_sheets.items():
                     if sheet_name != first_sheet_name:
                         print(f"[디버깅] 시트 '{sheet_name}' 보존 중...")
-                        sheet_df.to_excel(writer, sheet_name=sheet_name, index=False)
+                        sheet_df.to_excel(writer, sheet_name=sheet_name, index=False, header=False)
             
             print(f"✓ 기존 DB 업데이트 완료: {len(new_rows_to_add)}개 상품 추가")
             
@@ -2312,21 +2312,30 @@ class MainWindow(QMainWindow):
             print(f"[디버깅] create_naver_existing_db_row 호출: {product_number}")
             print(f"[디버깅] 기존 DB 열 목록: {list(existing_df.columns)}")
             
-            # 기존 DB의 열 구조 파악
+            # 헤더 없이 읽었으므로 첫 번째 행이 실제 헤더
+            if len(existing_df) == 0:
+                print(f"[디버깅] 기존 DB가 비어있음")
+                return None
+            
+            # 첫 번째 행을 헤더로 사용하여 열 이름 매핑
+            header_row = existing_df.iloc[0]
+            print(f"[디버깅] 헤더 행: {list(header_row)}")
+            
+            # 기존 DB의 열 구조 파악 (인덱스 기반)
             new_row = {}
             
-            # 모든 열을 빈 값으로 초기화
-            for col in existing_df.columns:
-                new_row[col] = ""
+            # 모든 열을 빈 값으로 초기화 (인덱스 기반)
+            for i in range(len(existing_df.columns)):
+                new_row[i] = ""
             
             # E열에 상품번호(스마트스토어) 설정
             product_number_set = False
-            for col in existing_df.columns:
-                col_str = str(col).strip()
-                if '상품번호' in col_str and '스마트스토어' in col_str:
-                    new_row[col] = product_number
+            for i, header_value in enumerate(header_row):
+                header_str = str(header_value).strip()
+                if '상품번호' in header_str and '스마트스토어' in header_str:
+                    new_row[i] = product_number
                     product_number_set = True
-                    print(f"[디버깅] 상품번호 설정: {col} = {product_number}")
+                    print(f"[디버깅] 상품번호 설정: 열 {i} = {product_number}")
                     break
             
             if not product_number_set:
@@ -2335,12 +2344,12 @@ class MainWindow(QMainWindow):
             
             # C열에 상품명 설정
             product_name_set = False
-            for col in existing_df.columns:
-                col_str = str(col).strip()
-                if '상품명' in col_str and '스마트스토어' not in col_str:
-                    new_row[col] = product_name
+            for i, header_value in enumerate(header_row):
+                header_str = str(header_value).strip()
+                if '상품명' in header_str and '스마트스토어' not in header_str:
+                    new_row[i] = product_name
                     product_name_set = True
-                    print(f"[디버깅] 상품명 설정: {col} = {product_name}")
+                    print(f"[디버깅] 상품명 설정: 열 {i} = {product_name}")
                     break
             
             if not product_name_set:
@@ -2348,12 +2357,12 @@ class MainWindow(QMainWindow):
             
             # D열에 대표이미지 URL 설정
             image_url_set = False
-            for col in existing_df.columns:
-                col_str = str(col).strip()
-                if '대표이미지' in col_str and 'URL' in col_str:
-                    new_row[col] = image_url
+            for i, header_value in enumerate(header_row):
+                header_str = str(header_value).strip()
+                if '대표이미지' in header_str and 'URL' in header_str:
+                    new_row[i] = image_url
                     image_url_set = True
-                    print(f"[디버깅] 이미지 URL 설정: {col} = {image_url}")
+                    print(f"[디버깅] 이미지 URL 설정: 열 {i} = {image_url}")
                     break
             
             if not image_url_set:
@@ -2372,11 +2381,53 @@ class MainWindow(QMainWindow):
             print(f"\n[쿠팡 DB 데이터 적용 시작]")
             print(f"추가할 상품 수: {len(self.new_only_products)}개")
             
-            # 쿠팡 DB 적용 로직은 추후 구현
+            if not self.new_only_products:
+                QMessageBox.information(
+                    self,
+                    "쿠팡 DB 적용",
+                    "추가할 신규 옵션이 없습니다."
+                )
+                return
+            
+            # 1. 기존 DB 파일 로드 (시트2)
+            existing_db_path = Path("database") / "store_database.xlsx"
+            if not existing_db_path.exists():
+                QMessageBox.warning(self, "오류", "기존 DB 파일(store_database.xlsx)을 찾을 수 없습니다.")
+                return
+            
+            # 기존 DB 시트2 읽기 (헤더 없이 읽기)
+            existing_df = pd.read_excel(existing_db_path, sheet_name=1, header=None)
+            print(f"기존 DB 시트2 행 수: {len(existing_df)}")
+            
+            # 2. 신규 DB에서 신규 옵션 ID들에 해당하는 데이터 추출
+            new_data_to_add = []
+            
+            for option_id in self.new_only_products:
+                # 신규 DB에서 해당 옵션 ID의 행 찾기
+                new_row = self.find_coupang_row_by_option_id(option_id)
+                if new_row is not None:
+                    new_data_to_add.append(new_row)
+                    print(f"✓ 옵션 ID {option_id} 데이터 찾음")
+                else:
+                    print(f"❌ 옵션 ID {option_id} 데이터를 찾을 수 없음")
+            
+            if not new_data_to_add:
+                QMessageBox.warning(
+                    self,
+                    "오류",
+                    "신규 옵션 ID에 해당하는 데이터를 찾을 수 없습니다."
+                )
+                return
+            
+            print(f"추가할 데이터 행 수: {len(new_data_to_add)}개")
+            
+            # 3. 기존 DB에 새 데이터 추가
+            self.add_coupang_data_to_existing_db(existing_df, new_data_to_add, existing_db_path)
+            
             QMessageBox.information(
                 self,
-                "쿠팡 DB 적용",
-                "쿠팡 DB 적용 기능은 아직 구현되지 않았습니다."
+                "쿠팡 DB 적용 완료",
+                f"총 {len(new_data_to_add)}개의 신규 옵션이 기존 DB에 추가되었습니다."
             )
             
         except Exception as e:
@@ -2387,6 +2438,165 @@ class MainWindow(QMainWindow):
                 "오류",
                 f"쿠팡 DB 데이터 적용 중 오류가 발생했습니다.\n\n{error_msg}"
             )
+    
+    def find_coupang_row_by_option_id(self, option_id):
+        """신규 DB에서 특정 옵션 ID에 해당하는 행을 찾습니다."""
+        try:
+            if self.new_db_data is None:
+                print(f"❌ 신규 DB 데이터가 없습니다.")
+                return None
+            
+            # C열(인덱스 2)을 직접 사용하여 옵션 ID 찾기
+            option_id_col_index = 2  # C열은 인덱스 2
+            
+            if len(self.new_db_data.columns) <= option_id_col_index:
+                print(f"❌ 신규 DB에 C열이 없습니다.")
+                return None
+            
+            # 해당 옵션 ID의 행 찾기
+            for idx, row in self.new_db_data.iterrows():
+                row_option_id = str(row.iloc[option_id_col_index]).strip()
+                if row_option_id.endswith('.0'):
+                    row_option_id = row_option_id[:-2]
+                
+                if row_option_id == option_id:
+                    return row
+            
+            print(f"❌ 옵션 ID {option_id}에 해당하는 행을 찾을 수 없습니다.")
+            return None
+            
+        except Exception as e:
+            print(f"❌ 옵션 ID 행 찾기 중 오류 발생: {str(e)}")
+            return None
+    
+    def add_coupang_data_to_existing_db(self, existing_df, new_data_list, existing_db_path):
+        """기존 DB에 쿠팡 신규 데이터를 추가합니다."""
+        try:
+            print(f"\n[쿠팡 데이터 추가 시작]")
+            print(f"기존 DB 행 수: {len(existing_df)}")
+            print(f"추가할 데이터 수: {len(new_data_list)}")
+            
+            # 기존 DB의 열 구조 확인 (헤더 없이 읽었으므로 숫자 인덱스)
+            print(f"기존 DB 열 수: {len(existing_df.columns)}")
+            
+            # 새 데이터를 기존 DB 형식에 맞게 변환
+            new_rows = []
+            
+            for new_row in new_data_list:
+                # 새 행 데이터 생성 (기존 DB 형식에 맞게)
+                new_db_row = self.create_coupang_row_for_existing_db(new_row, existing_df)
+                if new_db_row is not None:
+                    new_rows.append(new_db_row)
+                    print(f"✓ 새 행 데이터 생성 완료")
+                else:
+                    print(f"❌ 새 행 데이터 생성 실패")
+            
+            if not new_rows:
+                print(f"❌ 추가할 유효한 데이터가 없습니다.")
+                return
+            
+            # 기존 DB에 새 행들 추가
+            new_df = pd.concat([existing_df, pd.DataFrame(new_rows)], ignore_index=True)
+            print(f"새 DB 행 수: {len(new_df)}")
+            
+            # 기존 DB 파일 백업
+            backup_path = existing_db_path.with_suffix('.xlsx.backup')
+            shutil.copy2(existing_db_path, backup_path)
+            print(f"기존 DB 백업 완료: {backup_path}")
+            
+            # 기존 Excel 파일의 모든 시트를 읽어서 두 번째 시트(인덱스 1)만 업데이트
+            try:
+                # 모든 시트 읽기 (헤더 없이)
+                all_sheets = pd.read_excel(existing_db_path, sheet_name=None, header=None)
+                print(f"기존 DB 시트 목록: {list(all_sheets.keys())}")
+                
+                # Excel 파일 재작성
+                with pd.ExcelWriter(existing_db_path, engine='openpyxl') as writer:
+                    for i, (sheet_name, sheet_df) in enumerate(all_sheets.items()):
+                        if i == 1:  # 두 번째 시트 (인덱스 1)
+                            # 두 번째 시트는 업데이트된 데이터로 교체 (헤더 없이)
+                            new_df.to_excel(writer, sheet_name=sheet_name, index=False, header=False)
+                            print(f"✓ 두 번째 시트 '{sheet_name}' 업데이트 완료")
+                        else:
+                            # 다른 시트는 그대로 유지 (헤더 없이)
+                            sheet_df.to_excel(writer, sheet_name=sheet_name, index=False, header=False)
+                            print(f"✓ {sheet_name} 시트 유지")
+                            
+            except Exception as e:
+                print(f"❌ 시트 처리 중 오류: {str(e)}")
+                # 대안: 간단한 방법으로 두 번째 시트만 업데이트
+                print("대안 방법으로 두 번째 시트 업데이트 시도...")
+                with pd.ExcelWriter(existing_db_path, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
+                    new_df.to_excel(writer, sheet_name=1, index=False, header=False)  # 인덱스 1 (두 번째 시트)
+                    print(f"두 번째 시트 업데이트 완료 (대안 방법)")
+            
+            print(f"✅ 쿠팡 DB 데이터 추가 완료")
+            
+        except Exception as e:
+            print(f"❌ 쿠팡 데이터 추가 중 오류 발생: {str(e)}")
+            raise e
+    
+    def create_coupang_row_for_existing_db(self, new_row, existing_df):
+        """신규 DB 행을 기존 DB 형식에 맞게 변환합니다."""
+        try:
+            # 기존 DB의 실제 열 구조를 파악 (헤더 없이 읽었으므로 숫자 인덱스)
+            existing_columns = list(existing_df.columns)
+            print(f"기존 DB 열 수: {len(existing_columns)}")
+            
+            # 기존 DB의 열 구조에 맞는 리스트 생성 (모든 열을 빈 값으로 초기화)
+            new_db_row = [""] * len(existing_columns)  # 모든 열을 빈 값으로 초기화
+            
+            # 열 매핑 규칙에 따라 데이터 매핑:
+            # 신규 DB A열 → 기존 DB C열 (업체상품)
+            # 신규 DB B열 → 기존 DB D열 (Product ID)  
+            # 신규 DB C열 → 기존 DB E열 (옵션 ID)
+            # 신규 DB G열 → 기존 DB B열 (쿠팡 노출)
+            # 신규 DB H열 → 기존 DB I열 (업체 등록)
+            # 신규 DB I열 → 기존 DB J열 (등록 옵션)
+            # 신규 DB J열 → 기존 DB K열 (판매가격)
+            # 신규 DB K열 → 기존 DB L열 (할인율기준)
+            
+            # 신규 DB의 열 인덱스로 데이터 추출
+            new_columns = list(self.new_db_data.columns)
+            
+            # A열 (인덱스 0) → 기존 DB C열 (업체상품)
+            if len(new_columns) > 0 and len(existing_columns) > 2:
+                new_db_row[2] = str(new_row.iloc[0]) if pd.notna(new_row.iloc[0]) else ""
+            
+            # B열 (인덱스 1) → 기존 DB D열 (Product ID)
+            if len(new_columns) > 1 and len(existing_columns) > 3:
+                new_db_row[3] = str(new_row.iloc[1]) if pd.notna(new_row.iloc[1]) else ""
+            
+            # C열 (인덱스 2) → 기존 DB E열 (옵션 ID)
+            if len(new_columns) > 2 and len(existing_columns) > 4:
+                new_db_row[4] = str(new_row.iloc[2]) if pd.notna(new_row.iloc[2]) else ""
+            
+            # G열 (인덱스 6) → 기존 DB B열 (쿠팡 노출)
+            if len(new_columns) > 6 and len(existing_columns) > 1:
+                new_db_row[1] = str(new_row.iloc[6]) if pd.notna(new_row.iloc[6]) else ""
+            
+            # H열 (인덱스 7) → 기존 DB I열 (업체 등록)
+            if len(new_columns) > 7 and len(existing_columns) > 8:
+                new_db_row[8] = str(new_row.iloc[7]) if pd.notna(new_row.iloc[7]) else ""
+            
+            # I열 (인덱스 8) → 기존 DB J열 (등록 옵션)
+            if len(new_columns) > 8 and len(existing_columns) > 9:
+                new_db_row[9] = str(new_row.iloc[8]) if pd.notna(new_row.iloc[8]) else ""
+            
+            # J열 (인덱스 9) → 기존 DB K열 (판매가격)
+            if len(new_columns) > 9 and len(existing_columns) > 10:
+                new_db_row[10] = str(new_row.iloc[9]) if pd.notna(new_row.iloc[9]) else ""
+            
+            # K열 (인덱스 10) → 기존 DB L열 (할인율기준)
+            if len(new_columns) > 10 and len(existing_columns) > 11:
+                new_db_row[11] = str(new_row.iloc[10]) if pd.notna(new_row.iloc[10]) else ""
+            
+            print(f"새 행 데이터: {new_db_row}")
+            return new_db_row
+            
+        except Exception as e:
+            print(f"❌ 기존 DB 행 생성 중 오류 발생: {str(e)}")
+            return None
                 
     def compare_naver_databases(self, new_db_path):
         """네이버 DB 비교 분석을 수행합니다."""
@@ -2642,6 +2852,10 @@ class MainWindow(QMainWindow):
             new_df = pd.read_excel(new_db_path)
             print(f"신규 DB 행 수: {len(new_df)}")
             print(f"신규 DB 열 목록: {list(new_df.columns)}")
+            
+            # 신규 DB 데이터 저장 (apply_database_changes에서 사용)
+            self.new_db_data = new_df
+            print(f"[디버깅] 신규 DB 데이터 저장 완료: {len(new_df)}행")
             
             # 신규 DB에서 옵션 ID 추출 (1번째 시트, 3행 C열)
             new_option_ids = self.extract_coupang_option_ids_from_specific_position(new_df, "신규 DB", row_index=2, col_index=2)
@@ -2945,6 +3159,10 @@ class MainWindow(QMainWindow):
             
             # 결과를 plainTextEdit에 표시
             self.ui.plainTextEdit.setPlainText(result_text)
+            
+            # 신규 DB에만 있는 옵션 ID들을 저장 (apply_database_changes에서 사용)
+            self.new_only_products = new_only
+            print(f"[디버깅] new_only_products 설정 완료: {len(self.new_only_products)}개")
             
             # 상태바 메시지 업데이트
             self.statusBar().showMessage(f"쿠팡 DB 비교 완료: 신규 {len(new_only)}개, 기존만 {len(existing_only)}개")
