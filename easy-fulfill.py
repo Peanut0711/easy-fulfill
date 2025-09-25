@@ -614,6 +614,9 @@ class MainWindow(QMainWindow):
         self.ui.pushButton_load_invoice.clicked.connect(self.load_invoice_file)
         self.ui.pushButton_generate_invoice.clicked.connect(self.generate_invoice_file)
         
+        # 환경설정 탭 버튼 연결
+        self.ui.pushButton_load_database.clicked.connect(self.load_database_file)
+        
         # 인덱스 입력 필드 연결
         if hasattr(self.ui, 'lineEdit_idx_naver'):
             self.ui.lineEdit_idx_naver.textChanged.connect(self.on_naver_index_changed)
@@ -2034,6 +2037,60 @@ class MainWindow(QMainWindow):
                     self,
                     "오류",
                     "올바르지 않은 파일 형식입니다."
+                )
+                
+    def load_database_file(self):
+        """데이터베이스 파일을 선택하는 다이얼로그를 표시합니다."""
+        # database 폴더 경로 설정 (프로젝트 루트의 database 폴더)
+        database_path = os.path.join(os.getcwd(), "database")
+        
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "데이터베이스 파일 선택",
+            database_path,
+            "All Files (*.*)"
+        )
+        
+        if file_path:
+            try:
+                print(f"\n[데이터베이스 파일 선택됨] 경로: {file_path}")
+                filename = os.path.basename(file_path)
+                
+                # 파일 확장자 검증
+                if not (filename.endswith('.xlsx') or filename.endswith('.xls') or filename.endswith('.csv')):
+                    QMessageBox.warning(self, "오류", "지원되지 않는 파일 형식입니다.\n지원 형식: .xlsx, .xls, .csv")
+                    return
+                
+                # 파일명 패턴 분석으로 스토어 타입 구분
+                store_type = None
+                if filename.startswith('price_inventory_') and filename.endswith('.xlsx'):
+                    store_type = "쿠팡"
+                elif filename.startswith('Product_') and filename.endswith('.csv'):
+                    store_type = "네이버"
+                else:
+                    QMessageBox.warning(
+                        self, 
+                        "파일 형식 오류", 
+                        "지원되지 않는 파일명 형식입니다.\n\n"
+                        "지원 형식:\n"
+                        "- 쿠팡스토어: price_inventory_YYYYMMDD.xlsx\n"
+                        "- 네이버스토어: Product_YYYYMMDD_HHMMSS.csv"
+                    )
+                    return
+                
+                # label_database_name에 파일명 표시 (확장자 포함)
+                self.ui.label_database_name.setText(f"{filename}")
+                
+                self.statusBar().showMessage(f"[{store_type}] 데이터베이스 파일 선택됨: - {filename}")
+                print(f"✓ [{store_type}] 데이터베이스 파일이 성공적으로 선택되었습니다: - {filename}")
+                
+            except Exception as e:
+                error_msg = str(e)
+                print(f"❌ 데이터베이스 파일 처리 중 오류 발생: {error_msg}")
+                QMessageBox.warning(
+                    self,
+                    "오류",
+                    "파일을 처리하는 중 오류가 발생했습니다."
                 )
                 
     def generate_invoice_file(self):

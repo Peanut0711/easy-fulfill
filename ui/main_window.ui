@@ -368,6 +368,54 @@
          <string>지마켓 번호</string>
         </property>
        </widget>
+       <widget class="QLabel" name="label_database_name">
+        <property name="geometry">
+         <rect>
+          <x>150</x>
+          <y>160</y>
+          <width>351</width>
+          <height>40</height>
+         </rect>
+        </property>
+        <property name="frameShape">
+         <enum>QFrame::Shape::Panel</enum>
+        </property>
+        <property name="frameShadow">
+         <enum>QFrame::Shadow::Sunken</enum>
+        </property>
+        <property name="text">
+         <string>DataBase 정보가 없습니다.</string>
+        </property>
+        <property name="alignment">
+         <set>Qt::AlignmentFlag::AlignCenter</set>
+        </property>
+       </widget>
+       <widget class="QPushButton" name="pushButton_load_database">
+        <property name="geometry">
+         <rect>
+          <x>540</x>
+          <y>160</y>
+          <width>111</width>
+          <height>40</height>
+         </rect>
+        </property>
+        <property name="text">
+         <string>불러오기</string>
+        </property>
+       </widget>
+       <widget class="QLabel" name="label_database">
+        <property name="geometry">
+         <rect>
+          <x>40</x>
+          <y>160</y>
+          <width>61</width>
+          <height>40</height>
+         </rect>
+        </property>
+        <property name="text">
+         <string>DB 갱신</string>
+        </property>
+       </widget>
       </widget>
      </widget>
     </item>
