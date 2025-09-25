@@ -2133,8 +2133,8 @@ class MainWindow(QMainWindow):
             if new_product_numbers is None:
                 return
             
-            # 3. 차이점 분석
-            self.analyze_database_differences(existing_product_numbers, new_product_numbers)
+            # 3. 차이점 분석 (기존 DB 데이터도 함께 전달)
+            self.analyze_database_differences(existing_product_numbers, new_product_numbers, existing_df)
             
         except Exception as e:
             error_msg = str(e)
@@ -2224,7 +2224,7 @@ class MainWindow(QMainWindow):
             print(f"❌ {db_name} 상품번호 추출 중 오류 발생: {str(e)}")
             return None
     
-    def analyze_database_differences(self, existing_numbers, new_numbers):
+    def analyze_database_differences(self, existing_numbers, new_numbers, existing_df=None):
         """두 DB의 상품번호 차이점을 분석합니다."""
         try:
             print(f"\n[DB 차이점 분석]")
@@ -2267,8 +2267,14 @@ class MainWindow(QMainWindow):
             
             if existing_only:
                 result_text += f"\n🗑️ 기존 DB에만 있는 상품번호 ({len(existing_only)}개):\n"
+                
                 for i, product_number in enumerate(sorted(existing_only), 1):
-                    result_text += f"{i:3d}. {product_number}\n"
+                    # 기존 DB에서 해당 상품번호의 상품명 조회
+                    if existing_df is not None:
+                        product_name = self.find_naver_product_name_by_number(existing_df, product_number)
+                    else:
+                        product_name = "상품명 조회 불가"
+                    result_text += f"{i:3d}. {product_number} - {product_name}\n"
             
             # 결과를 plainTextEdit에 표시
             self.ui.plainTextEdit.setPlainText(result_text)
@@ -2277,14 +2283,31 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"DB 비교 완료: 신규 {len(new_only)}개, 기존만 {len(existing_only)}개")
             
             # 성공 메시지 표시
+            message = f"네이버 DB 비교 분석이 완료되었습니다.\n\n"
+            message += f"• 신규 DB에만 있는 상품번호: {len(new_only)}개\n"
+            message += f"• 기존 DB에만 있는 상품번호: {len(existing_only)}개\n"
+            message += f"• 공통 상품번호: {len(common)}개\n\n"
+            
+            # 기존 DB에만 있는 상품번호가 있는 경우 추가 정보 표시
+            if existing_only:
+                message += f"🗑️ 기존 DB에만 있는 상품번호 ({len(existing_only)}개):\n"
+                
+                for i, product_number in enumerate(sorted(existing_only), 1):
+                    if i <= 10:  # 처음 10개만 표시
+                        # 기존 DB에서 해당 상품번호의 상품명 조회
+                        if existing_df is not None:
+                            product_name = self.find_naver_product_name_by_number(existing_df, product_number)
+                        else:
+                            product_name = "상품명 조회 불가"
+                        message += f"{i:2d}. {product_number} - {product_name}\n"
+                    elif i == 11:
+                        message += f"... (총 {len(existing_only)}개 중 처음 10개만 표시)\n"
+                        break
+            
             QMessageBox.information(
                 self,
-                "DB 비교 분석 완료",
-                f"네이버 DB 비교 분석이 완료되었습니다.\n\n"
-                f"• 신규 DB에만 있는 상품번호: {len(new_only)}개\n"
-                f"• 기존 DB에만 있는 상품번호: {len(existing_only)}개\n"
-                f"• 공통 상품번호: {len(common)}개\n\n"
-                f"자세한 내용은 주문처리 탭에서 확인하세요."
+                "네이버 DB 비교 분석 완료",
+                message
             )
             
         except Exception as e:
@@ -2627,18 +2650,87 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"쿠팡 DB 비교 완료: 신규 {len(new_only)}개, 기존만 {len(existing_only)}개")
             
             # 성공 메시지 표시
+            message = f"쿠팡 DB 비교 분석이 완료되었습니다.\n\n"
+            message += f"• 신규 DB에만 있는 옵션 ID: {len(new_only)}개\n"
+            message += f"• 기존 DB에만 있는 옵션 ID: {len(existing_only)}개\n"
+            message += f"• 공통 옵션 ID: {len(common)}개\n\n"
+            
+            # 기존 DB에만 있는 옵션 ID가 있는 경우 추가 정보 표시
+            if existing_only:
+                message += f"🗑️ 기존 DB에만 있는 옵션 ID ({len(existing_only)}개):\n"
+                # 기존 DB에서 상품명 조회
+                existing_db_path = Path("database") / "store_database.xlsx"
+                existing_df = pd.read_excel(existing_db_path, sheet_name=1)
+                
+                for i, option_id in enumerate(sorted(existing_only), 1):
+                    if i <= 10:  # 처음 10개만 표시
+                        # 기존 DB에서 해당 옵션 ID의 상품명 조회
+                        product_name = self.find_product_name_by_option_id(existing_df, option_id)
+                        message += f"{i:2d}. {option_id} - {product_name}\n"
+                    elif i == 11:
+                        message += f"... (총 {len(existing_only)}개 중 처음 10개만 표시)\n"
+                        break
+            
             QMessageBox.information(
                 self,
                 "쿠팡 DB 비교 분석 완료",
-                f"쿠팡 DB 비교 분석이 완료되었습니다.\n\n"
-                f"• 신규 DB에만 있는 옵션 ID: {len(new_only)}개\n"
-                f"• 기존 DB에만 있는 옵션 ID: {len(existing_only)}개\n"
-                f"• 공통 옵션 ID: {len(common)}개\n\n"
+                message
             )
             
         except Exception as e:
             print(f"❌ 쿠팡 DB 차이점 분석 중 오류 발생: {str(e)}")
             raise Exception(f"쿠팡 DB 차이점 분석 중 오류가 발생했습니다: {str(e)}")
+    
+    def find_product_name_by_option_id(self, df, option_id):
+        """옵션 ID로 상품명을 찾습니다."""
+        try:
+            # E열(인덱스 4)에서 옵션 ID 찾기
+            option_column = df.iloc[:, 4]  # E열
+            product_column = df.iloc[:, 1]  # B열 (상품명)
+            
+            for i, value in enumerate(option_column):
+                if pd.notna(value):
+                    # float로 읽힌 경우 정수로 변환 후 문자열로 변환
+                    if isinstance(value, float):
+                        current_option_id = str(int(value))
+                    else:
+                        current_option_id = str(value).strip()
+                    
+                    if current_option_id == option_id:
+                        # 해당 행의 상품명 반환
+                        product_name = str(product_column.iloc[i]).strip() if pd.notna(product_column.iloc[i]) else "상품명 없음"
+                        return product_name
+            
+            return "상품명 없음"
+            
+        except Exception as e:
+            print(f"❌ 옵션 ID {option_id}의 상품명 조회 중 오류 발생: {str(e)}")
+            return "상품명 조회 실패"
+    
+    def find_naver_product_name_by_number(self, df, product_number):
+        """상품번호로 상품명을 찾습니다."""
+        try:
+            # 기존 DB에서는 하드코딩으로 E열(상품번호)과 C열(상품명) 사용
+            product_number_column = df.iloc[:, 4]  # E열 (상품번호)
+            product_name_column = df.iloc[:, 2]    # C열 (상품명)
+            
+            for i, value in enumerate(product_number_column):
+                if pd.notna(value):
+                    # .0 제거 처리
+                    current_product_number = str(value).strip()
+                    if current_product_number.endswith('.0'):
+                        current_product_number = current_product_number[:-2]
+                    
+                    if current_product_number == product_number:
+                        # 해당 행의 C열 상품명 반환
+                        product_name = str(product_name_column.iloc[i]).strip() if pd.notna(product_name_column.iloc[i]) else "상품명 없음"
+                        return product_name
+            
+            return "상품명 없음"
+            
+        except Exception as e:
+            print(f"❌ 상품번호 {product_number}의 상품명 조회 중 오류 발생: {str(e)}")
+            return "상품명 조회 실패"
                 
     def generate_invoice_file(self):
         """일괄 발송 파일 생성 메인 메소드"""
