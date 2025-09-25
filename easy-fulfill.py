@@ -2081,6 +2081,10 @@ class MainWindow(QMainWindow):
                 # label_database_name에 파일명 표시 (확장자 포함)
                 self.ui.label_database_name.setText(f"{filename}")
                 
+                # 네이버 DB인 경우 기존 DB와 비교 분석
+                if store_type == "네이버":
+                    self.compare_naver_databases(file_path)
+                
                 self.statusBar().showMessage(f"[{store_type}] 데이터베이스 파일 선택됨: - {filename}")
                 print(f"✓ [{store_type}] 데이터베이스 파일이 성공적으로 선택되었습니다: - {filename}")
                 
@@ -2092,6 +2096,198 @@ class MainWindow(QMainWindow):
                     "오류",
                     "파일을 처리하는 중 오류가 발생했습니다."
                 )
+                
+    def compare_naver_databases(self, new_db_path):
+        """네이버 DB 비교 분석을 수행합니다."""
+        try:
+            print(f"\n[네이버 DB 비교 분석 시작]")
+            print(f"신규 DB 파일: {new_db_path}")
+            
+            # 1. 기존 DB (store_database.xlsx) 읽기
+            existing_db_path = Path("database") / "store_database.xlsx"
+            if not existing_db_path.exists():
+                QMessageBox.warning(self, "오류", "기존 DB 파일(store_database.xlsx)을 찾을 수 없습니다.")
+                return
+            
+            print(f"기존 DB 파일: {existing_db_path}")
+            
+            # 기존 DB의 1번 시트 읽기
+            existing_df = pd.read_excel(existing_db_path, sheet_name=0)
+            print(f"기존 DB 행 수: {len(existing_df)}")
+            print(f"기존 DB 열 목록: {list(existing_df.columns)}")
+            
+            # 기존 DB에서 상품번호(스마트스토어) 열 찾기
+            existing_product_numbers = self.extract_product_numbers(existing_df, "기존 DB")
+            if existing_product_numbers is None:
+                return
+            
+            # 2. 신규 DB 읽기
+            new_df = pd.read_csv(new_db_path)
+            print(f"신규 DB 행 수: {len(new_df)}")
+            print(f"신규 DB 열 목록: {list(new_df.columns)}")
+            
+            # 신규 DB에서 상품번호(스마트스토어) 열 찾기
+            new_product_numbers = self.extract_product_numbers(new_df, "신규 DB")
+            if new_product_numbers is None:
+                return
+            
+            # 3. 차이점 분석
+            self.analyze_database_differences(existing_product_numbers, new_product_numbers)
+            
+        except Exception as e:
+            error_msg = str(e)
+            print(f"❌ 네이버 DB 비교 분석 중 오류 발생: {error_msg}")
+            QMessageBox.warning(
+                self,
+                "오류",
+                f"DB 비교 분석 중 오류가 발생했습니다.\n\n{error_msg}"
+            )
+    
+    def extract_product_numbers(self, df, db_name):
+        """데이터프레임에서 상품번호(스마트스토어) 열을 찾고 상품번호들을 추출합니다."""
+        try:
+            print(f"\n[{db_name}] 상품번호(스마트스토어) 열 찾기")
+            
+            # 먼저 열 이름에서 직접 찾기
+            product_number_col = None
+            target_keywords = ['상품번호', '스마트스토어']
+            
+            print(f"사용 가능한 열 목록:")
+            for i, col in enumerate(df.columns):
+                print(f"  {i}: '{col}'")
+            
+            # 열 이름에서 '상품번호'와 '스마트스토어'가 모두 포함된 열 찾기
+            for col in df.columns:
+                col_str = str(col).strip()
+                if all(keyword in col_str for keyword in target_keywords):
+                    product_number_col = col
+                    print(f"✓ 열 이름에서 '{product_number_col}' 찾음")
+                    break
+            
+            # 열 이름에서 못 찾은 경우 1행과 2행에서 찾기
+            if product_number_col is None:
+                print(f"열 이름에서 찾지 못함. 1행과 2행에서 검색...")
+                
+                # 1행에서 찾기
+                if len(df) > 0:
+                    first_row = df.iloc[0]
+                    print(f"1행 데이터: {list(first_row)}")
+                    for col_idx, value in enumerate(first_row):
+                        value_str = str(value).strip()
+                        if '상품번호' in value_str and '스마트스토어' in value_str:
+                            product_number_col = df.columns[col_idx]
+                            print(f"✓ 1행에서 '{product_number_col}' 열 찾음 (값: '{value_str}')")
+                            break
+                
+                # 2행에서 찾기 (1행에서 못 찾은 경우)
+                if product_number_col is None and len(df) > 1:
+                    second_row = df.iloc[1]
+                    print(f"2행 데이터: {list(second_row)}")
+                    for col_idx, value in enumerate(second_row):
+                        value_str = str(value).strip()
+                        if '상품번호' in value_str and '스마트스토어' in value_str:
+                            product_number_col = df.columns[col_idx]
+                            print(f"✓ 2행에서 '{product_number_col}' 열 찾음 (값: '{value_str}')")
+                            break
+            
+            if product_number_col is None:
+                print(f"❌ {db_name}에서 '상품번호(스마트스토어)' 관련 열을 찾을 수 없습니다.")
+                print(f"사용 가능한 열들:")
+                for i, col in enumerate(df.columns):
+                    print(f"  {i}: '{col}'")
+                QMessageBox.warning(
+                    self,
+                    "오류",
+                    f"{db_name}에서 '상품번호(스마트스토어)' 관련 열을 찾을 수 없습니다.\n"
+                    "파일 형식을 확인해주세요.\n\n"
+                    f"사용 가능한 열들:\n" + "\n".join([f"• {col}" for col in df.columns[:10]])
+                )
+                return None
+            
+            # 상품번호 추출 (중복 제거)
+            product_numbers = set()
+            for value in df[product_number_col].dropna():
+                # .0 제거 처리
+                product_number = str(value).strip()
+                if product_number.endswith('.0'):
+                    product_number = product_number[:-2]
+                
+                if product_number and product_number != 'nan':
+                    product_numbers.add(product_number)
+            
+            print(f"✓ {db_name}에서 {len(product_numbers)}개의 고유 상품번호 추출")
+            return product_numbers
+            
+        except Exception as e:
+            print(f"❌ {db_name} 상품번호 추출 중 오류 발생: {str(e)}")
+            return None
+    
+    def analyze_database_differences(self, existing_numbers, new_numbers):
+        """두 DB의 상품번호 차이점을 분석합니다."""
+        try:
+            print(f"\n[DB 차이점 분석]")
+            print(f"기존 DB 상품번호 수: {len(existing_numbers)}")
+            print(f"신규 DB 상품번호 수: {len(new_numbers)}")
+            
+            # 신규 DB에만 있는 상품번호 (기존 DB에는 없지만 신규 DB에는 존재)
+            new_only = new_numbers - existing_numbers
+            
+            # 기존 DB에만 있는 상품번호 (신규 DB에는 없지만 기존 DB에는 존재)
+            existing_only = existing_numbers - new_numbers
+            
+            # 공통 상품번호
+            common = existing_numbers & new_numbers
+            
+            print(f"\n[분석 결과]")
+            print(f"공통 상품번호: {len(common)}개")
+            print(f"기존 DB에만 있는 상품번호: {len(existing_only)}개")
+            print(f"신규 DB에만 있는 상품번호: {len(new_only)}개")
+            
+            # 결과를 사용자에게 표시
+            result_text = f"""
+[네이버 DB 비교 분석 결과]
+
+📊 통계 정보:
+• 기존 DB 상품번호: {len(existing_numbers):,}개
+• 신규 DB 상품번호: {len(new_numbers):,}개
+• 공통 상품번호: {len(common):,}개
+• 기존 DB에만 있는 상품번호: {len(existing_only):,}개
+• 신규 DB에만 있는 상품번호: {len(new_only):,}개
+
+🆕 신규 DB에만 있는 상품번호 ({len(new_only)}개):
+"""
+            
+            if new_only:
+                for i, product_number in enumerate(sorted(new_only), 1):
+                    result_text += f"{i:3d}. {product_number}\n"
+            else:
+                result_text += "없음\n"
+            
+            if existing_only:
+                result_text += f"\n🗑️ 기존 DB에만 있는 상품번호 ({len(existing_only)}개):\n"
+                for i, product_number in enumerate(sorted(existing_only), 1):
+                    result_text += f"{i:3d}. {product_number}\n"
+            
+            # 결과를 plainTextEdit에 표시
+            self.ui.plainTextEdit.setPlainText(result_text)
+            
+            # 상태바 메시지 업데이트
+            self.statusBar().showMessage(f"DB 비교 완료: 신규 {len(new_only)}개, 기존만 {len(existing_only)}개")
+            
+            # 성공 메시지 표시
+            QMessageBox.information(
+                self,
+                "DB 비교 분석 완료",
+                f"네이버 DB 비교 분석이 완료되었습니다.\n\n"
+                f"• 신규 DB에만 있는 상품번호: {len(new_only)}개\n"
+                f"• 기존 DB에만 있는 상품번호: {len(existing_only)}개\n"
+                f"• 공통 상품번호: {len(common)}개\n\n"
+                f"자세한 내용은 주문처리 탭에서 확인하세요."
+            )
+            
+        except Exception as e:
+            print(f"❌ DB 차이점 분석 중 오류 발생: {str(e)}")
+            raise Exception(f"DB 차이점 분석 중 오류가 발생했습니다: {str(e)}")
                 
     def generate_invoice_file(self):
         """일괄 발송 파일 생성 메인 메소드"""
