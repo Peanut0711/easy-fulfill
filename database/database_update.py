@@ -6,6 +6,7 @@ from datetime import datetime
 import logging
 import sys
 import io
+import shutil
 
 # 터미널 인코딩 설정 (Windows 한글 깨짐 해결)
 if sys.platform == 'win32':
@@ -252,6 +253,49 @@ class DatabaseUpdater:
             logger.error(f"시트 찾기 오류 ({store_type}): {str(e)}")
             return None
     
+    def backup_existing_database(self):
+        """기존 데이터베이스 파일을 백업하는 함수"""
+        try:
+            if not os.path.exists(self.db_file):
+                return True  # 파일이 없으면 백업할 필요 없음
+            
+            # 기존 백업 파일들 찾기
+            backup_pattern = os.path.join(self.current_dir, 'store_database_old*.xlsx')
+            existing_backups = glob.glob(backup_pattern)
+            
+            # 다음 백업 번호 결정
+            if existing_backups:
+                # 기존 백업 파일에서 번호 추출
+                backup_numbers = []
+                for backup_file in existing_backups:
+                    filename = os.path.basename(backup_file)
+                    match = re.search(r'store_database_old\((\d+)\)\.xlsx', filename)
+                    if match:
+                        backup_numbers.append(int(match.group(1)))
+                
+                if backup_numbers:
+                    next_number = max(backup_numbers) + 1
+                else:
+                    next_number = 1
+            else:
+                next_number = 1
+            
+            # 백업 파일명 생성
+            backup_filename = f'store_database_old({next_number}).xlsx'
+            backup_path = os.path.join(self.current_dir, backup_filename)
+            
+            # 파일 복사
+            shutil.copy2(self.db_file, backup_path)
+            logger.info(f"기존 데이터베이스 백업 완료: {backup_filename}")
+            print(f"[백업] 기존 데이터베이스가 백업되었습니다: {backup_filename}")
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"데이터베이스 백업 오류: {str(e)}")
+            print(f"[오류] 데이터베이스 백업 실패: {str(e)}")
+            return False
+    
     def read_database_with_header(self, sheet_name, store_type):
         """스토어별로 다른 헤더 설정으로 DB를 읽는 함수"""
         try:
@@ -315,6 +359,10 @@ class DatabaseUpdater:
     def save_updated_database(self, naver_db, coupang_db):
         """업데이트된 데이터베이스를 저장하는 함수"""
         try:
+            # 기존 데이터베이스 백업
+            if not self.backup_existing_database():
+                return False
+            
             with pd.ExcelWriter(self.output_file, engine='openpyxl') as writer:
                 if naver_db is not None:
                     naver_db.to_excel(writer, sheet_name='네이버 스토어 DB', index=False)
@@ -322,8 +370,15 @@ class DatabaseUpdater:
                     # 쿠팡 DB는 첫 번째 행을 공란으로 두고 저장
                     coupang_db.to_excel(writer, sheet_name='쿠팡 스토어 DB', index=False, startrow=1)
             
-            logger.info(f"업데이트된 데이터베이스 저장 완료: {self.output_file}")
-            return True
+            # 업데이트된 파일을 원래 이름으로 변경
+            if os.path.exists(self.output_file):
+                shutil.move(self.output_file, self.db_file)
+                logger.info(f"업데이트된 데이터베이스 저장 완료: {self.db_file}")
+                print(f"[성공] 데이터베이스가 업데이트되었습니다: store_database.xlsx")
+                return True
+            else:
+                logger.error("업데이트된 파일이 생성되지 않았습니다.")
+                return False
             
         except Exception as e:
             logger.error(f"데이터베이스 저장 오류: {str(e)}")
