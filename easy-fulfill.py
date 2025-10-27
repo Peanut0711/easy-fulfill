@@ -2160,15 +2160,19 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, "오류", "기존 DB 파일(store_database.xlsx)을 찾을 수 없습니다.")
                 return
             
-            # 기존 DB 읽기 (모든 시트) - 헤더 없이 읽기
+            # 기존 DB 읽기 (모든 시트) - 헤더 없이 읽기, 데이터 타입 보존
             print(f"[디버깅] 기존 DB 파일의 모든 시트 읽기 시작")
-            all_sheets = pd.read_excel(existing_db_path, sheet_name=None, header=None)
+            all_sheets = pd.read_excel(existing_db_path, sheet_name=None, header=None, dtype=str)
             print(f"[디버깅] 발견된 시트: {list(all_sheets.keys())}")
             
             # 1번 시트 (첫 번째 시트) 가져오기
             first_sheet_name = list(all_sheets.keys())[0]
             existing_df = all_sheets[first_sheet_name]
             print(f"기존 DB 행 수: {len(existing_df)}")
+            
+            # 숫자 열들을 적절한 타입으로 변환 (첫 번째 행은 헤더이므로 제외)
+            if len(existing_df) > 1:
+                existing_df = self.convert_numeric_columns(existing_df)
             
             # 신규 DB에서 추가할 데이터 추출
             new_rows_to_add = []
@@ -2198,6 +2202,9 @@ class MainWindow(QMainWindow):
             # 기존 DB에 새 행들 추가
             updated_df = pd.concat([existing_df, pd.DataFrame(new_rows_to_add)], ignore_index=True)
             
+            # 새로 추가된 행들의 숫자 열 변환
+            updated_df = self.convert_numeric_columns(updated_df)
+            
             # 기존 DB 파일에 저장 (백업 생성)
             backup_path = existing_db_path.with_suffix('.xlsx.backup')
             if backup_path.exists():
@@ -2208,7 +2215,7 @@ class MainWindow(QMainWindow):
             shutil.copy2(existing_db_path, backup_path)
             print(f"✓ 백업 파일 생성: {backup_path}")
             
-            # 업데이트된 데이터를 원본 파일에 저장 (모든 시트 보존)
+            # 업데이트된 데이터를 원본 파일에 저장 (모든 시트 보존, 데이터 타입 보존)
             with pd.ExcelWriter(existing_db_path, engine='openpyxl', mode='w') as writer:
                 # 1번 시트는 업데이트된 데이터로 저장 (헤더 없이)
                 updated_df.to_excel(writer, sheet_name=first_sheet_name, index=False, header=False)
@@ -2217,6 +2224,9 @@ class MainWindow(QMainWindow):
                 for sheet_name, sheet_df in all_sheets.items():
                     if sheet_name != first_sheet_name:
                         print(f"[디버깅] 시트 '{sheet_name}' 보존 중...")
+                        # 다른 시트들도 숫자 열 변환 적용
+                        if len(sheet_df) > 1:
+                            sheet_df = self.convert_numeric_columns(sheet_df)
                         sheet_df.to_excel(writer, sheet_name=sheet_name, index=False, header=False)
             
             print(f"✓ 기존 DB 업데이트 완료: {len(new_rows_to_add)}개 상품 추가")
@@ -2305,6 +2315,43 @@ class MainWindow(QMainWindow):
         except Exception as e:
             print(f"❌ 대표이미지 URL 추출 중 오류 발생: {str(e)}")
             return ""
+    
+    def convert_numeric_columns(self, df):
+        """DataFrame에서 숫자로 변환 가능한 열들을 적절한 타입으로 변환합니다."""
+        try:
+            if len(df) <= 1:  # 헤더만 있거나 비어있는 경우
+                return df
+            
+            # 첫 번째 행은 헤더이므로 제외하고 데이터만 확인
+            data_rows = df.iloc[1:]
+            converted_df = df.copy()
+            
+            for col_idx in range(len(df.columns)):
+                col_data = data_rows.iloc[:, col_idx]
+                
+                # 빈 값이 아닌 데이터만 확인
+                non_empty_data = col_data.dropna()
+                non_empty_data = non_empty_data[non_empty_data.astype(str).str.strip() != '']
+                
+                if len(non_empty_data) == 0:
+                    continue
+                
+                # 숫자로 변환 가능한지 확인
+                try:
+                    # 정수로 변환 가능한지 확인
+                    numeric_values = pd.to_numeric(non_empty_data, errors='coerce')
+                    if not numeric_values.isna().any():
+                        # 모든 값이 숫자로 변환 가능하면 해당 열을 숫자로 변환
+                        converted_df.iloc[1:, col_idx] = pd.to_numeric(converted_df.iloc[1:, col_idx], errors='coerce')
+                        print(f"[디버깅] 열 {col_idx}를 숫자 타입으로 변환")
+                except:
+                    continue
+            
+            return converted_df
+            
+        except Exception as e:
+            print(f"❌ 숫자 열 변환 중 오류 발생: {str(e)}")
+            return df
     
     def create_naver_existing_db_row(self, product_number, product_name, image_url, existing_df):
         """기존 DB 형식에 맞는 새 행을 생성합니다."""
@@ -2506,9 +2553,17 @@ class MainWindow(QMainWindow):
             
             # 기존 Excel 파일의 모든 시트를 읽어서 두 번째 시트(인덱스 1)만 업데이트
             try:
-                # 모든 시트 읽기 (헤더 없이)
-                all_sheets = pd.read_excel(existing_db_path, sheet_name=None, header=None)
+                # 모든 시트 읽기 (헤더 없이, 데이터 타입 보존)
+                all_sheets = pd.read_excel(existing_db_path, sheet_name=None, header=None, dtype=str)
                 print(f"기존 DB 시트 목록: {list(all_sheets.keys())}")
+                
+                # 숫자 열 변환 적용
+                for sheet_name, sheet_df in all_sheets.items():
+                    if len(sheet_df) > 1:
+                        all_sheets[sheet_name] = self.convert_numeric_columns(sheet_df)
+                
+                # 새로 추가된 데이터도 숫자 열 변환 적용
+                new_df = self.convert_numeric_columns(new_df)
                 
                 # Excel 파일 재작성
                 with pd.ExcelWriter(existing_db_path, engine='openpyxl') as writer:
@@ -2526,6 +2581,8 @@ class MainWindow(QMainWindow):
                 print(f"❌ 시트 처리 중 오류: {str(e)}")
                 # 대안: 간단한 방법으로 두 번째 시트만 업데이트
                 print("대안 방법으로 두 번째 시트 업데이트 시도...")
+                # 숫자 열 변환 적용
+                new_df = self.convert_numeric_columns(new_df)
                 with pd.ExcelWriter(existing_db_path, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
                     new_df.to_excel(writer, sheet_name=1, index=False, header=False)  # 인덱스 1 (두 번째 시트)
                     print(f"두 번째 시트 업데이트 완료 (대안 방법)")
