@@ -6,3 +6,5 @@ pyxlsb==1.0.10
 msoffcrypto-tool==5.1.1
 requests==2.31.0
 xlsxwriter==3.2.2
+gspread==5.12.0
+google-auth==2.23.0
