@@ -7,3 +7,4 @@ dist/
 dist.7z
 temp/
 database/order_index.json
+api-key/
