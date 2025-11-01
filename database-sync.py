@@ -364,7 +364,10 @@ def append_to_spreadsheet_coupang(worksheet, new_data_list, header_row_num):
     # 데이터 추가 전 마지막 데이터 행 번호 저장
     all_values = worksheet.get_all_values()
     last_data_row = len(all_values)  # 마지막 행 번호 (1-based)
-    num_columns = len(new_data_list[0]) if new_data_list else 1
+    
+    # 헤더 행의 실제 컬럼 수 파악 (스프레드시트의 실제 컬럼 수)
+    header_row_values = worksheet.row_values(header_row_num)
+    num_columns = len(header_row_values) if header_row_values else (len(new_data_list[0]) if new_data_list else 1)
     
     # 1단계: 데이터 추가
     worksheet.append_rows(new_data_list)
@@ -374,6 +377,7 @@ def append_to_spreadsheet_coupang(worksheet, new_data_list, header_row_num):
     added_rows_end = last_data_row + len(new_data_list)
     
     print(f"✅ {len(new_data_list)}개의 새 제품이 추가되었습니다 (행 {added_rows_start}-{added_rows_end})")
+    print(f"ℹ️  교차 색상 적용 범위: 헤더 행({header_row_num}) 다음부터 행 {added_rows_end}까지, 컬럼 {num_columns}개")
     
     # Google Sheets API 객체 준비
     spreadsheet = worksheet.spreadsheet
@@ -381,9 +385,13 @@ def append_to_spreadsheet_coupang(worksheet, new_data_list, header_row_num):
     
     # 2단계: 교차 색상 적용
     try:
-        updated_last_row = added_rows_end
+        # Google Sheets API는 0-based 인덱스를 사용하며, endRowIndex는 exclusive입니다
+        # 헤더 다음 행부터 마지막 데이터 행까지 적용
+        # 예: header_row_num=2 (2행이 헤더), added_rows_end=999 (999행까지 데이터)
+        #   → start_row_index = 2 (0-based, 3행부터 시작)
+        #   → end_row_index = 999 (0-based exclusive, 999행 포함)
         start_row_index = header_row_num  # 헤더 다음 행 (0-based)
-        end_row_index = updated_last_row  # 마지막 데이터 행 다음 (0-based)
+        end_row_index = added_rows_end  # 마지막 데이터 행 (0-based, exclusive이므로 999행 포함)
         
         # 기존 bandedRange 설정 확인
         existing_banded_range = None
@@ -448,7 +456,8 @@ def append_to_spreadsheet_coupang(worksheet, new_data_list, header_row_num):
                 }]
                 
                 spreadsheet.batch_update({'requests': requests})
-                print(f"✅ 교차 색상 업데이트 완료 (기존 설정 유지, 행 {start_row_index + 1}-{end_row_index})")
+                # 0-based를 1-based로 변환하여 표시
+                print(f"✅ 교차 색상 업데이트 완료 (기존 설정 유지, 행 {start_row_index + 1}-{end_row_index}, 컬럼 A-{chr(65 + num_columns - 1)})")
             except Exception as e:
                 # 업데이트 실패 - 새로 생성
                 print(f"ℹ️  기존 교차 색상 업데이트 실패, 새로 생성합니다: {str(e)}")
@@ -491,7 +500,9 @@ def append_to_spreadsheet_coupang(worksheet, new_data_list, header_row_num):
             }]
             
             spreadsheet.batch_update({'requests': requests})
-            print(f"✅ 교차 색상 적용 완료 (기본 설정, 행 {start_row_index + 1}-{end_row_index})")
+            # 0-based를 1-based로 변환하여 표시하고, 컬럼 범위도 표시
+            col_end_letter = chr(65 + num_columns - 1) if num_columns <= 26 else 'Z'  # A-Z까지만 간단히 표시
+            print(f"✅ 교차 색상 적용 완료 (기본 설정, 행 {start_row_index + 1}-{end_row_index}, 컬럼 A-{col_end_letter})")
         
     except Exception as e:
         print(f"⚠️  교차 색상 적용 중 오류 발생 (데이터는 정상 추가됨): {str(e)}")
