@@ -227,6 +227,61 @@ def align_to_spreadsheet_headers(realtime_dict, spreadsheet_headers):
     return aligned_row
 
 
+def apply_banded_rows(spreadsheet, sheet_id, header_row_num, last_data_row, num_columns):
+    """
+    교차 색상 적용 (banded rows)
+    
+    Args:
+        spreadsheet: gspread 스프레드시트 객체
+        sheet_id: 시트 ID
+        header_row_num: 헤더 행 번호 (1-based)
+        last_data_row: 마지막 데이터 행 번호 (1-based)
+        num_columns: 컬럼 개수
+    """
+    try:
+        # 교차 색상 적용 범위: 헤더 다음 행부터 마지막 데이터 행까지
+        start_row_index = header_row_num  # 헤더 다음 행 (0-based)
+        end_row_index = last_data_row  # 마지막 데이터 행 다음 (0-based)
+        
+        # bandedRange 생성 요청
+        requests = [{
+            'addBanding': {
+                'bandedRange': {
+                    'range': {
+                        'sheetId': sheet_id,
+                        'startRowIndex': start_row_index,
+                        'endRowIndex': end_row_index,
+                        'startColumnIndex': 0,
+                        'endColumnIndex': num_columns
+                    },
+                    'rowProperties': {
+                        'headerColor': {
+                            'red': 1.0,
+                            'green': 1.0,
+                            'blue': 1.0
+                        },
+                        'firstBandColor': {
+                            'red': 1.0,
+                            'green': 1.0,
+                            'blue': 1.0
+                        },
+                        'secondBandColor': {
+                            'red': 0.95,
+                            'green': 0.95,
+                            'blue': 0.95
+                        }
+                    }
+                }
+            }
+        }]
+        
+        spreadsheet.batch_update({'requests': requests})
+        print(f"✅ 교차 색상 적용 완료 (행 {start_row_index + 1}-{end_row_index})")
+        
+    except Exception as e:
+        print(f"⚠️  교차 색상 적용 중 오류 발생: {str(e)}")
+
+
 def append_to_spreadsheet(worksheet, new_data_list, header_row_num):
     """
     스프레드시트에 데이터 추가 (서식 포함)
@@ -281,6 +336,191 @@ def append_to_spreadsheet(worksheet, new_data_list, header_row_num):
                     'endRowIndex': added_rows_end,  # 0-based
                     'startColumnIndex': 0,
                     'endColumnIndex': len(new_data_list[0]) if new_data_list else 1
+                },
+                'pasteType': 'PASTE_FORMAT',
+                'pasteOrientation': 'NORMAL'
+            }
+        }]
+        
+        spreadsheet.batch_update({'requests': requests})
+        print(f"✅ 서식 복사 완료 (행 {source_row} → 행 {added_rows_start}-{added_rows_end})")
+        
+    except Exception as e:
+        print(f"⚠️  서식 복사 중 오류 발생 (데이터는 정상 추가됨): {str(e)}")
+
+
+def append_to_spreadsheet_coupang(worksheet, new_data_list, header_row_num):
+    """
+    쿠팡 스프레드시트에 데이터 추가 (데이터 추가 → 교차 색상 → 서식 복사 순서)
+    
+    Args:
+        worksheet: gspread 워크시트 객체
+        new_data_list: 추가할 데이터 리스트 (각 항목은 리스트 형태)
+        header_row_num: 헤더 행 번호 (1-based)
+    """
+    if not new_data_list:
+        return
+    
+    # 데이터 추가 전 마지막 데이터 행 번호 저장
+    all_values = worksheet.get_all_values()
+    last_data_row = len(all_values)  # 마지막 행 번호 (1-based)
+    num_columns = len(new_data_list[0]) if new_data_list else 1
+    
+    # 1단계: 데이터 추가
+    worksheet.append_rows(new_data_list)
+    
+    # 추가된 행의 시작과 끝 행 번호 계산
+    added_rows_start = last_data_row + 1
+    added_rows_end = last_data_row + len(new_data_list)
+    
+    print(f"✅ {len(new_data_list)}개의 새 제품이 추가되었습니다 (행 {added_rows_start}-{added_rows_end})")
+    
+    # Google Sheets API 객체 준비
+    spreadsheet = worksheet.spreadsheet
+    sheet_id = worksheet.id
+    
+    # 2단계: 교차 색상 적용
+    try:
+        updated_last_row = added_rows_end
+        start_row_index = header_row_num  # 헤더 다음 행 (0-based)
+        end_row_index = updated_last_row  # 마지막 데이터 행 다음 (0-based)
+        
+        # 기존 bandedRange 설정 확인
+        existing_banded_range = None
+        existing_banded_range_id = None
+        try:
+            # Google Sheets API를 통해 스프레드시트 메타데이터 가져오기
+            try:
+                from googleapiclient.discovery import build
+            except ImportError:
+                # googleapiclient가 없으면 기본값 사용
+                raise ImportError("googleapiclient 패키지가 필요합니다. pip install google-api-python-client")
+            
+            # gspread의 client에서 credentials 가져오기
+            gc = gspread.service_account(filename=CREDENTIAL_PATH)
+            credentials = gc.auth.credentials
+            
+            # Google Sheets API 서비스 생성
+            service = build('sheets', 'v4', credentials=credentials)
+            response = service.spreadsheets().get(
+                spreadsheetId=spreadsheet.id,
+                fields='sheets.properties,sheets.bandedRanges'
+            ).execute()
+            
+            # 현재 시트의 bandedRanges 찾기
+            sheets_data = response.get('sheets', [])
+            for sheet_data in sheets_data:
+                sheet_props = sheet_data.get('properties', {})
+                if sheet_props.get('sheetId') == sheet_id:
+                    # 시트의 bandedRanges 확인
+                    banded_ranges = sheet_data.get('bandedRanges', [])
+                    if banded_ranges:
+                        # 첫 번째 bandedRange 사용 (일반적으로 하나만 있음)
+                        existing_banded_range = banded_ranges[0].get('bandedRange', {})
+                        existing_banded_range_id = banded_ranges[0].get('bandedRangeId')
+                        break
+        except Exception as e:
+            # 기존 설정 읽기 실패 - 기본값 사용
+            print(f"ℹ️  기존 교차 색상 설정을 확인할 수 없습니다. 기본 설정을 사용합니다: {str(e)}")
+        
+        # 기존 bandedRange가 있고 범위를 업데이트할 수 있는 경우
+        if existing_banded_range and existing_banded_range_id:
+            try:
+                # 기존 bandedRange의 색상 설정 가져오기
+                row_props = existing_banded_range.get('rowProperties', {})
+                
+                # 기존 설정을 유지하면서 범위만 업데이트
+                requests = [{
+                    'updateBanding': {
+                        'bandedRangeId': existing_banded_range_id,
+                        'bandedRange': {
+                            'range': {
+                                'sheetId': sheet_id,
+                                'startRowIndex': start_row_index,
+                                'endRowIndex': end_row_index,
+                                'startColumnIndex': 0,
+                                'endColumnIndex': num_columns
+                            },
+                            'rowProperties': row_props  # 기존 색상 설정 유지
+                        },
+                        'fields': 'range,rowProperties'
+                    }
+                }]
+                
+                spreadsheet.batch_update({'requests': requests})
+                print(f"✅ 교차 색상 업데이트 완료 (기존 설정 유지, 행 {start_row_index + 1}-{end_row_index})")
+            except Exception as e:
+                # 업데이트 실패 - 새로 생성
+                print(f"ℹ️  기존 교차 색상 업데이트 실패, 새로 생성합니다: {str(e)}")
+                existing_banded_range = None
+        
+        # 기존 bandedRange가 없거나 업데이트 실패한 경우 - 기본 설정으로 새로 생성
+        if not existing_banded_range:
+            # 기본 설정: 머릿글 체크 해제, 흰색/회색 교차
+            # Google Sheets API에서 bands 필드는 별도로 지정하지 않고, 
+            # rowProperties의 색상이 지정되면 자동으로 교차 색상이 적용됩니다.
+            requests = [{
+                'addBanding': {
+                    'bandedRange': {
+                        'range': {
+                            'sheetId': sheet_id,
+                            'startRowIndex': start_row_index,
+                            'endRowIndex': end_row_index,
+                            'startColumnIndex': 0,
+                            'endColumnIndex': num_columns
+                        },
+                        'rowProperties': {
+                            'headerColor': {
+                                'red': 1.0,
+                                'green': 1.0,
+                                'blue': 1.0
+                            },
+                            'firstBandColor': {
+                                'red': 1.0,
+                                'green': 1.0,
+                                'blue': 1.0
+                            },
+                            'secondBandColor': {
+                                'red': 0.95,
+                                'green': 0.95,
+                                'blue': 0.95
+                            }
+                        }
+                    }
+                }
+            }]
+            
+            spreadsheet.batch_update({'requests': requests})
+            print(f"✅ 교차 색상 적용 완료 (기본 설정, 행 {start_row_index + 1}-{end_row_index})")
+        
+    except Exception as e:
+        print(f"⚠️  교차 색상 적용 중 오류 발생 (데이터는 정상 추가됨): {str(e)}")
+    
+    # 3단계: 서식 복사
+    try:
+        # 마지막 데이터 행 찾기 (헤더 제외)
+        source_row = header_row_num + 1  # 헤더 다음 행부터 시작
+        
+        if last_data_row > header_row_num:
+            # 실제 데이터가 있는 경우, 마지막 데이터 행의 서식 사용
+            source_row = last_data_row
+        
+        # 서식 복사 요청 (copyPaste 사용)
+        requests = [{
+            'copyPaste': {
+                'source': {
+                    'sheetId': sheet_id,
+                    'startRowIndex': source_row - 1,  # 0-based
+                    'endRowIndex': source_row,  # 0-based (다음 행 전까지)
+                    'startColumnIndex': 0,
+                    'endColumnIndex': num_columns
+                },
+                'destination': {
+                    'sheetId': sheet_id,
+                    'startRowIndex': added_rows_start - 1,  # 0-based
+                    'endRowIndex': added_rows_end,  # 0-based
+                    'startColumnIndex': 0,
+                    'endColumnIndex': num_columns
                 },
                 'pasteType': 'PASTE_FORMAT',
                 'pasteOrientation': 'NORMAL'
@@ -497,7 +737,7 @@ def sync_coupang(realtime_file_path=None, test_mode=True, test_count=None):
             for product in products_to_add:
                 aligned_row = align_to_spreadsheet_headers(product, spreadsheet_headers)
                 new_rows.append(aligned_row)
-            append_to_spreadsheet(worksheet, new_rows, COUPANG_CONFIG["header_row"])
+            append_to_spreadsheet_coupang(worksheet, new_rows, COUPANG_CONFIG["header_row"])
     else:
         print("\n✅ 새 제품이 없습니다. 동기화 완료!")
     
