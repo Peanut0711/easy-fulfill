@@ -1493,7 +1493,13 @@ class MainWindow(QMainWindow):
                 
                 # 상품 정보 추가
                 product_name = str(row[required_columns['상품명']])
-                option = str(row[required_columns['옵션']])
+                raw_option = row[required_columns['옵션']]
+                if pd.isna(raw_option):
+                    option = '없음'
+                else:
+                    option = str(raw_option).strip()
+                    if option.lower() in ('nan', ''):
+                        option = '없음'
                 quantity = int(row[required_columns['수량']]) if not pd.isna(row[required_columns['수량']]) else 1
                 
                 # 옵션ID로 상품코드 찾기
