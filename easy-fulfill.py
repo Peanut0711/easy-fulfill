@@ -1033,7 +1033,8 @@ class MainWindow(QMainWindow):
                 '수량': None,
                 '우편번호': None,
                 '상품번호': None,  # 상품번호 열 추가
-                '배송방법(구매자 요청)': None  # 배송 방법 열 추가
+                '배송방법(구매자 요청)': None,  # 배송 방법 열 추가
+                '최종 상품별 총 주문금액': None  # AA열 금액 정보 추가
             }
             
             for col in df.columns:
@@ -1043,9 +1044,18 @@ class MainWindow(QMainWindow):
                     if col_str.replace(' ', '') == key.replace(' ', ''):  # 공백 제거 후 비교
                         required_columns[key] = col
                         print(f"✓ '{key}' 열을 찾았습니다: {col}")
+            
+            # AA열(최종 상품별 총 주문금액)을 찾지 못한 경우 인덱스로 직접 접근 시도
+            if required_columns['최종 상품별 총 주문금액'] is None:
+                # AA열은 27번째 열 (0-based로는 26, pandas는 0-based)
+                if len(df.columns) > 26:
+                    required_columns['최종 상품별 총 주문금액'] = df.columns[26]
+                    print(f"✓ '최종 상품별 총 주문금액' 열을 인덱스로 찾았습니다: {df.columns[26]}")
+                else:
+                    print("⚠️ AA열(최종 상품별 총 주문금액)을 찾을 수 없습니다. 금액 정보가 없을 수 있습니다.")
 
-            # 필수 열이 모두 있는지 확인
-            missing_columns = [key for key, value in required_columns.items() if value is None]
+            # 필수 열이 모두 있는지 확인 (금액 열은 선택사항으로 처리)
+            missing_columns = [key for key, value in required_columns.items() if value is None and key != '최종 상품별 총 주문금액']
             if missing_columns:
                 print(f"❌ 다음 열을 찾을 수 없습니다: {', '.join(missing_columns)}")
                 QMessageBox.warning(self, "오류", f"다음 열을 찾을 수 없습니다:\n{', '.join(missing_columns)}")
@@ -1096,7 +1106,8 @@ class MainWindow(QMainWindow):
                     '우편번호': str(first_order[required_columns['우편번호']]),
                     '배송방법': str(first_order[required_columns['배송방법(구매자 요청)']]) if not pd.isna(first_order[required_columns['배송방법(구매자 요청)']]) else '배송방법 오류',
                     '상품수': 0,
-                    '상품목록': []
+                    '상품목록': [],
+                    '주문총액': 0  # 주문 총액 초기화
                 }
                 
                 # 패턴에 해당하는 모든 주문의 상품 정보 추가
@@ -1118,13 +1129,32 @@ class MainWindow(QMainWindow):
                         product_code = product_mapping.get(product_number, '        ')
                         print(f"매칭된 상품코드: {product_code}")
                         
+                        # 금액 정보 가져오기 (AA열)
+                        product_amount = 0
+                        if required_columns['최종 상품별 총 주문금액'] is not None:
+                            try:
+                                amount_value = row[required_columns['최종 상품별 총 주문금액']]
+                                if not pd.isna(amount_value):
+                                    # 숫자로 변환 시도
+                                    if isinstance(amount_value, str):
+                                        # 쉼표 제거 후 숫자 변환
+                                        amount_value = amount_value.replace(',', '').strip()
+                                    product_amount = float(amount_value)
+                            except (ValueError, TypeError) as e:
+                                print(f"⚠️ 금액 변환 실패: {amount_value}, 오류: {e}")
+                                product_amount = 0
+                        
+                        # 주문 총액에 추가
+                        self.orders[pattern]['주문총액'] += product_amount
+                        
                         # 상품 정보 추가
                         self.orders[pattern]['상품수'] += 1
                         self.orders[pattern]['상품목록'].append({
                             '상품명': product_name,
                             '수량': quantity,
                             '옵션': option,
-                            '상품코드': product_code
+                            '상품코드': product_code,
+                            '금액': product_amount
                         })
                         
                         # 수취인 정보가 다른 경우 경고
@@ -1151,13 +1181,16 @@ class MainWindow(QMainWindow):
                     self.current_idx_naver = 1
                     self.ui.lineEdit_idx_naver.setText(str(self.current_idx_naver))
             
-            for pattern, info in self.orders.items():                                
+            for pattern, info in self.orders.items():
+                # 주문 총액 가져오기 (정수로 변환하여 표시)
+                total_amount = int(info.get('주문총액', 0))
+                
                 # 배송 방법이 '택배,등기,소포'인 경우에만 기존 형식으로 표시
                 if info['배송방법'] == '택배,등기,소포':
-                    markdown_text += f"[ ] {self.current_idx_naver}.{info['수취인명']}\n"
+                    markdown_text += f"[ ] {self.current_idx_naver}.{info['수취인명']} - {total_amount}\n"
                 else:
                     # 그 외의 경우 배송 방법을 함께 표시
-                    markdown_text += f"[ ] {self.current_idx_naver}.{info['수취인명']} **({info['배송방법']})**\n"
+                    markdown_text += f"[ ] {self.current_idx_naver}.{info['수취인명']} - {total_amount} **({info['배송방법']})**\n"
                 
                 self.update_naver_index()
                 if hasattr(self.ui, 'lineEdit_idx_naver'):
