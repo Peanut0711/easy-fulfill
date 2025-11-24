@@ -4,6 +4,7 @@
 import sys
 import os
 import re
+import math
 from datetime import datetime, date
 from pathlib import Path
 import pandas as pd
@@ -1182,15 +1183,23 @@ class MainWindow(QMainWindow):
                     self.ui.lineEdit_idx_naver.setText(str(self.current_idx_naver))
             
             for pattern, info in self.orders.items():
-                # 주문 총액 가져오기 (정수로 변환하여 표시)
-                total_amount = int(info.get('주문총액', 0))
+                # 주문 총액 가져오기
+                total_amount = info.get('주문총액', 0)
+                
+                # 만원 단위로 포맷팅 (100원 단위 아래는 내림, 소수점 첫째 자리에서도 내림)
+                # 예: 61000 -> 6.1만, 63820 -> 6.3만
+                amount_in_100 = total_amount // 100  # 100원 단위로 내림
+                amount_in_manwon = amount_in_100 / 100  # 만원 단위로 변환
+                # 소수점 첫째 자리까지 표시 (둘째 자리에서 내림)
+                amount_rounded = math.floor(amount_in_manwon * 10) / 10
+                formatted_amount = f"{amount_rounded}만"
                 
                 # 배송 방법이 '택배,등기,소포'인 경우에만 기존 형식으로 표시
                 if info['배송방법'] == '택배,등기,소포':
-                    markdown_text += f"[ ] {self.current_idx_naver}.{info['수취인명']} - {total_amount}\n"
+                    markdown_text += f"[ ] {self.current_idx_naver}.{info['수취인명']} - {formatted_amount}\n"
                 else:
                     # 그 외의 경우 배송 방법을 함께 표시
-                    markdown_text += f"[ ] {self.current_idx_naver}.{info['수취인명']} - {total_amount} **({info['배송방법']})**\n"
+                    markdown_text += f"[ ] {self.current_idx_naver}.{info['수취인명']} - {formatted_amount} **({info['배송방법']})**\n"
                 
                 self.update_naver_index()
                 if hasattr(self.ui, 'lineEdit_idx_naver'):
