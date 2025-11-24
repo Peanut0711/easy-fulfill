@@ -1316,7 +1316,8 @@ class MainWindow(QMainWindow):
                 '구매수(수량)': None,
                 '배송메세지': None,
                 '우편번호': None,
-                '옵션ID': None  # 공백 제거
+                '옵션ID': None,  # 공백 제거
+                '결제액': None  # S열 결제액 추가
             }
             
             for col in df.columns:
@@ -1326,8 +1327,17 @@ class MainWindow(QMainWindow):
                         required_columns[key] = col
                         print(f"✓ '{key}' 열을 찾았습니다: {col}")
             
-            # 필수 열이 모두 있는지 확인
-            missing_columns = [key for key, value in required_columns.items() if value is None]
+            # S열(결제액)을 찾지 못한 경우 인덱스로 직접 접근 시도
+            if required_columns['결제액'] is None:
+                # S열은 19번째 열 (0-based로는 18, pandas는 0-based)
+                if len(df.columns) > 18:
+                    required_columns['결제액'] = df.columns[18]
+                    print(f"✓ '결제액' 열을 인덱스로 찾았습니다: {df.columns[18]}")
+                else:
+                    print("⚠️ S열(결제액)을 찾을 수 없습니다. 금액 정보가 없을 수 있습니다.")
+            
+            # 필수 열이 모두 있는지 확인 (결제액 열은 선택사항으로 처리)
+            missing_columns = [key for key, value in required_columns.items() if value is None and key != '결제액']
             if missing_columns:
                 print(f"❌ 다음 열을 찾을 수 없습니다: {', '.join(missing_columns)}")
                 QMessageBox.warning(self, "오류", f"다음 열을 찾을 수 없습니다:\n{', '.join(missing_columns)}")
@@ -1344,13 +1354,30 @@ class MainWindow(QMainWindow):
                 
                 if order_number not in self.orders:
                     phone_value = row[required_columns['수취인전화번호']]
+                    
+                    # 결제액 가져오기 (S열)
+                    payment_amount = 0
+                    if required_columns['결제액'] is not None:
+                        try:
+                            payment_value = row[required_columns['결제액']]
+                            if not pd.isna(payment_value):
+                                # 숫자로 변환 시도
+                                if isinstance(payment_value, str):
+                                    # 쉼표 제거 후 숫자 변환
+                                    payment_value = payment_value.replace(',', '').strip()
+                                payment_amount = float(payment_value)
+                        except (ValueError, TypeError) as e:
+                            print(f"⚠️ 결제액 변환 실패: {payment_value}, 오류: {e}")
+                            payment_amount = 0
+                    
                     self.orders[order_number] = {
                         '수취인이름': str(row[required_columns['수취인이름']]),
                         '수취인주소': str(row[required_columns['수취인 주소']]),
                         '수취인전화번호': str(row[required_columns['수취인전화번호']]) if not pd.isna(row[required_columns['수취인전화번호']]) else '',
                         '배송메세지': str(row[required_columns['배송메세지']]) if not pd.isna(row[required_columns['배송메세지']]) else '',
                         '우편번호': str(row[required_columns['우편번호']]) if not pd.isna(row[required_columns['우편번호']]) else '',
-                        '상품목록': []
+                        '상품목록': [],
+                        '결제액': payment_amount  # 주문별 결제액 저장
                     }
                 
                 # 상품 정보 추가
@@ -1380,6 +1407,25 @@ class MainWindow(QMainWindow):
                     '상품코드': product_code
                 })
             
+            # 같은 주문자(수취인이름)로 주문 통합
+            consolidated_orders = {}
+            for order_number, info in self.orders.items():
+                # 수취인이름을 키로 사용하여 주문 통합
+                customer_name = info['수취인이름']
+                
+                if customer_name not in consolidated_orders:
+                    consolidated_orders[customer_name] = {
+                        '수취인이름': customer_name,
+                        '주문번호목록': [order_number],
+                        '상품목록': info['상품목록'].copy(),
+                        '총결제액': info.get('결제액', 0)
+                    }
+                else:
+                    # 기존 주문에 추가
+                    consolidated_orders[customer_name]['주문번호목록'].append(order_number)
+                    consolidated_orders[customer_name]['상품목록'].extend(info['상품목록'])
+                    consolidated_orders[customer_name]['총결제액'] += info.get('결제액', 0)
+            
             # 마크다운 형식으로 주문 정보 생성
             markdown_text = ""
             
@@ -1392,10 +1438,19 @@ class MainWindow(QMainWindow):
                     self.current_idx_coupang = 1
                     self.ui.lineEdit_idx_coupang.setText(str(self.current_idx_coupang))
             
-            for order_number, info in self.orders.items():
-                # print(f"[주문 처리 시작] 주문번호: {order_number}")                
-                # key = (info['수취인이름'], info['수취인전화번호'], order_number)
-                markdown_text += f"[ ] {self.current_idx_coupang}.{info['수취인이름']}\n"
+            for customer_name, info in consolidated_orders.items():
+                # 총결제액 가져오기
+                total_amount = info.get('총결제액', 0)
+                
+                # 만원 단위로 포맷팅 (100원 단위 아래는 내림, 소수점 첫째 자리에서도 내림)
+                # 예: 61000 -> 6.1만, 63820 -> 6.3만
+                amount_in_100 = total_amount // 100  # 100원 단위로 내림
+                amount_in_manwon = amount_in_100 / 100  # 만원 단위로 변환
+                # 소수점 첫째 자리까지 표시 (둘째 자리에서 내림)
+                amount_rounded = math.floor(amount_in_manwon * 10) / 10
+                formatted_amount = f"{amount_rounded}만"
+                
+                markdown_text += f"[ ] {self.current_idx_coupang}.{customer_name} - {formatted_amount}\n"
                 self.update_coupang_index()
                 if hasattr(self.ui, 'lineEdit_idx_coupang'):
                     self.ui.lineEdit_idx_coupang.setText(str(self.current_idx_coupang))
