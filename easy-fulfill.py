@@ -1355,21 +1355,6 @@ class MainWindow(QMainWindow):
                 if order_number not in self.orders:
                     phone_value = row[required_columns['수취인전화번호']]
                     
-                    # 결제액 가져오기 (S열)
-                    payment_amount = 0
-                    if required_columns['결제액'] is not None:
-                        try:
-                            payment_value = row[required_columns['결제액']]
-                            if not pd.isna(payment_value):
-                                # 숫자로 변환 시도
-                                if isinstance(payment_value, str):
-                                    # 쉼표 제거 후 숫자 변환
-                                    payment_value = payment_value.replace(',', '').strip()
-                                payment_amount = float(payment_value)
-                        except (ValueError, TypeError) as e:
-                            print(f"⚠️ 결제액 변환 실패: {payment_value}, 오류: {e}")
-                            payment_amount = 0
-                    
                     self.orders[order_number] = {
                         '수취인이름': str(row[required_columns['수취인이름']]),
                         '수취인주소': str(row[required_columns['수취인 주소']]),
@@ -1377,8 +1362,23 @@ class MainWindow(QMainWindow):
                         '배송메세지': str(row[required_columns['배송메세지']]) if not pd.isna(row[required_columns['배송메세지']]) else '',
                         '우편번호': str(row[required_columns['우편번호']]) if not pd.isna(row[required_columns['우편번호']]) else '',
                         '상품목록': [],
-                        '결제액': payment_amount  # 주문별 결제액 저장
+                        '결제액': 0  # 주문별 결제액 초기화 (각 행마다 합산)
                     }
+                
+                # 각 행마다 결제액 읽어서 합산 (같은 주문번호에 여러 행이 있을 수 있음)
+                if required_columns['결제액'] is not None:
+                    try:
+                        payment_value = row[required_columns['결제액']]
+                        if not pd.isna(payment_value):
+                            # 숫자로 변환 시도
+                            if isinstance(payment_value, str):
+                                # 쉼표 제거 후 숫자 변환
+                                payment_value = payment_value.replace(',', '').strip()
+                            row_payment_amount = float(payment_value)
+                            # 주문 총액에 추가
+                            self.orders[order_number]['결제액'] += row_payment_amount
+                    except (ValueError, TypeError) as e:
+                        print(f"⚠️ 결제액 변환 실패: {payment_value}, 오류: {e}")
                 
                 # 상품 정보 추가
                 product_name = str(row[required_columns['노출상품명(옵션명)']])
