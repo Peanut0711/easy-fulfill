@@ -1552,7 +1552,8 @@ class MainWindow(QMainWindow):
                 '배송시 요구사항': None,
                 '우편번호': None,
                 '판매금액': None,  # Y열 판매금액 추가
-                '추가구성': None  # S열 추가구성 추가
+                '추가구성': None,  # S열 추가구성 추가
+                '배송비 금액': None  # AI열 배송비 금액 추가
             }
             
             for col in df.columns:
@@ -1580,8 +1581,17 @@ class MainWindow(QMainWindow):
                 else:
                     print("⚠️ S열(추가구성)을 찾을 수 없습니다. 추가구성 정보가 없을 수 있습니다.")
             
-            # 필수 열이 모두 있는지 확인 (판매금액, 추가구성 열은 선택사항으로 처리)
-            missing_columns = [key for key, value in required_columns.items() if value is None and key not in ['판매금액', '추가구성']]
+            # AI열(배송비 금액)을 찾지 못한 경우 인덱스로 직접 접근 시도
+            if required_columns['배송비 금액'] is None:
+                # AI열은 35번째 열 (0-based로는 34, pandas는 0-based)
+                if len(df.columns) > 34:
+                    required_columns['배송비 금액'] = df.columns[34]
+                    print(f"✓ '배송비 금액' 열을 인덱스로 찾았습니다: {df.columns[34]}")
+                else:
+                    print("⚠️ AI열(배송비 금액)을 찾을 수 없습니다. 배송비 정보가 없을 수 있습니다.")
+            
+            # 필수 열이 모두 있는지 확인 (판매금액, 추가구성, 배송비 금액 열은 선택사항으로 처리)
+            missing_columns = [key for key, value in required_columns.items() if value is None and key not in ['판매금액', '추가구성', '배송비 금액']]
             if missing_columns:
                 print(f"❌ 다음 열을 찾을 수 없습니다: {', '.join(missing_columns)}")
                 QMessageBox.warning(self, "오류", f"다음 열을 찾을 수 없습니다:\n{', '.join(missing_columns)}")
@@ -1614,6 +1624,21 @@ class MainWindow(QMainWindow):
                             print(f"⚠️ 판매금액 변환 실패: {sale_value}, 오류: {e}")
                             sale_amount = 0
                     
+                    # 배송비 금액 가져오기 (AI열)
+                    shipping_amount = 0
+                    if required_columns['배송비 금액'] is not None:
+                        try:
+                            shipping_value = row[required_columns['배송비 금액']]
+                            if not pd.isna(shipping_value):
+                                # 숫자로 변환 시도
+                                if isinstance(shipping_value, str):
+                                    # 쉼표 제거 후 숫자 변환
+                                    shipping_value = shipping_value.replace(',', '').strip()
+                                shipping_amount = float(shipping_value)
+                        except (ValueError, TypeError) as e:
+                            print(f"⚠️ 배송비 금액 변환 실패: {shipping_value}, 오류: {e}")
+                            shipping_amount = 0
+                    
                     self.orders[order_number] = {
                         '수령인명': str(row[required_columns['수령인명']]),
                         '주소': str(row[required_columns['주소']]),
@@ -1622,7 +1647,8 @@ class MainWindow(QMainWindow):
                         '배송시 요구사항': str(row[required_columns['배송시 요구사항']]) if not pd.isna(row[required_columns['배송시 요구사항']]) else '',
                         '우편번호': str(row[required_columns['우편번호']]) if not pd.isna(row[required_columns['우편번호']]) else '',
                         '상품목록': [],
-                        '판매금액': sale_amount  # 주문별 판매금액 저장
+                        '판매금액': sale_amount,  # 주문별 판매금액 저장
+                        '배송비 금액': shipping_amount  # 주문별 배송비 금액 저장
                     }
                 
                 # 상품 정보 추가
@@ -1668,13 +1694,15 @@ class MainWindow(QMainWindow):
                         '수령인명': customer_name,
                         '주문번호목록': [order_number],
                         '상품목록': info['상품목록'].copy(),
-                        '총판매금액': info.get('판매금액', 0)
+                        '총판매금액': info.get('판매금액', 0),
+                        '총배송비금액': info.get('배송비 금액', 0)
                     }
                 else:
                     # 기존 주문에 추가
                     consolidated_orders[customer_name]['주문번호목록'].append(order_number)
                     consolidated_orders[customer_name]['상품목록'].extend(info['상품목록'])
                     consolidated_orders[customer_name]['총판매금액'] += info.get('판매금액', 0)
+                    consolidated_orders[customer_name]['총배송비금액'] += info.get('배송비 금액', 0)
             
             # 마크다운 형식으로 주문 정보 생성
             markdown_text = ""
@@ -1689,8 +1717,10 @@ class MainWindow(QMainWindow):
                     self.ui.lineEdit_idx_gmarket.setText(str(self.current_idx_gmarket))
             
             for customer_name, info in consolidated_orders.items():
-                # 총판매금액 가져오기
-                total_amount = info.get('총판매금액', 0)
+                # 총판매금액과 총배송비금액 합산
+                total_sale_amount = info.get('총판매금액', 0)
+                total_shipping_amount = info.get('총배송비금액', 0)
+                total_amount = total_sale_amount + total_shipping_amount
                 
                 # 만원 단위로 포맷팅 (100원 단위 아래는 내림, 소수점 첫째 자리에서도 내림)
                 # 예: 61000 -> 6.1만, 63820 -> 6.3만
