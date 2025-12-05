@@ -1551,7 +1551,8 @@ class MainWindow(QMainWindow):
                 '수량': None,
                 '배송시 요구사항': None,
                 '우편번호': None,
-                '판매금액': None  # Y열 판매금액 추가
+                '판매금액': None,  # Y열 판매금액 추가
+                '추가구성': None  # S열 추가구성 추가
             }
             
             for col in df.columns:
@@ -1570,8 +1571,17 @@ class MainWindow(QMainWindow):
                 else:
                     print("⚠️ Y열(판매금액)을 찾을 수 없습니다. 금액 정보가 없을 수 있습니다.")
             
-            # 필수 열이 모두 있는지 확인 (판매금액 열은 선택사항으로 처리)
-            missing_columns = [key for key, value in required_columns.items() if value is None and key != '판매금액']
+            # S열(추가구성)을 찾지 못한 경우 인덱스로 직접 접근 시도
+            if required_columns['추가구성'] is None:
+                # S열은 19번째 열 (0-based로는 18, pandas는 0-based)
+                if len(df.columns) > 18:
+                    required_columns['추가구성'] = df.columns[18]
+                    print(f"✓ '추가구성' 열을 인덱스로 찾았습니다: {df.columns[18]}")
+                else:
+                    print("⚠️ S열(추가구성)을 찾을 수 없습니다. 추가구성 정보가 없을 수 있습니다.")
+            
+            # 필수 열이 모두 있는지 확인 (판매금액, 추가구성 열은 선택사항으로 처리)
+            missing_columns = [key for key, value in required_columns.items() if value is None and key not in ['판매금액', '추가구성']]
             if missing_columns:
                 print(f"❌ 다음 열을 찾을 수 없습니다: {', '.join(missing_columns)}")
                 QMessageBox.warning(self, "오류", f"다음 열을 찾을 수 없습니다:\n{', '.join(missing_columns)}")
@@ -1626,6 +1636,15 @@ class MainWindow(QMainWindow):
                         option = '없음'
                 quantity = int(row[required_columns['수량']]) if not pd.isna(row[required_columns['수량']]) else 1
                 
+                # 추가구성 정보 가져오기 (S열)
+                additional_config = ''
+                if required_columns['추가구성'] is not None:
+                    raw_additional = row[required_columns['추가구성']]
+                    if pd.notna(raw_additional):
+                        additional_config = str(raw_additional).strip()
+                        if additional_config.lower() in ('nan', ''):
+                            additional_config = ''
+                
                 # 옵션ID로 상품코드 찾기
                 # option_id = str(row[required_columns['옵션ID']]).strip()
                 # product_code = product_code_map.get(option_id, '')  # 매칭되는 상품코드가 없으면 빈 문자열
@@ -1634,6 +1653,7 @@ class MainWindow(QMainWindow):
                     '상품명': product_name,
                     '옵션': option,
                     '수량': quantity,
+                    '추가구성': additional_config,
                     # '상품코드': product_code
                 })
             
@@ -1690,13 +1710,16 @@ class MainWindow(QMainWindow):
                     product_name = product['상품명']
                     quantity = product['수량']
                     option = product['옵션']
+                    additional_config = product.get('추가구성', '')
                     # product_code = product['상품코드'] 
                     product_code = 'PASS'
                    
-                                    
-                    
                     # markdown_text += f"▶ [{product_code}]**[ {quantity} 개 ]** - {product_name} ( 옵션 : {option} )\n"
                     markdown_text += f"▶ [{product_code}]**[ {quantity} 개 ]** - {product_name} ( 옵션 : {option} )\n"
+                    
+                    # 추가구성이 있으면 표시
+                    if additional_config and additional_config.strip():
+                        markdown_text += f"  (추가구성 : {additional_config})\n"
                 
                 markdown_text += "\n"
             
