@@ -1111,6 +1111,9 @@ class MainWindow(QMainWindow):
                     '주문총액': 0  # 주문 총액 초기화
                 }
                 
+                # 배송방법 확인을 위한 플래그 (하나라도 '택배,등기,소포'가 있으면 True)
+                has_delivery_method = False
+                
                 # 패턴에 해당하는 모든 주문의 상품 정보 추가
                 for _, row in df.iterrows():
                     order_number = str(row[required_columns['주문번호']])
@@ -1119,6 +1122,11 @@ class MainWindow(QMainWindow):
                         product_name = str(row[required_columns['상품명']])
                         quantity = int(row[required_columns['수량']]) if not pd.isna(row[required_columns['수량']]) else 1
                         option = str(row[required_columns['옵션정보']]) if not pd.isna(row[required_columns['옵션정보']]) else "없음"
+                        
+                        # 배송방법 확인 (배송비 중복 결제 방지: 하나라도 '택배,등기,소포'가 있으면 전체를 '택배,등기,소포'로 처리)
+                        delivery_method = str(row[required_columns['배송방법(구매자 요청)']]) if not pd.isna(row[required_columns['배송방법(구매자 요청)']]) else ''
+                        if delivery_method == '택배,등기,소포':
+                            has_delivery_method = True
                         
                         # 상품번호 가져오기
                         product_number = str(row[required_columns['상품번호']]).strip()
@@ -1165,6 +1173,11 @@ class MainWindow(QMainWindow):
                             print(f"! 주문번호 패턴 {pattern}의 수취인 정보가 다릅니다:")
                             print(f"  - 기존: {self.orders[pattern]['수취인명']} / {self.orders[pattern]['수취인연락처1']} / {self.orders[pattern]['통합배송지']}")
                             print(f"  - 새로운: {row[required_columns['수취인명']]} / {row[required_columns['수취인연락처1']]} / {row[required_columns['통합배송지']]}")
+                
+                # 배송방법 최종 결정: 하나라도 '택배,등기,소포'가 있으면 전체를 '택배,등기,소포'로 설정
+                if has_delivery_method:
+                    self.orders[pattern]['배송방법'] = '택배,등기,소포'
+                    print(f"✓ 주문번호 패턴 {pattern}: 배송비 중복 결제 방지를 위해 '택배,등기,소포'로 설정됨")
             
             # 주문 정보 출력
             print("\n[주문 정보 출력]")
