@@ -724,10 +724,47 @@ class MainWindow(QMainWindow):
                 self.statusBar().showMessage(f"퀵 엑셀 생성 완료: {output_file.name}", 3000)
                 return
 
+            if store_type == "gmarket":
+                quick_info = self.parse_gmarket_quick_clipboard(clipboard_text)
+                missing_fields = []
+                if not quick_info.get("상품수령인"):
+                    missing_fields.append("상품수령인")
+                if not quick_info.get("연락처1"):
+                    missing_fields.append("연락처1")
+                if not quick_info.get("배송지주소"):
+                    missing_fields.append("배송지주소")
+
+                if missing_fields:
+                    QMessageBox.warning(
+                        self,
+                        "오류",
+                        "지마켓 양식에서 필수 항목을 찾을 수 없습니다.\n\n"
+                        f"누락 항목: {', '.join(missing_fields)}"
+                    )
+                    return
+
+                invoice_data = [{
+                    '주문번호': '',
+                    '고객주문처명': '',
+                    '수취인명': quick_info.get("상품수령인", ""),
+                    '우편번호': quick_info.get("우편번호", ""),
+                    '수취인 주소': quick_info.get("배송지주소", ""),
+                    '수취인 전화번호': quick_info.get("연락처1", ""),
+                    '수취인 이동통신': quick_info.get("연락처2", ""),
+                    '상품명': '',
+                    '상품모델': '',
+                    '배송메세지': quick_info.get("배송 요청사항", ""),
+                    '비고': ''
+                }]
+
+                output_file = self.save_invoice_excel(invoice_data, "퀵_지마켓")
+                self.statusBar().showMessage(f"퀵 엑셀 생성 완료: {output_file.name}", 3000)
+                return
+
             QMessageBox.information(
                 self,
                 "안내",
-                "현재 퀵 엑셀은 쿠팡, 네이버만 지원합니다.\n"
+                "현재 퀵 엑셀은 쿠팡, 네이버, 지마켓만 지원합니다.\n"
                 "지원되는 양식으로 복사했는지 확인해주세요."
             )
             return
@@ -759,12 +796,38 @@ class MainWindow(QMainWindow):
     def detect_store_from_clipboard(self, clipboard_text):
         """클립보드 텍스트로 스토어를 자동 판별합니다."""
         text = clipboard_text.replace("\r", "")
-        if "연락처(안심번호)" in text or "배송주소" in text:
+        tokens = []
+        for line in text.split("\n"):
+            if not line.strip():
+                continue
+            for token in line.split("\t"):
+                cleaned = token.strip()
+                if cleaned:
+                    tokens.append(cleaned)
+
+        def get_value_after(key):
+            try:
+                idx = tokens.index(key)
+            except ValueError:
+                return ""
+            if idx + 1 >= len(tokens):
+                return ""
+            return tokens[idx + 1].strip()
+
+        if "연락처(안심번호)" in tokens or "배송주소" in tokens:
             return "coupang"
-        if "연락처1" in text or "배송지" in text:
-            return "naver"
-        if "상품수령인" in text or "배송지주소" in text or "배송 요청사항" in text:
+
+        gmarket_address = ""
+        if "배송지주소" in tokens:
+            gmarket_address = get_value_after("배송지주소")
+        if "상품수령인" in tokens or "배송 요청사항" in tokens:
             return "gmarket"
+        if gmarket_address and re.match(r"^\d{5}\b", gmarket_address):
+            return "gmarket"
+
+        if "연락처1" in tokens or "배송지" in tokens:
+            return "naver"
+
         return None
 
     def parse_coupang_quick_clipboard(self, clipboard_text):
@@ -830,6 +893,48 @@ class MainWindow(QMainWindow):
                 key_map[current_key] = f"{key_map[current_key]} {token}".strip()
             else:
                 key_map[current_key] = token
+
+        return key_map
+
+    def parse_gmarket_quick_clipboard(self, clipboard_text):
+        """지마켓 클립보드 텍스트에서 필수 정보를 추출합니다."""
+        key_map = {
+            "상품수령인": "",
+            "연락처1": "",
+            "연락처2": "",
+            "배송지주소": "",
+            "배송 요청사항": "",
+            "우편번호": ""
+        }
+
+        tokens = []
+        for line in clipboard_text.replace("\r", "").split("\n"):
+            if not line.strip():
+                continue
+            for token in line.split("\t"):
+                cleaned = token.strip()
+                if cleaned:
+                    tokens.append(cleaned)
+
+        key_set = set(key_map.keys())
+        current_key = None
+        for token in tokens:
+            if token in key_set:
+                current_key = token
+                continue
+            if not current_key:
+                continue
+            if key_map[current_key]:
+                key_map[current_key] = f"{key_map[current_key]} {token}".strip()
+            else:
+                key_map[current_key] = token
+
+        address = key_map.get("배송지주소", "")
+        zip_code = self.extract_zip_code(address)
+        key_map["우편번호"] = zip_code
+        if zip_code:
+            cleaned_address = re.sub(rf"^\s*{re.escape(zip_code)}\s*", "", address).strip()
+            key_map["배송지주소"] = cleaned_address
 
         return key_map
 
