@@ -623,6 +623,8 @@ class MainWindow(QMainWindow):
         # 환경설정 탭 버튼 연결
         self.ui.pushButton_database_load.clicked.connect(self.load_database_file)
         self.ui.pushButton_database_apply.clicked.connect(self.apply_database_changes)
+        if hasattr(self.ui, 'pushButton_quick_excel_gen'):
+            self.ui.pushButton_quick_excel_gen.clicked.connect(self.generate_quick_excel)
         
         # 인덱스 입력 필드 연결
         if hasattr(self.ui, 'lineEdit_idx_naver'):
@@ -637,6 +639,221 @@ class MainWindow(QMainWindow):
         self.ui.actionExit.triggered.connect(self.close)
         self.ui.actionAbout.triggered.connect(self.show_about)
         print("버튼과 메뉴 연결 완료")
+
+    def generate_quick_excel(self):
+        """클립보드 정보를 기반으로 단건 엑셀을 생성합니다."""
+        try:
+            clipboard = QApplication.clipboard()
+            clipboard_text = clipboard.text()
+            if not clipboard_text or not clipboard_text.strip():
+                QMessageBox.warning(self, "경고", "클립보드에 복사된 내용이 없습니다.")
+                return
+
+            store_type = self.get_quick_excel_store_type(clipboard_text)
+            if store_type != "coupang":
+                QMessageBox.information(
+                    self,
+                    "안내",
+                    "현재 퀵 엑셀은 쿠팡만 지원합니다.\n"
+                    "쿠팡 양식으로 복사했는지 확인해주세요."
+                )
+                return
+
+            quick_info = self.parse_coupang_quick_clipboard(clipboard_text)
+            missing_fields = []
+            if not quick_info.get("수취인명"):
+                missing_fields.append("수취인명")
+            if not quick_info.get("연락처(안심번호)"):
+                missing_fields.append("연락처(안심번호)")
+            if not quick_info.get("배송주소"):
+                missing_fields.append("배송주소")
+
+            if missing_fields:
+                QMessageBox.warning(
+                    self,
+                    "오류",
+                    "쿠팡 양식에서 필수 항목을 찾을 수 없습니다.\n\n"
+                    f"누락 항목: {', '.join(missing_fields)}"
+                )
+                return
+
+            invoice_data = [{
+                '주문번호': '',
+                '고객주문처명': '',
+                '수취인명': quick_info.get("수취인명", ""),
+                '우편번호': quick_info.get("우편번호", ""),
+                '수취인 주소': quick_info.get("배송주소", ""),
+                '수취인 전화번호': quick_info.get("연락처(안심번호)", ""),
+                '수취인 이동통신': quick_info.get("연락처(안심번호)", ""),
+                '상품명': '',
+                '상품모델': '',
+                '배송메세지': quick_info.get("배송메모", ""),
+                '비고': ''
+            }]
+
+            output_file = self.save_invoice_excel(invoice_data, "퀵_쿠팡")
+            self.statusBar().showMessage(f"퀵 엑셀 생성 완료: {output_file.name}", 3000)
+        except Exception as e:
+            error_msg = str(e)
+            print(f"❌ 퀵 엑셀 생성 중 오류 발생: {error_msg}")
+            QMessageBox.critical(
+                self,
+                "오류",
+                "퀵 엑셀 생성 중 오류가 발생했습니다.\n\n"
+                f"{error_msg}"
+            )
+
+    def get_quick_excel_store_type(self, clipboard_text):
+        """콤보박스 또는 자동 판별로 스토어 타입을 결정합니다."""
+        selected_text = ""
+        if hasattr(self.ui, 'comboBox_store_select'):
+            selected_text = self.ui.comboBox_store_select.currentText().strip()
+
+        if selected_text == "쿠팡":
+            return "coupang"
+        if selected_text == "네이버":
+            return "naver"
+        if selected_text == "지마켓":
+            return "gmarket"
+
+        return self.detect_store_from_clipboard(clipboard_text)
+
+    def detect_store_from_clipboard(self, clipboard_text):
+        """클립보드 텍스트로 스토어를 자동 판별합니다."""
+        text = clipboard_text.replace("\r", "")
+        if "연락처(안심번호)" in text or "배송주소" in text:
+            return "coupang"
+        if "연락처1" in text or "배송지" in text:
+            return "naver"
+        if "상품수령인" in text or "배송지주소" in text or "배송 요청사항" in text:
+            return "gmarket"
+        return None
+
+    def parse_coupang_quick_clipboard(self, clipboard_text):
+        """쿠팡 클립보드 텍스트에서 필수 정보를 추출합니다."""
+        key_map = {
+            "수취인명": "",
+            "연락처(안심번호)": "",
+            "배송주소": "",
+            "배송메모": "",
+            "우편번호": ""
+        }
+
+        tokens = []
+        for line in clipboard_text.replace("\r", "").split("\n"):
+            if not line.strip():
+                continue
+            for token in line.split("\t"):
+                cleaned = token.strip()
+                if cleaned:
+                    tokens.append(cleaned)
+
+        key_set = set(key_map.keys())
+        for idx, token in enumerate(tokens):
+            if token in key_set and idx + 1 < len(tokens):
+                key_map[token] = tokens[idx + 1].strip()
+
+        address = key_map.get("배송주소", "")
+        zip_code = key_map.get("우편번호", "")
+        if not zip_code:
+            zip_code = self.extract_zip_code(address)
+
+        key_map["우편번호"] = zip_code
+        return key_map
+
+    def extract_zip_code(self, address):
+        """주소 문자열에서 우편번호를 추출합니다."""
+        if not address:
+            return ""
+        match = re.search(r"\((\d{5})\)", address)
+        if match:
+            return match.group(1)
+        match = re.search(r"(\d{5})", address)
+        if match:
+            return match.group(1)
+        return ""
+
+    def save_invoice_excel(self, invoice_data, filename_prefix):
+        """송장 데이터로 엑셀 파일을 저장하고 경로를 반환합니다."""
+        output_dir = Path("output")
+        output_dir.mkdir(exist_ok=True)
+
+        current_time = datetime.now().strftime("%Y%m%d%H%M%S")
+        output_file = (output_dir / f"{filename_prefix}_{current_time}.xlsx").resolve()
+
+        df_invoice = pd.DataFrame(invoice_data)
+        if '배송메세지' in df_invoice.columns:
+            df_invoice['배송메세지'] = df_invoice['배송메세지'].fillna('')
+        if '상품명' in df_invoice.columns:
+            df_invoice['상품명'] = '전자제품'
+        if '상품모델' in df_invoice.columns:
+            df_invoice['상품모델'] = '전자제품'
+
+        columns = [
+            '주문번호',
+            '고객주문처명',
+            '수취인명',
+            '우편번호',
+            '수취인 주소',
+            '수취인 전화번호',
+            '수취인 이동통신',
+            '상품명',
+            '상품모델',
+            '배송메세지',
+            '비고'
+        ]
+        df_invoice = df_invoice[columns]
+
+        with pd.ExcelWriter(output_file, engine='xlsxwriter') as writer:
+            df_invoice.to_excel(writer, index=False, sheet_name='Sheet1')
+            worksheet = writer.sheets['Sheet1']
+            workbook = writer.book
+
+            center_format = workbook.add_format({
+                'align': 'center',
+                'valign': 'vcenter'
+            })
+            header_format = workbook.add_format({
+                'align': 'center',
+                'valign': 'vcenter',
+                'bold': True
+            })
+
+            for idx, col in enumerate(df_invoice.columns):
+                max_length = max(
+                    df_invoice[col].astype(str).apply(len).max(),
+                    len(str(col))
+                )
+                adjusted_width = max_length * 2 if any('\u3131' <= c <= '\u318E' or '\uAC00' <= c <= '\uD7A3' for c in str(col)) else max_length
+                worksheet.set_column(idx, idx, adjusted_width + 2, center_format)
+
+            for col_num, value in enumerate(df_invoice.columns.values):
+                worksheet.write(0, col_num, value, header_format)
+
+        print(f"✓ 퀵 엑셀 저장 완료: {output_file}")
+        self.show_excel_created_message(output_file, "송장 엑셀 파일이 생성되었습니다.")
+        return output_file
+
+    def show_excel_created_message(self, output_file, message_text):
+        """엑셀 생성 완료 메시지를 표시합니다."""
+        msg = QMessageBox()
+        msg.setIcon(QMessageBox.Information)
+        msg.setWindowTitle("완료")
+        msg.setText(message_text)
+
+        open_location_button = msg.addButton("폴더 열기", QMessageBox.ActionRole)
+        open_file_button = msg.addButton("엑셀 열기", QMessageBox.ActionRole)
+        close_button = msg.addButton("닫기", QMessageBox.RejectRole)
+
+        msg.setDefaultButton(close_button)
+        msg.exec()
+
+        if msg.clickedButton() == open_location_button:
+            if not self.open_file_location(output_file):
+                QMessageBox.warning(self, "오류", "파일 위치를 열 수 없습니다.")
+        elif msg.clickedButton() == open_file_button:
+            if not self.open_file_with_default_app(output_file):
+                QMessageBox.warning(self, "오류", "파일을 열 수 없습니다.\n엑셀이 설치되어 있는지 확인해주세요.")
 
     def on_naver_index_changed(self, text):
         """네이버 인덱스가 수동으로 변경되었을 때 호출됩니다."""
