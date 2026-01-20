@@ -650,49 +650,87 @@ class MainWindow(QMainWindow):
                 return
 
             store_type = self.get_quick_excel_store_type(clipboard_text)
-            if store_type != "coupang":
-                QMessageBox.information(
-                    self,
-                    "안내",
-                    "현재 퀵 엑셀은 쿠팡만 지원합니다.\n"
-                    "쿠팡 양식으로 복사했는지 확인해주세요."
-                )
+            if store_type == "coupang":
+                quick_info = self.parse_coupang_quick_clipboard(clipboard_text)
+                missing_fields = []
+                if not quick_info.get("수취인명"):
+                    missing_fields.append("수취인명")
+                if not quick_info.get("연락처(안심번호)"):
+                    missing_fields.append("연락처(안심번호)")
+                if not quick_info.get("배송주소"):
+                    missing_fields.append("배송주소")
+
+                if missing_fields:
+                    QMessageBox.warning(
+                        self,
+                        "오류",
+                        "쿠팡 양식에서 필수 항목을 찾을 수 없습니다.\n\n"
+                        f"누락 항목: {', '.join(missing_fields)}"
+                    )
+                    return
+
+                invoice_data = [{
+                    '주문번호': '',
+                    '고객주문처명': '',
+                    '수취인명': quick_info.get("수취인명", ""),
+                    '우편번호': quick_info.get("우편번호", ""),
+                    '수취인 주소': quick_info.get("배송주소", ""),
+                    '수취인 전화번호': quick_info.get("연락처(안심번호)", ""),
+                    '수취인 이동통신': quick_info.get("연락처(안심번호)", ""),
+                    '상품명': '',
+                    '상품모델': '',
+                    '배송메세지': quick_info.get("배송메모", ""),
+                    '비고': ''
+                }]
+
+                output_file = self.save_invoice_excel(invoice_data, "퀵_쿠팡")
+                self.statusBar().showMessage(f"퀵 엑셀 생성 완료: {output_file.name}", 3000)
                 return
 
-            quick_info = self.parse_coupang_quick_clipboard(clipboard_text)
-            missing_fields = []
-            if not quick_info.get("수취인명"):
-                missing_fields.append("수취인명")
-            if not quick_info.get("연락처(안심번호)"):
-                missing_fields.append("연락처(안심번호)")
-            if not quick_info.get("배송주소"):
-                missing_fields.append("배송주소")
+            if store_type == "naver":
+                quick_info = self.parse_naver_quick_clipboard(clipboard_text)
+                missing_fields = []
+                if not quick_info.get("수취인명"):
+                    missing_fields.append("수취인명")
+                if not quick_info.get("연락처1"):
+                    missing_fields.append("연락처1")
+                if not quick_info.get("배송지"):
+                    missing_fields.append("배송지")
 
-            if missing_fields:
-                QMessageBox.warning(
-                    self,
-                    "오류",
-                    "쿠팡 양식에서 필수 항목을 찾을 수 없습니다.\n\n"
-                    f"누락 항목: {', '.join(missing_fields)}"
-                )
+                if missing_fields:
+                    QMessageBox.warning(
+                        self,
+                        "오류",
+                        "네이버 양식에서 필수 항목을 찾을 수 없습니다.\n\n"
+                        f"누락 항목: {', '.join(missing_fields)}"
+                    )
+                    return
+
+                invoice_data = [{
+                    '주문번호': '',
+                    '고객주문처명': '',
+                    '수취인명': quick_info.get("수취인명", ""),
+                    '우편번호': '',
+                    '수취인 주소': quick_info.get("배송지", ""),
+                    '수취인 전화번호': quick_info.get("연락처1", ""),
+                    '수취인 이동통신': quick_info.get("연락처2", ""),
+                    '상품명': '',
+                    '상품모델': '',
+                    '배송메세지': quick_info.get("배송메모", ""),
+                    '비고': ''
+                }]
+
+                output_file = self.save_invoice_excel(invoice_data, "퀵_네이버")
+                self.statusBar().showMessage(f"퀵 엑셀 생성 완료: {output_file.name}", 3000)
                 return
 
-            invoice_data = [{
-                '주문번호': '',
-                '고객주문처명': '',
-                '수취인명': quick_info.get("수취인명", ""),
-                '우편번호': quick_info.get("우편번호", ""),
-                '수취인 주소': quick_info.get("배송주소", ""),
-                '수취인 전화번호': quick_info.get("연락처(안심번호)", ""),
-                '수취인 이동통신': quick_info.get("연락처(안심번호)", ""),
-                '상품명': '',
-                '상품모델': '',
-                '배송메세지': quick_info.get("배송메모", ""),
-                '비고': ''
-            }]
-
-            output_file = self.save_invoice_excel(invoice_data, "퀵_쿠팡")
-            self.statusBar().showMessage(f"퀵 엑셀 생성 완료: {output_file.name}", 3000)
+            QMessageBox.information(
+                self,
+                "안내",
+                "현재 퀵 엑셀은 쿠팡, 네이버만 지원합니다.\n"
+                "지원되는 양식으로 복사했는지 확인해주세요."
+            )
+            return
         except Exception as e:
             error_msg = str(e)
             print(f"❌ 퀵 엑셀 생성 중 오류 발생: {error_msg}")
@@ -759,6 +797,40 @@ class MainWindow(QMainWindow):
             zip_code = self.extract_zip_code(address)
 
         key_map["우편번호"] = zip_code
+        return key_map
+
+    def parse_naver_quick_clipboard(self, clipboard_text):
+        """네이버 클립보드 텍스트에서 필수 정보를 추출합니다."""
+        key_map = {
+            "수취인명": "",
+            "연락처1": "",
+            "연락처2": "",
+            "배송지": "",
+            "배송메모": ""
+        }
+
+        tokens = []
+        for line in clipboard_text.replace("\r", "").split("\n"):
+            if not line.strip():
+                continue
+            for token in line.split("\t"):
+                cleaned = token.strip()
+                if cleaned:
+                    tokens.append(cleaned)
+
+        key_set = set(key_map.keys())
+        current_key = None
+        for token in tokens:
+            if token in key_set:
+                current_key = token
+                continue
+            if not current_key:
+                continue
+            if key_map[current_key]:
+                key_map[current_key] = f"{key_map[current_key]} {token}".strip()
+            else:
+                key_map[current_key] = token
+
         return key_map
 
     def extract_zip_code(self, address):
