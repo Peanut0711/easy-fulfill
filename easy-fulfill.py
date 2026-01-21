@@ -511,11 +511,19 @@ class MainWindow(QMainWindow):
         # 구분자 추가
         toolbar.addSeparator()
         
-        # 노션 홈페이지 액션
-        notionAction = QAction(QIcon('image/notion-icon.png'), '노션 홈페이지로 이동', self)        
-        notionAction.setStatusTip('노션 홈페이지로 이동')
-        notionAction.triggered.connect(lambda: QDesktopServices.openUrl(QUrl("https://www.notion.so")))
-        toolbar.addAction(notionAction)
+        # # 노션 홈페이지 액션
+        # notionAction = QAction(QIcon('image/notion-icon.png'), '노션 홈페이지로 이동', self)        
+        # notionAction.setStatusTip('노션 홈페이지로 이동')
+        # notionAction.triggered.connect(lambda: QDesktopServices.openUrl(QUrl("https://www.notion.so")))
+        # toolbar.addAction(notionAction)
+        
+        # 데이터베이스 액션
+        databaseAction = QAction(QIcon('image/database-icon.png'), '데이터베이스 확인', self)
+        databaseAction.setShortcut('Ctrl+D')
+        databaseAction.setStatusTip('데이터베이스 확인 (Ctrl+D)')
+        databaseAction.triggered.connect(lambda: QDesktopServices.
+                                         openUrl(QUrl("https://docs.google.com/spreadsheets/d/1F0l6FMjXvKXAR9WyDvxEWcRvji-TaJbBim_G12TJ2Pw/edit?gid=195401368#gid=195401368")))
+        toolbar.addAction(databaseAction)  
         
         # 우체국 홈페이지 액션
         notionAction = QAction(QIcon('image/korea-post-icon.png'), '우체국 홈페이지로 이동', self)
