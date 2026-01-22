@@ -4100,7 +4100,7 @@ class MainWindow(QMainWindow):
 
             order_number_series = None
             if column_mapping['order']['주문번호']:
-                order_number_series = order_df[column_mapping['order']['주문번호']].apply(_normalize_digits)
+                order_number_series = order_df[column_mapping['order']['주문번호']].apply(_normalize_digits).str[:13]
             
             # 6. 매칭된 주문 정보 출력 및 운송장번호 업데이트
             print("\n[매칭된 주문 정보]")
@@ -4112,12 +4112,12 @@ class MainWindow(QMainWindow):
                 invoice_number = _normalize_value(invoice_row[column_mapping['invoice']['등기번호']])
                 invoice_order_number = ''
                 if column_mapping['invoice']['고객주문번호']:
-                    invoice_order_number = _normalize_digits(invoice_row[column_mapping['invoice']['고객주문번호']])
+                    invoice_order_number = _normalize_digits(invoice_row[column_mapping['invoice']['고객주문번호']])[:13]
 
                 matching_rows = order_df.iloc[0:0]
                 if order_number_series is not None and invoice_order_number:
                     matching_rows = order_df[
-                        order_number_series.str.startswith(invoice_order_number)
+                        order_number_series == invoice_order_number
                     ]
                 
                 if not matching_rows.empty:
@@ -4348,7 +4348,7 @@ class MainWindow(QMainWindow):
         msg.setText("일괄 발송 파일이 생성되었습니다.")
         
         open_location_button = msg.addButton("폴더 열기", QMessageBox.ActionRole)
-        open_file_button = msg.addButton("파일 열기", QMessageBox.ActionRole)
+        open_file_button = msg.addButton("엑셀 열기", QMessageBox.ActionRole)
         close_button = msg.addButton("닫기", QMessageBox.RejectRole)
         
         msg.setDefaultButton(close_button)
@@ -4628,7 +4628,7 @@ class MainWindow(QMainWindow):
             
             # 버튼 추가
             open_location_button = msg.addButton("폴더 열기", QMessageBox.ActionRole)
-            open_file_button = msg.addButton("파일 열기", QMessageBox.ActionRole)
+            open_file_button = msg.addButton("엑셀 열기", QMessageBox.ActionRole)
             close_button = msg.addButton("닫기", QMessageBox.RejectRole)
             
             msg.setDefaultButton(close_button)
