@@ -4063,13 +4063,15 @@ class MainWindow(QMainWindow):
                 'order': {
                     '수취인명': None,
                     '수취인연락처1': None,
-                    '통합배송지': None
+                    '통합배송지': None,
+                    '주문번호': None
                 },
                 'invoice': {
                     '등기번호': None,
                     '수취인명': None,
                     '수취인 이동통신': None,
-                    '수취인상세주소': None
+                    '수취인상세주소': None,
+                    '고객주문번호': None
                 }
             }
             
@@ -4085,26 +4087,46 @@ class MainWindow(QMainWindow):
                 for key in column_mapping['invoice'].keys():
                     if col_str == key:  # 정확히 일치하는 경우에만 매칭
                         column_mapping['invoice'][key] = col
+
+            def _normalize_value(value):
+                if pd.isna(value):
+                    return ''
+                return str(value).strip()
+
+            def _normalize_digits(value):
+                if pd.isna(value):
+                    return ''
+                return ''.join(ch for ch in str(value) if ch.isdigit())
+
+            order_number_series = None
+            if column_mapping['order']['주문번호']:
+                order_number_series = order_df[column_mapping['order']['주문번호']].apply(_normalize_digits)
             
             # 6. 매칭된 주문 정보 출력 및 운송장번호 업데이트
             print("\n[매칭된 주문 정보]")
             matched_count = 0
             
             for idx, invoice_row in invoice_df.iterrows():
-                invoice_name = str(invoice_row[column_mapping['invoice']['수취인명']])
-                invoice_phone = str(invoice_row[column_mapping['invoice']['수취인 이동통신']])
-                invoice_number = str(invoice_row[column_mapping['invoice']['등기번호']])
-                
-                matching_rows = order_df[
-                    (order_df[column_mapping['order']['수취인명']] == invoice_name) &
-                    (order_df[column_mapping['order']['수취인연락처1']] == invoice_phone)
-                ]
+                invoice_name = _normalize_value(invoice_row[column_mapping['invoice']['수취인명']])
+                invoice_phone = _normalize_value(invoice_row[column_mapping['invoice']['수취인 이동통신']])
+                invoice_number = _normalize_value(invoice_row[column_mapping['invoice']['등기번호']])
+                invoice_order_number = ''
+                if column_mapping['invoice']['고객주문번호']:
+                    invoice_order_number = _normalize_digits(invoice_row[column_mapping['invoice']['고객주문번호']])
+
+                matching_rows = order_df.iloc[0:0]
+                if order_number_series is not None and invoice_order_number:
+                    matching_rows = order_df[
+                        order_number_series.str.startswith(invoice_order_number)
+                    ]
                 
                 if not matching_rows.empty:
                     matched_count += 1
                     print(f"\n[매칭된 주문 {matched_count}]")
                     print(f"수취인명: {invoice_name}")
                     print(f"전화번호: {invoice_phone}")
+                    if invoice_order_number:
+                        print(f"고객주문번호: {invoice_order_number}")
                     print(f"송장번호: {invoice_number}")
                     print(f"주소: {matching_rows[column_mapping['order']['통합배송지']].iloc[0]}")
                     
