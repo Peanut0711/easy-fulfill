@@ -167,6 +167,61 @@ def read_realtime_db(file_path, header_row=0):
     return df.to_dict('records')
 
 
+def normalize_option_id(value):
+    """
+    옵션 ID를 비교용 문자열로 통일한다.
+    Excel(pandas)은 큰 정수를 float으로 읽어 85284690572.0 이 되고,
+    스프레드시트는 문자열 85284690572 이라 str()만 하면 불일치로 신제품 오판정된다.
+    """
+    if value is None:
+        return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except (TypeError, ValueError):
+        pass
+    if isinstance(value, str):
+        s = value.strip()
+        if not s or s.lower() == "nan":
+            return ""
+    try:
+        f = float(value)
+        if f.is_integer():
+            return str(int(f))
+    except (TypeError, ValueError):
+        pass
+    return str(value).strip()
+
+
+def format_option_id_for_log(value):
+    """로그 출력용: 정수형이면 .0 없이, 없으면 N/A."""
+    return normalize_option_id(value) or "N/A"
+
+
+def format_quantity_for_log(value):
+    """로그용: 가격·재고 등은 정수로 표시, 비어 있거나 숫자가 아니면 N/A 또는 원문."""
+    if value is None or value == "" or value == "N/A":
+        return "N/A"
+    try:
+        if pd.isna(value):
+            return "N/A"
+    except (TypeError, ValueError):
+        pass
+    if isinstance(value, str):
+        s = value.strip()
+        if not s or s.upper() == "N/A" or s.lower() == "nan":
+            return "N/A"
+        value = s
+    try:
+        f = float(value)
+        if f != f:  # NaN
+            return "N/A"
+        return str(int(round(f)))
+    except (TypeError, ValueError):
+        t = str(value).strip()
+        return t if t else "N/A"
+
+
 def find_new_products(realtime_data, spreadsheet_data, option_id_column):
     """
     옵션ID 기준으로 신제품 찾기
@@ -182,14 +237,14 @@ def find_new_products(realtime_data, spreadsheet_data, option_id_column):
     # 기존 옵션ID 집합 생성
     existing_option_ids = set()
     for row in spreadsheet_data:
-        option_id = row.get(option_id_column, '')
+        option_id = normalize_option_id(row.get(option_id_column, ''))
         if option_id:
-            existing_option_ids.add(str(option_id))
+            existing_option_ids.add(option_id)
     
     # 신제품 필터링
     new_products = []
     for row in realtime_data:
-        option_id = str(row.get(option_id_column, ''))
+        option_id = normalize_option_id(row.get(option_id_column, ''))
         if option_id and option_id not in existing_option_ids:
             new_products.append(row)
     
@@ -593,19 +648,19 @@ def sync_naver(realtime_file_path=None, test_mode=True, test_count=None):
     # 기존 제품 상세 로깅
     print("\n📋 기존 제품 샘플 (처음 10개):")
     for i, row in enumerate(spreadsheet_data[:10]):
-        option_id = row.get(NAVER_CONFIG['option_id_column'], 'N/A')
+        option_id = format_option_id_for_log(row.get(NAVER_CONFIG['option_id_column'], ''))
         product_name = row.get('상품명', 'N/A')
-        price = row.get('판매가', 'N/A')
-        stock = row.get('재고수량', 'N/A')
+        price = format_quantity_for_log(row.get('판매가', 'N/A'))
+        stock = format_quantity_for_log(row.get('재고수량', 'N/A'))
         print(f"  [{i+1}] 상품번호: {option_id}, 상품명: {product_name}, 가격: {price}, 재고: {stock}")
     
     # 실시간 제품 샘플 로깅
     print("\n📋 실시간 DB 샘플 (처음 10개):")
     for i, row in enumerate(realtime_data[:10]):
-        option_id = row.get(NAVER_CONFIG['option_id_column'], 'N/A')
+        option_id = format_option_id_for_log(row.get(NAVER_CONFIG['option_id_column'], ''))
         product_name = row.get('상품명', 'N/A')
-        price = row.get('판매가', 'N/A')
-        stock = row.get('재고수량', 'N/A')
+        price = format_quantity_for_log(row.get('판매가', 'N/A'))
+        stock = format_quantity_for_log(row.get('재고수량', 'N/A'))
         print(f"  [{i+1}] 상품번호: {option_id}, 상품명: {product_name}, 가격: {price}, 재고: {stock}")
     
     # 신제품 찾기
@@ -620,10 +675,10 @@ def sync_naver(realtime_file_path=None, test_mode=True, test_count=None):
     if new_products:
         print("\n🆕 신제품 목록 (전부 표시):")
         for i, product in enumerate(new_products):
-            option_id = product.get(NAVER_CONFIG['option_id_column'], 'N/A')
+            option_id = format_option_id_for_log(product.get(NAVER_CONFIG['option_id_column'], ''))
             product_name = product.get('상품명', 'N/A')
-            price = product.get('판매가', 'N/A')
-            stock = product.get('재고수량', 'N/A')
+            price = format_quantity_for_log(product.get('판매가', 'N/A'))
+            stock = format_quantity_for_log(product.get('재고수량', 'N/A'))
             print(f"  [{i+1}] 상품번호: {option_id}, 상품명: {product_name}, 가격: {price}, 재고: {stock}")
     
     # 5단계: 데이터 변환 및 추가
@@ -698,19 +753,19 @@ def sync_coupang(realtime_file_path=None, test_mode=True, test_count=None):
     # 기존 제품 상세 로깅
     print("\n📋 기존 제품 샘플 (처음 10개):")
     for i, row in enumerate(spreadsheet_data[:10]):
-        option_id = row.get(COUPANG_CONFIG['option_id_column'], 'N/A')
+        option_id = format_option_id_for_log(row.get(COUPANG_CONFIG['option_id_column'], ''))
         product_name = row.get('쿠팡 노출 상품명', 'N/A')
-        price = row.get('판매가격', 'N/A')
-        stock = row.get('잔여수량(재고)', 'N/A')
+        price = format_quantity_for_log(row.get('판매가격', 'N/A'))
+        stock = format_quantity_for_log(row.get('잔여수량(재고)', 'N/A'))
         print(f"  [{i+1}] 옵션ID: {option_id}, 상품명: {product_name}, 가격: {price}, 재고: {stock}")
     
     # 실시간 제품 샘플 로깅
     print("\n📋 실시간 DB 샘플 (처음 10개):")
     for i, row in enumerate(realtime_data[:10]):
-        option_id = row.get(COUPANG_CONFIG['option_id_column'], 'N/A')
+        option_id = format_option_id_for_log(row.get(COUPANG_CONFIG['option_id_column'], ''))
         product_name = row.get('쿠팡 노출 상품명', 'N/A')
-        price = row.get('판매가격', 'N/A')
-        stock = row.get('잔여수량(재고)', 'N/A')
+        price = format_quantity_for_log(row.get('판매가격', 'N/A'))
+        stock = format_quantity_for_log(row.get('잔여수량(재고)', 'N/A'))
         print(f"  [{i+1}] 옵션ID: {option_id}, 상품명: {product_name}, 가격: {price}, 재고: {stock}")
     
     # 신제품 찾기
@@ -725,10 +780,10 @@ def sync_coupang(realtime_file_path=None, test_mode=True, test_count=None):
     if new_products:
         print("\n🆕 신제품 목록 (전부 표시):")
         for i, product in enumerate(new_products):
-            option_id = product.get(COUPANG_CONFIG['option_id_column'], 'N/A')
+            option_id = format_option_id_for_log(product.get(COUPANG_CONFIG['option_id_column'], ''))
             product_name = product.get('쿠팡 노출 상품명', 'N/A')
-            price = product.get('판매가격', 'N/A')
-            stock = product.get('잔여수량(재고)', 'N/A')
+            price = format_quantity_for_log(product.get('판매가격', 'N/A'))
+            stock = format_quantity_for_log(product.get('잔여수량(재고)', 'N/A'))
             print(f"  [{i+1}] 옵션ID: {option_id}, 상품명: {product_name}, 가격: {price}, 재고: {stock}")
     
     # 5단계: 데이터 변환 및 추가
