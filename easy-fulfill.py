@@ -25,6 +25,16 @@ import warnings
 import logging
 import json
 
+try:
+    import gspread
+except ImportError:  # gspread는 스프레드시트 매핑에만 필요
+    gspread = None
+
+# 구글 스프레드시트(로컬 DB 대체) 설정
+SPREADSHEET_ID = "1F0l6FMjXvKXAR9WyDvxEWcRvji-TaJbBim_G12TJ2Pw"
+# database-sync.py와 동일한 서비스 계정 키 경로를 사용
+CREDENTIAL_PATH = "api-key/beaming-figure-476816-r5-7dd9d6f34342.json"
+
 
 class ImageDialog(QDialog):
     def __init__(self, image_url, product_name, parent=None, all_images=None, current_index=None, table_widget=None):
@@ -274,6 +284,9 @@ class MainWindow(QMainWindow):
         self.current_store_type = None  # 현재 선택된 스토어 타입
         self.new_db_data = None  # 신규 DB 데이터
         self.new_only_products = set()  # 신규 DB에만 존재하는 상품번호들
+
+        # 스프레드시트 매핑 캐시 (네이버/쿠팡)
+        self._spreadsheet_product_code_maps = {}
         
         # 인덱스 파일 경로 설정
         self.index_file_path = Path("database") / "order_index.json"
@@ -291,6 +304,74 @@ class MainWindow(QMainWindow):
         self.load_index_values()
         
         print("초기화 완료")
+
+    def _normalize_key_for_mapping(self, value):
+        """상품번호/옵션ID 비교용 문자열로 정규화합니다."""
+        if value is None:
+            return ""
+        try:
+            if pd.isna(value):
+                return ""
+        except Exception:
+            pass
+        s = str(value).strip()
+        if not s or s.lower() == "nan":
+            return ""
+        if s.endswith(".0"):
+            s = s[:-2]
+        return s
+
+    def _load_product_code_map_from_spreadsheet(self, store_type):
+        """
+        스프레드시트에서 상품코드 매핑을 로드합니다.
+
+        - 네이버(1번 시트): A열=상품코드, E열=상품번호(스마트스토어)
+        - 쿠팡(2번 시트): A열=상품코드, E열=옵션 ID
+        """
+        if store_type in self._spreadsheet_product_code_maps:
+            return self._spreadsheet_product_code_maps[store_type]
+
+        if gspread is None:
+            raise ImportError("gspread 패키지가 필요합니다. (pip install gspread)")
+
+        if not Path(CREDENTIAL_PATH).exists():
+            raise FileNotFoundError(f"구글 인증키 파일을 찾을 수 없습니다: {CREDENTIAL_PATH}")
+
+        if store_type == "naver":
+            sheet_index = 0
+            header_row_num = 1  # 1행 헤더
+        elif store_type == "coupang":
+            sheet_index = 1
+            header_row_num = 2  # 2행 헤더
+        else:
+            raise ValueError(f"지원되지 않는 store_type: {store_type}")
+
+        gc = gspread.service_account(filename=CREDENTIAL_PATH)
+        spreadsheet = gc.open_by_key(SPREADSHEET_ID)
+        worksheet = spreadsheet.get_worksheet(sheet_index)
+
+        values = worksheet.get_all_values()
+        data_start_idx = header_row_num  # 0-based index에서 header 다음 행
+
+        mapping = {}
+        for row in values[data_start_idx:]:
+            # A(0)=상품코드, E(4)=키(상품번호/옵션ID)
+            product_code = row[0].strip() if len(row) > 0 else ""
+            key_value = row[4] if len(row) > 4 else ""
+
+            key_norm = self._normalize_key_for_mapping(key_value)
+            if not key_norm:
+                continue
+
+            product_code_norm = str(product_code).strip()
+            if product_code_norm.lower() == "nan":
+                product_code_norm = ""
+
+            mapping[key_norm] = product_code_norm
+
+        self._spreadsheet_product_code_maps[store_type] = mapping
+        print(f"✓ 스프레드시트 매핑 로드 완료: {store_type} - {len(mapping)}개")
+        return mapping
 
     def load_index_values(self):
         """저장된 인덱스 값을 로드합니다."""
@@ -1239,54 +1320,10 @@ class MainWindow(QMainWindow):
         """네이버 스토어 엑셀 파일에서 주문번호를 처리합니다."""
         try:
             print(f"\n[네이버 스토어 엑셀 파일 처리 시작] 파일: {self.selected_file_path}")
-            
-            # store_database.xlsx 파일 읽기
-            store_db_path = Path("database") / "store_database.xlsx"
-            if not store_db_path.exists():
-                raise FileNotFoundError("store_database.xlsx 파일을 찾을 수 없습니다.")
-            
-            print("\n[store_database.xlsx 파일 읽기]")
-            print(f"파일 경로: {store_db_path}")
-            store_df = pd.read_excel(store_db_path, sheet_name=0)  # 첫 번째 시트
 
-            # 데이터프레임 정보 출력
-            print("\n[데이터프레임 정보]")
-            print(f"행 수: {len(store_df)}")
-            print(f"열 수: {len(store_df.columns)}")
-            print("열 이름:")
-            for col in store_df.columns:
-                print(f"- {col}")
-
-            # 상품번호와 상품코드 매핑 생성
-            product_mapping = {}
-            print("\n[상품번호-상품코드 매핑 생성]")
-            print("\n[데이터 샘플]")
-            print(store_df[['상품번호(스마트스토어)', '상품코드']].head())
-
-            for idx, row in store_df.iterrows():
-                # 상품번호에서 .0 제거
-                product_number = str(row['상품번호(스마트스토어)']).strip()
-                if product_number.endswith('.0'):
-                    product_number = product_number[:-2]
-                
-                # 상품코드 처리
-                product_code = str(row['상품코드']).strip()
-                if product_code == 'nan':
-                    product_code = '        '
-                
-                print(f"\n처리 중인 행 {idx}:")
-                print(f"원본 상품번호: {row['상품번호(스마트스토어)']}")
-                print(f"원본 상품코드: {row['상품코드']}")
-                print(f"변환된 상품번호: {product_number}")
-                print(f"변환된 상품코드: {product_code}")
-                
-                if product_number and product_number != 'nan':
-                    if product_number in product_mapping:
-                        print(f"경고: 중복된 상품번호 발견! {product_number}")
-                        print(f"기존 매핑: {product_mapping[product_number]}")
-                        print(f"새로운 매핑: {product_code}")
-                    product_mapping[product_number] = product_code
-                    print(f"매핑 추가: {product_number} -> {product_mapping[product_number]}")
+            # 스프레드시트에서 상품번호(E) → 상품코드(A) 매핑 로드
+            print("\n[스프레드시트 상품번호-상품코드 매핑 로드]")
+            product_mapping = self._load_product_code_map_from_spreadsheet("naver")
 
             
             # print(f"\n총 {len(product_mapping)}개의 상품 매핑이 생성되었습니다.")
@@ -1531,13 +1568,13 @@ class MainWindow(QMainWindow):
                             has_delivery_method = True
                         
                         # 상품번호 가져오기
-                        product_number = str(row[required_columns['상품번호']]).strip()
+                        product_number = self._normalize_key_for_mapping(row[required_columns['상품번호']])
                         print(f"\n[상품번호 매칭]")
                         print(f"상품명: {product_name}")
                         print(f"원본 상품번호: {row[required_columns['상품번호']]}")
                         print(f"변환된 상품번호: {product_number}")
                         # print(f"매핑 딕셔너리 키 목록: {list(product_mapping.keys())}")
-                        product_code = product_mapping.get(product_number, '        ')
+                        product_code = product_mapping.get(product_number, '') or '        '
                         print(f"매칭된 상품코드: {product_code}")
                         
                         # 금액 정보 가져오기 (AA열)
@@ -1680,44 +1717,14 @@ class MainWindow(QMainWindow):
             df = pd.read_excel(self.selected_file_path)
             print(f"\n[열 정보]")
             print(f"감지된 열 목록: {', '.join(str(col) for col in df.columns)}")
-            
-            # store_database.xlsx 파일 읽기
+
+            # 스프레드시트에서 옵션ID(E) → 상품코드(A) 매핑 로드
             try:
-                db_path = Path("database") / "store_database.xlsx"
-                if not db_path.exists():
-                    raise FileNotFoundError("store_database.xlsx 파일을 찾을 수 없습니다.")
-                
-                # 두 번째 시트 읽기 (시트 이름이 날짜로 변경될 수 있으므로 인덱스로 접근)
-                db_df = pd.read_excel(db_path, sheet_name=1, header=1)
-                print("\n[상품 데이터베이스 로드 완료]")
-                print("데이터베이스 열 목록:")
-                for col in db_df.columns:
-                    print(f"- {col}")
-                
-                # 상품코드와 옵션ID 매핑 생성
-                product_code_map = {}
-                for _, row in db_df.iterrows():
-                    option_id_raw = row['옵션 ID']
-                    product_code = str(row['상품코드']).strip()
-                    
-                    # NaN 값 처리
-                    if pd.isna(option_id_raw):
-                        continue
-                    
-                    # float로 읽힌 경우 정수로 변환 후 문자열로 변환
-                    if isinstance(option_id_raw, float):
-                        option_id = str(int(option_id_raw))
-                    else:
-                        option_id = str(option_id_raw).strip()
-                    
-                    if option_id and option_id != 'nan':
-                        product_code_map[option_id] = product_code
-                
-                print(f"✓ {len(product_code_map)}개의 상품 매핑 정보를 로드했습니다.")
-                
+                print("\n[스프레드시트 옵션ID-상품코드 매핑 로드]")
+                product_code_map = self._load_product_code_map_from_spreadsheet("coupang")
             except Exception as e:
-                print(f"! 상품 데이터베이스 로드 중 오류 발생: {str(e)}")
-                QMessageBox.warning(self, "경고", "상품 데이터베이스 로드 중 오류가 발생했습니다.")
+                print(f"! 스프레드시트 매핑 로드 중 오류 발생: {str(e)}")
+                QMessageBox.warning(self, "경고", f"스프레드시트 매핑 로드 중 오류가 발생했습니다.\n\n{str(e)}")
                 return
             
             # 필요한 열 찾기
@@ -1807,11 +1814,7 @@ class MainWindow(QMainWindow):
                 if pd.isna(option_id_raw):
                     option_id = ''
                 else:
-                    # float로 읽힌 경우 정수로 변환 후 문자열로 변환
-                    if isinstance(option_id_raw, float):
-                        option_id = str(int(option_id_raw))
-                    else:
-                        option_id = str(option_id_raw).strip()
+                    option_id = self._normalize_key_for_mapping(option_id_raw)
                 
                 product_code = product_code_map.get(option_id, '')  # 매칭되는 상품코드가 없으면 빈 문자열
                 
