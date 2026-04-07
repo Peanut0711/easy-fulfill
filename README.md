@@ -35,6 +35,11 @@ easy-fulfill/
 ├── easy-fulfill.py      # 메인 프로그램 파일
 ├── requirements.txt     # 필요한 패키지 목록
 ├── README.md           # 프로젝트 설명
+├── google-oauth/       # Google OAuth (로컬 전용, .gitignore)
+│   ├── credentials.json  # GCP에서 받은 클라이언트 JSON (수동 배치)
+│   └── token.json        # 로그인 후 자동 생성
 └── ui/                 # UI 파일 디렉토리
     └── main_window.ui  # Qt Designer UI 파일
-``` 
+```
+
+`google-oauth` 안의 파일은 Git에 올리지 마세요. 설정 방법은 [docs/google-sheets-oauth-implementation.md](docs/google-sheets-oauth-implementation.md)를 참고하세요. 

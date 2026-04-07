@@ -8,3 +8,8 @@ dist.7z
 temp/
 database/order_index.json
 api-key/
+
+# Google OAuth (로컬 전용; 저장소에 넣지 않음)
+google-oauth/
+credentials.json
+token.json

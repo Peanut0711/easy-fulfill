@@ -29,11 +29,23 @@ try:
     import gspread
 except ImportError:  # gspread는 스프레드시트 매핑에만 필요
     gspread = None
+try:
+    from google.oauth2.credentials import Credentials
+    from google_auth_oauthlib.flow import InstalledAppFlow
+    from google.auth.transport.requests import Request
+except ImportError:  # OAuth 로그인 기반 인증에 필요
+    Credentials = None
+    InstalledAppFlow = None
+    Request = None
 
 # 구글 스프레드시트(로컬 DB 대체) 설정
 SPREADSHEET_ID = "1F0l6FMjXvKXAR9WyDvxEWcRvji-TaJbBim_G12TJ2Pw"
-# database-sync.py와 동일한 서비스 계정 키 경로를 사용
-CREDENTIAL_PATH = "api-key/beaming-figure-476816-r5-7dd9d6f34342.json"
+# OAuth(사용자별 로그인) — 프로젝트 루트 하위 전용 폴더 (gitignore: google-oauth/)
+_APP_ROOT = Path(__file__).resolve().parent
+GOOGLE_AUTH_DIR = _APP_ROOT / "google-oauth"
+OAUTH_CREDENTIAL_PATH = GOOGLE_AUTH_DIR / "credentials.json"
+TOKEN_PATH = GOOGLE_AUTH_DIR / "token.json"
+SCOPES = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
 
 
 class ImageDialog(QDialog):
@@ -287,6 +299,7 @@ class MainWindow(QMainWindow):
 
         # 스프레드시트 매핑 캐시 (네이버/쿠팡)
         self._spreadsheet_product_code_maps = {}
+        self._gspread_client = None
         
         # 인덱스 파일 경로 설정
         self.index_file_path = Path("database") / "order_index.json"
@@ -334,9 +347,6 @@ class MainWindow(QMainWindow):
         if gspread is None:
             raise ImportError("gspread 패키지가 필요합니다. (pip install gspread)")
 
-        if not Path(CREDENTIAL_PATH).exists():
-            raise FileNotFoundError(f"구글 인증키 파일을 찾을 수 없습니다: {CREDENTIAL_PATH}")
-
         if store_type == "naver":
             sheet_index = 0
             header_row_num = 1  # 1행 헤더
@@ -346,7 +356,7 @@ class MainWindow(QMainWindow):
         else:
             raise ValueError(f"지원되지 않는 store_type: {store_type}")
 
-        gc = gspread.service_account(filename=CREDENTIAL_PATH)
+        gc = self._get_gspread_client()
         spreadsheet = gc.open_by_key(SPREADSHEET_ID)
         worksheet = spreadsheet.get_worksheet(sheet_index)
 
@@ -372,6 +382,42 @@ class MainWindow(QMainWindow):
         self._spreadsheet_product_code_maps[store_type] = mapping
         print(f"✓ 스프레드시트 매핑 로드 완료: {store_type} - {len(mapping)}개")
         return mapping
+
+    def _get_gspread_client(self):
+        """OAuth(사용자별 로그인)로 gspread 클라이언트를 생성/재사용합니다."""
+        if self._gspread_client is not None:
+            return self._gspread_client
+
+        if Credentials is None or InstalledAppFlow is None or Request is None:
+            raise ImportError(
+                "google-auth-oauthlib 패키지가 필요합니다. "
+                "(pip install google-auth-oauthlib)"
+            )
+
+        GOOGLE_AUTH_DIR.mkdir(parents=True, exist_ok=True)
+
+        creds = None
+        if TOKEN_PATH.exists():
+            creds = Credentials.from_authorized_user_file(str(TOKEN_PATH), SCOPES)
+
+        if not creds or not creds.valid:
+            if creds and creds.expired and creds.refresh_token:
+                creds.refresh(Request())
+            else:
+                if not OAUTH_CREDENTIAL_PATH.exists():
+                    raise FileNotFoundError(
+                        "OAuth 클라이언트 파일이 없습니다.\n"
+                        f"다음 경로에 credentials.json을 배치하세요:\n{OAUTH_CREDENTIAL_PATH}"
+                    )
+                flow = InstalledAppFlow.from_client_secrets_file(
+                    str(OAUTH_CREDENTIAL_PATH), SCOPES
+                )
+                creds = flow.run_local_server(port=0)
+
+            TOKEN_PATH.write_text(creds.to_json(), encoding="utf-8")
+
+        self._gspread_client = gspread.authorize(creds)
+        return self._gspread_client
 
     def load_index_values(self):
         """저장된 인덱스 값을 로드합니다."""
