@@ -1,6 +1,8 @@
 """
 구글 스프레드시트와 실시간 DB 동기화 스크립트
 
+인증: google-oauth/credentials.json + token.json (OAuth, easy-fulfill과 동일 경로·google_sheets_oauth.py)
+
 주요 기능:
 1. CSV/XLSX 파일에서 실시간 DB 읽기
 2. 구글 스프레드시트에서 기존 DB 읽기
@@ -12,6 +14,8 @@ import gspread
 import pandas as pd
 from pathlib import Path
 import sys
+
+from google_sheets_oauth import get_authorized_gspread_client
 import io
 import codecs
 
@@ -25,7 +29,7 @@ if sys.platform == 'win32':
         pass
 
 # ===== 설정 =====
-CREDENTIAL_PATH = "api-key/beaming-figure-476816-r5-7dd9d6f34342.json"
+# 스프레드시트 인증: 프로젝트 루트 google-oauth/ (credentials.json, token.json) — google_sheets_oauth.py
 SPREADSHEET_ID = "1F0l6FMjXvKXAR9WyDvxEWcRvji-TaJbBim_G12TJ2Pw"
 
 # 네이버/쿠팡 설정
@@ -459,9 +463,8 @@ def append_to_spreadsheet_coupang(worksheet, new_data_list, header_row_num):
                 # googleapiclient가 없으면 기본값 사용
                 raise ImportError("googleapiclient 패키지가 필요합니다. pip install google-api-python-client")
             
-            # gspread의 client에서 credentials 가져오기
-            gc = gspread.service_account(filename=CREDENTIAL_PATH)
-            credentials = gc.auth.credentials
+            # worksheet와 동일한 OAuth 자격증명 (gspread HTTPClient.auth)
+            credentials = worksheet.client.auth
             
             # Google Sheets API 서비스 생성
             service = build('sheets', 'v4', credentials=credentials)
@@ -632,7 +635,7 @@ def sync_naver(realtime_file_path=None, test_mode=True, test_count=None):
     
     # 2단계: 스프레드시트 데이터 읽기
     print("\n📊 스프레드시트에서 기존 데이터 읽기...")
-    gc = gspread.service_account(filename=CREDENTIAL_PATH)
+    gc = get_authorized_gspread_client()
     spreadsheet = gc.open_by_key(SPREADSHEET_ID)
     worksheet = spreadsheet.get_worksheet(NAVER_CONFIG["sheet_index"])
     
@@ -737,7 +740,7 @@ def sync_coupang(realtime_file_path=None, test_mode=True, test_count=None):
     
     # 2단계: 스프레드시트 데이터 읽기
     print("\n📊 스프레드시트에서 기존 데이터 읽기...")
-    gc = gspread.service_account(filename=CREDENTIAL_PATH)
+    gc = get_authorized_gspread_client()
     spreadsheet = gc.open_by_key(SPREADSHEET_ID)
     worksheet = spreadsheet.get_worksheet(COUPANG_CONFIG["sheet_index"])
     

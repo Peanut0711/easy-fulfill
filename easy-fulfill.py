@@ -29,23 +29,9 @@ try:
     import gspread
 except ImportError:  # gspread는 스프레드시트 매핑에만 필요
     gspread = None
-try:
-    from google.oauth2.credentials import Credentials
-    from google_auth_oauthlib.flow import InstalledAppFlow
-    from google.auth.transport.requests import Request
-except ImportError:  # OAuth 로그인 기반 인증에 필요
-    Credentials = None
-    InstalledAppFlow = None
-    Request = None
-
 # 구글 스프레드시트(로컬 DB 대체) 설정
 SPREADSHEET_ID = "1F0l6FMjXvKXAR9WyDvxEWcRvji-TaJbBim_G12TJ2Pw"
-# OAuth(사용자별 로그인) — 프로젝트 루트 하위 전용 폴더 (gitignore: google-oauth/)
-_APP_ROOT = Path(__file__).resolve().parent
-GOOGLE_AUTH_DIR = _APP_ROOT / "google-oauth"
-OAUTH_CREDENTIAL_PATH = GOOGLE_AUTH_DIR / "credentials.json"
-TOKEN_PATH = GOOGLE_AUTH_DIR / "token.json"
-SCOPES = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
+# OAuth 경로·토큰: google_sheets_oauth.py (database-sync와 공유, google-oauth/)
 
 
 class ImageDialog(QDialog):
@@ -388,35 +374,18 @@ class MainWindow(QMainWindow):
         if self._gspread_client is not None:
             return self._gspread_client
 
-        if Credentials is None or InstalledAppFlow is None or Request is None:
+        if gspread is None:
+            raise ImportError("gspread 패키지가 필요합니다. (pip install gspread)")
+
+        try:
+            from google_sheets_oauth import get_authorized_gspread_client
+        except ImportError as e:
             raise ImportError(
                 "google-auth-oauthlib 패키지가 필요합니다. "
                 "(pip install google-auth-oauthlib)"
-            )
+            ) from e
 
-        GOOGLE_AUTH_DIR.mkdir(parents=True, exist_ok=True)
-
-        creds = None
-        if TOKEN_PATH.exists():
-            creds = Credentials.from_authorized_user_file(str(TOKEN_PATH), SCOPES)
-
-        if not creds or not creds.valid:
-            if creds and creds.expired and creds.refresh_token:
-                creds.refresh(Request())
-            else:
-                if not OAUTH_CREDENTIAL_PATH.exists():
-                    raise FileNotFoundError(
-                        "OAuth 클라이언트 파일이 없습니다.\n"
-                        f"다음 경로에 credentials.json을 배치하세요:\n{OAUTH_CREDENTIAL_PATH}"
-                    )
-                flow = InstalledAppFlow.from_client_secrets_file(
-                    str(OAUTH_CREDENTIAL_PATH), SCOPES
-                )
-                creds = flow.run_local_server(port=0)
-
-            TOKEN_PATH.write_text(creds.to_json(), encoding="utf-8")
-
-        self._gspread_client = gspread.authorize(creds)
+        self._gspread_client = get_authorized_gspread_client()
         return self._gspread_client
 
     def load_index_values(self):

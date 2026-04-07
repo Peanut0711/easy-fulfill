@@ -33,6 +33,8 @@ python easy-fulfill.py
 ```
 easy-fulfill/
 ├── easy-fulfill.py      # 메인 프로그램 파일
+├── google_sheets_oauth.py  # Sheets OAuth 공통 (GUI·database-sync)
+├── database-sync.py     # 스프레드시트 동기화 (동일 google-oauth)
 ├── requirements.txt     # 필요한 패키지 목록
 ├── README.md           # 프로젝트 설명
 ├── google-oauth/       # Google OAuth (로컬 전용, .gitignore)

@@ -30,12 +30,12 @@
 | 인증 방식 | `gspread.service_account(...)` 제거 → OAuth `InstalledAppFlow` + `gspread.authorize(creds)` |
 | 클라이언트 시크릿 경로 | 저장소 루트( `easy-fulfill.py`와 같은 디렉터리) 기준 `google-oauth/credentials.json` |
 | 토큰 저장 | 같은 폴더의 `token.json` |
-| 스코프 | `https://www.googleapis.com/auth/spreadsheets.readonly` (매핑 조회용 읽기 전용) |
+| 스코프 | `https://www.googleapis.com/auth/spreadsheets` (`database-sync.py` 시트 쓰기와 `token.json` 공유) |
 | 클라이언트 캐시 | `MainWindow`에서 `_get_gspread_client()`로 한 번 만든 gspread 클라이언트 재사용 |
 
 의존성: `requirements.txt`에 `google-auth-oauthlib` 추가.
 
-> 참고: 저장소 내 `database-sync.py`, `api-key-test.py` 등은 여전히 서비스 계정 경로를 쓸 수 있습니다. 메인 GUI 앱만 OAuth로 전환된 상태입니다.
+> 참고: 인증 로직은 `google_sheets_oauth.py`에 모았습니다. `easy-fulfill.py`와 `database-sync.py`가 같은 `google-oauth/token.json`을 씁니다. 예전에 **읽기 전용** 스코프로만 발급된 토큰이 있다면 `token.json`을 지운 뒤 다시 로그인하세요.
 
 ---
 
