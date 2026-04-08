@@ -563,6 +563,14 @@ class MainWindow(QMainWindow):
                 index_data = {}
 
         today = date.today().strftime('%Y-%m-%d')
+        prev = index_data.get(today, {})
+        if (
+            prev.get("naver") == self.current_idx_naver
+            and prev.get("gmarket") == self.current_idx_gmarket
+            and prev.get("coupang") == self.current_idx_coupang
+        ):
+            return
+
         if today not in index_data:
             index_data[today] = {}
 
@@ -831,7 +839,18 @@ class MainWindow(QMainWindow):
         if row is None:
             return self._create_today_order_index_row_with_ones(interactive=interactive)
 
-        self._apply_order_indices_to_ui(row["naver"], row["coupang"], row["gmarket"])
+        na, co, gm = row["naver"], row["coupang"], row["gmarket"]
+        if (
+            self.current_idx_naver == na
+            and self.current_idx_coupang == co
+            and self.current_idx_gmarket == gm
+        ):
+            self._index_sheet_push_pending = False
+            self._index_sheet_last_sync_display = datetime.now()
+            self._update_index_sheet_sync_label()
+            return True
+
+        self._apply_order_indices_to_ui(na, co, gm)
         try:
             self._persist_index_values_to_json()
         except Exception as e:
