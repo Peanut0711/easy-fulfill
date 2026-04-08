@@ -58,7 +58,8 @@ ORDER_INDEX_SHEET_PUSH_DEBOUNCE_MS = 800
 # 시작 시 시트 동기화 로딩 바: 약 2초+여유 안에 99%까지 선형 증가, 완료 시 즉시 100%
 STARTUP_SYNC_PROGRESS_CAP_MS = 2200
 STARTUP_SYNC_PROGRESS_TICK_MS = 40
-STARTUP_SYNC_PROGRESS_HIDE_DELAY_MS = 200
+# 100% 도달 후 오버레이를 닫기까지 대기(너무 짧으면 급하게 사라진 느낌, 너무 길면 지루)
+STARTUP_SYNC_PROGRESS_HIDE_DELAY_MS = 500
 
 
 def _parse_order_index_int_cell(value, default=1):
