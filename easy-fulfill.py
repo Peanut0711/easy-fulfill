@@ -1912,7 +1912,8 @@ class MainWindow(QMainWindow):
         
     def setup_connections(self):
         """버튼과 메뉴 동작을 연결합니다."""        
-        # 주문·발송 탭(송장 영역) 버튼 연결
+        # 주문·발송 탭 버튼 연결
+        self.ui.pushButton_load_order.clicked.connect(self.select_excel_file)
         self.ui.pushButton_load_invoice.clicked.connect(self.load_invoice_file)
         self.ui.pushButton_generate_invoice.clicked.connect(self.generate_invoice_file)
         
