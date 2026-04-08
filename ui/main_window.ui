@@ -86,7 +86,7 @@
              <number>0</number>
             </property>
             <property name="rightMargin">
-             <number>0</number>
+             <number>10</number>
             </property>
             <property name="bottomMargin">
              <number>0</number>
@@ -159,7 +159,7 @@
                  <enum>QFrame::Shadow::Sunken</enum>
                 </property>
                 <property name="text">
-                 <string>주문 정보가 없습니다. ( Ctrl + O )</string>
+                 <string>주문 정보가 없습니다.</string>
                 </property>
                 <property name="alignment">
                  <set>Qt::AlignmentFlag::AlignCenter</set>
@@ -226,7 +226,7 @@
              <number>6</number>
             </property>
             <property name="leftMargin">
-             <number>0</number>
+             <number>10</number>
             </property>
             <property name="topMargin">
              <number>0</number>
