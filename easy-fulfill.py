@@ -15,10 +15,11 @@ import msoffcrypto
 import shutil
 from PySide6.QtWidgets import (QApplication, QMainWindow, QFileDialog, QMessageBox, 
                               QInputDialog, QLineEdit, QTableWidgetItem, QLabel, 
-                              QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QWidget)
+                              QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QWidget,
+                              QProgressBar, QFrame)
 from PySide6.QtUiTools import QUiLoader
-from PySide6.QtCore import QFile, QIODevice, Qt, QSize, QUrl, QTimer
-from PySide6.QtGui import QPixmap, QImage, QIcon, QAction, QDesktopServices
+from PySide6.QtCore import QFile, QIODevice, Qt, QSize, QUrl, QTimer, QThread, Signal
+from PySide6.QtGui import QPixmap, QImage, QIcon, QAction, QDesktopServices, QFont
 import requests
 from io import BytesIO
 import warnings
@@ -42,6 +43,142 @@ ORDER_INDEX_SHEET_TITLE = "일별 주문번호"
 ORDER_INDEX_SHEET_HEADERS = ["날짜", "네이버", "쿠팡", "지마켓"]
 ORDER_INDEX_SHEET_POLL_MS = 150_000  # 2.5분 (2~3분 간격)
 ORDER_INDEX_SHEET_PUSH_DEBOUNCE_MS = 800
+
+
+def _parse_order_index_int_cell(value, default=1):
+    if value is None:
+        return default
+    s = str(value).strip()
+    if not s:
+        return default
+    try:
+        n = int(s.replace(",", ""))
+        return n if n >= 1 else default
+    except ValueError:
+        return default
+
+
+def _order_index_sheet_row_looks_like_header(row):
+    if not row:
+        return False
+    cell = (row[0] or "").strip()
+    return cell in ("날짜", "date", "Date")
+
+
+def _standalone_init_order_index_ws_if_blank(ws):
+    if ws.get_all_values():
+        return
+    today = date.today().strftime("%Y-%m-%d")
+    ws.update(
+        [ORDER_INDEX_SHEET_HEADERS, [today, 1, 1, 1]],
+        range_name="A1:D2",
+    )
+    print(
+        f"✓ 「{ORDER_INDEX_SHEET_TITLE}」 시트에 헤더와 오늘({today}) 인덱스 1·1·1을 초기 입력했습니다."
+    )
+
+
+def _standalone_ensure_order_index_worksheet(gc):
+    """백그라운드 스레드용. MainWindow._gspread_client 와 공유하지 않는 클라이언트를 넘깁니다."""
+    spreadsheet = gc.open_by_key(SPREADSHEET_ID)
+    worksheets = spreadsheet.worksheets()
+    if len(worksheets) < ORDER_INDEX_WORKSHEET_INDEX:
+        raise ValueError(
+            f"스프레드시트에「{ORDER_INDEX_SHEET_TITLE}」({ORDER_INDEX_WORKSHEET_INDEX + 1}번째 탭)을 "
+            f"둘 공간이 없습니다. 앞쪽 탭이 {ORDER_INDEX_WORKSHEET_INDEX}개(예: 네이버·쿠팡 DB) "
+            f"있어야 합니다. (현재 탭 {len(worksheets)}개)"
+        )
+    if len(worksheets) == ORDER_INDEX_WORKSHEET_INDEX:
+        spreadsheet.add_worksheet(
+            title=ORDER_INDEX_SHEET_TITLE,
+            rows=100,
+            cols=10,
+            index=ORDER_INDEX_WORKSHEET_INDEX,
+        )
+        print(f"✓ 스프레드시트에 「{ORDER_INDEX_SHEET_TITLE}」 탭을 만들었습니다.")
+    ws = spreadsheet.get_worksheet(ORDER_INDEX_WORKSHEET_INDEX)
+    _standalone_init_order_index_ws_if_blank(ws)
+    return ws
+
+
+def _standalone_read_today_order_indices_from_values(values):
+    if not values:
+        return None
+    today = date.today().strftime("%Y-%m-%d")
+    header_like = _order_index_sheet_row_looks_like_header(values[0])
+    data_rows = values[1:] if header_like else values
+    for row in data_rows:
+        if not row:
+            continue
+        if (row[0] or "").strip() != today:
+            continue
+        naver = _parse_order_index_int_cell(row[1] if len(row) > 1 else None)
+        coupang = _parse_order_index_int_cell(row[2] if len(row) > 2 else None)
+        gmarket = _parse_order_index_int_cell(row[3] if len(row) > 3 else None)
+        return {"naver": naver, "coupang": coupang, "gmarket": gmarket}
+    return None
+
+
+def _standalone_write_order_indices_ws(ws, n, c, g):
+    today = date.today().strftime("%Y-%m-%d")
+    values = ws.get_all_values()
+    if not values:
+        ws.update(
+            [ORDER_INDEX_SHEET_HEADERS, [today, n, c, g]],
+            range_name="A1:D2",
+        )
+        return
+    header_like = _order_index_sheet_row_looks_like_header(values[0])
+    if header_like:
+        search_ranges = list(enumerate(values[1:], start=2))
+    else:
+        search_ranges = list(enumerate(values, start=1))
+    row_1based = None
+    for ridx, row in search_ranges:
+        if row and (row[0] or "").strip() == today:
+            row_1based = ridx
+            break
+    if row_1based is not None:
+        ws.update([[n, c, g]], range_name=f"B{row_1based}:D{row_1based}")
+    else:
+        ws.append_row([today, n, c, g])
+
+
+def run_startup_order_index_sheet_sync_worker():
+    """
+    UI 스레드가 아닌 곳에서 호출. Google API만 수행.
+    반환 dict: ok, kind(data|created), row — 또는 ok False, error
+    """
+    if gspread is None:
+        return {"ok": False, "error": "gspread 패키지가 필요합니다. (pip install gspread)"}
+    try:
+        from google_sheets_oauth import get_authorized_gspread_client
+    except ImportError as e:
+        return {"ok": False, "error": str(e)}
+    try:
+        gc = get_authorized_gspread_client()
+        ws = _standalone_ensure_order_index_worksheet(gc)
+        values = ws.get_all_values()
+        row = _standalone_read_today_order_indices_from_values(values)
+        if row is not None:
+            return {"ok": True, "kind": "data", "row": row}
+        _standalone_write_order_indices_ws(ws, 1, 1, 1)
+        return {
+            "ok": True,
+            "kind": "created",
+            "row": {"naver": 1, "coupang": 1, "gmarket": 1},
+        }
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+class OrderIndexStartupSyncThread(QThread):
+    """앱 시작 시 스프레드시트 인덱스만 백그라운드에서 맞춥니다."""
+
+    result_ready = Signal(dict)
+
+    def run(self):
+        self.result_ready.emit(run_startup_order_index_sheet_sync_worker())
 
 
 class ImageDialog(QDialog):
@@ -334,17 +471,19 @@ class MainWindow(QMainWindow):
         self._index_sheet_poll_timer = QTimer(self)
         self._index_sheet_poll_timer.timeout.connect(self._on_order_index_sheet_poll)
         self._last_refresh_created_today_row = False
+        self._startup_order_index_sync_started = False
+        self._startup_order_index_sync_done = False
+        self._startup_sync_thread = None
         
         self.load_ui()
         self.setup_connections()
         self.setup_status_bar()
+        self._setup_startup_loading_overlay()
         
         # 인덱스 값 로드
         self.load_index_values()
         self.load_app_settings()
         self._refresh_google_auth_status_ui()
-        self._index_sheet_poll_timer.start(ORDER_INDEX_SHEET_POLL_MS)
-        self.refresh_order_indices_from_sheet(interactive=False)
 
         print("초기화 완료")
 
@@ -861,6 +1000,8 @@ class MainWindow(QMainWindow):
         return True
 
     def _on_order_index_sheet_poll(self):
+        if not self._startup_order_index_sync_done:
+            return
         if self._index_sheet_push_timer.isActive():
             return
         for name in ("lineEdit_idx_naver", "lineEdit_idx_coupang", "lineEdit_idx_gmarket"):
@@ -964,6 +1105,141 @@ class MainWindow(QMainWindow):
         super().showEvent(event)
         if not self._order_ship_splitter_initialized:
             QTimer.singleShot(0, self._on_first_show_splitter)
+        if not self._startup_order_index_sync_started:
+            self._startup_order_index_sync_started = True
+            QTimer.singleShot(0, self._kickoff_startup_order_index_sync)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        ov = getattr(self, "_startup_overlay", None)
+        if ov is not None and ov.isVisible():
+            self._layout_startup_overlay_full()
+
+    def _layout_startup_overlay_full(self):
+        if getattr(self, "_startup_overlay", None) is None:
+            return
+        self._startup_overlay.setGeometry(
+            0, 0, max(1, self.width()), max(1, self.height())
+        )
+
+    def _setup_startup_loading_overlay(self):
+        self._startup_overlay = QFrame(self)
+        self._startup_overlay.setObjectName("startupLoadingOverlay")
+        self._startup_overlay.hide()
+        lay = QVBoxLayout(self._startup_overlay)
+        lay.setSpacing(14)
+        title = QLabel("초기 데이터를 불러오는 중…")
+        title.setAlignment(Qt.AlignCenter)
+        title_font = QFont()
+        title_font.setFamilies(
+            ["Bahnschrift", "맑은 고딕", "Malgun Gothic", "Segoe UI Variable Display", "sans-serif"]
+        )
+        title_font.setPixelSize(24)
+        title_font.setWeight(QFont.Weight.DemiBold)
+        title_font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 1.2)
+        title.setFont(title_font)
+
+        sub = QLabel("Google 스프레드시트와 주문 인덱스를 맞추는 중입니다.")
+        sub.setAlignment(Qt.AlignCenter)
+        sub_font = QFont(title_font)
+        sub_font.setPixelSize(14)
+        sub_font.setWeight(QFont.Weight.Normal)
+        sub_font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 0.3)
+        sub.setFont(sub_font)
+        sub.setStyleSheet("color: #4a5568;")
+        bar = QProgressBar()
+        bar.setRange(0, 0)
+        bar.setTextVisible(False)
+        bar.setFixedSize(320, 18)
+        bar.setStyleSheet(
+            """
+            QProgressBar {
+                border: 1px solid #c8ced9;
+                border-radius: 9px;
+                background-color: #e6e9f0;
+                text-align: center;
+            }
+            QProgressBar::chunk {
+                background-color: #2e7d8a;
+                border-radius: 8px;
+            }
+            """
+        )
+        bar_row = QHBoxLayout()
+        bar_row.addStretch(1)
+        bar_row.addWidget(bar)
+        bar_row.addStretch(1)
+        lay.addStretch(1)
+        lay.addWidget(title)
+        lay.addWidget(sub)
+        lay.addLayout(bar_row)
+        lay.addStretch(2)
+        self._startup_overlay.setStyleSheet(
+            "QFrame#startupLoadingOverlay { background-color: rgba(250, 251, 253, 244); border: none; }"
+        )
+
+    def _kickoff_startup_order_index_sync(self):
+        self._layout_startup_overlay_full()
+        self._startup_overlay.raise_()
+        self._startup_overlay.show()
+        self._startup_sync_thread = OrderIndexStartupSyncThread(self)
+        self._startup_sync_thread.result_ready.connect(self._on_startup_order_index_sync_finished)
+        self._startup_sync_thread.finished.connect(self._cleanup_startup_sync_thread)
+        self._startup_sync_thread.start()
+
+    def _cleanup_startup_sync_thread(self):
+        self._startup_sync_thread = None
+
+    def _on_startup_order_index_sync_finished(self, payload: dict):
+        if getattr(self, "_startup_overlay", None) is not None:
+            self._startup_overlay.hide()
+        self._startup_order_index_sync_done = True
+        if not self._index_sheet_poll_timer.isActive():
+            self._index_sheet_poll_timer.start(ORDER_INDEX_SHEET_POLL_MS)
+
+        if not payload.get("ok"):
+            err = payload.get("error", "")
+            print(f"! 시작 시 시트 동기화 실패: {err}")
+            self._update_index_sheet_sync_label()
+            return
+
+        kind = payload.get("kind")
+        if kind == "created":
+            self._last_refresh_created_today_row = True
+            self._apply_order_indices_to_ui(1, 1, 1)
+            try:
+                self._persist_index_values_to_json()
+            except Exception as e:
+                print(f"! 인덱스 JSON 저장 실패(시트 신규 행): {e}")
+            self._index_sheet_push_pending = False
+            self._index_sheet_last_sync_display = datetime.now()
+            self._update_index_sheet_sync_label()
+            return
+
+        if kind != "data":
+            self._update_index_sheet_sync_label()
+            return
+
+        row = payload["row"]
+        na, co, gm = row["naver"], row["coupang"], row["gmarket"]
+        self._last_refresh_created_today_row = False
+        if (
+            self.current_idx_naver == na
+            and self.current_idx_coupang == co
+            and self.current_idx_gmarket == gm
+        ):
+            self._index_sheet_push_pending = False
+            self._index_sheet_last_sync_display = datetime.now()
+            self._update_index_sheet_sync_label()
+            return
+        self._apply_order_indices_to_ui(na, co, gm)
+        try:
+            self._persist_index_values_to_json()
+        except Exception as e:
+            print(f"! 인덱스 JSON 저장 실패(시트에서 읽은 뒤): {e}")
+        self._index_sheet_push_pending = False
+        self._index_sheet_last_sync_display = datetime.now()
+        self._update_index_sheet_sync_label()
 
     def _on_first_show_splitter(self):
         self._apply_order_ship_splitter_sizes()
