@@ -5,6 +5,7 @@ import sys
 import os
 import re
 import math
+import time
 from datetime import datetime, date
 from pathlib import Path
 import pandas as pd
@@ -16,9 +17,20 @@ import shutil
 from PySide6.QtWidgets import (QApplication, QMainWindow, QFileDialog, QMessageBox, 
                               QInputDialog, QLineEdit, QTableWidgetItem, QLabel, 
                               QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QWidget,
-                              QProgressBar, QFrame)
+                              QProgressBar, QFrame, QGraphicsOpacityEffect)
 from PySide6.QtUiTools import QUiLoader
-from PySide6.QtCore import QFile, QIODevice, Qt, QSize, QUrl, QTimer, QThread, Signal
+from PySide6.QtCore import (
+    QFile,
+    QIODevice,
+    Qt,
+    QSize,
+    QUrl,
+    QTimer,
+    QThread,
+    Signal,
+    QPropertyAnimation,
+    QEasingCurve,
+)
 from PySide6.QtGui import QPixmap, QImage, QIcon, QAction, QDesktopServices, QFont
 import requests
 from io import BytesIO
@@ -43,6 +55,10 @@ ORDER_INDEX_SHEET_TITLE = "일별 주문번호"
 ORDER_INDEX_SHEET_HEADERS = ["날짜", "네이버", "쿠팡", "지마켓"]
 ORDER_INDEX_SHEET_POLL_MS = 150_000  # 2.5분 (2~3분 간격)
 ORDER_INDEX_SHEET_PUSH_DEBOUNCE_MS = 800
+# 시작 시 시트 동기화 로딩 바: 약 2초+여유 안에 99%까지 선형 증가, 완료 시 즉시 100%
+STARTUP_SYNC_PROGRESS_CAP_MS = 2200
+STARTUP_SYNC_PROGRESS_TICK_MS = 40
+STARTUP_SYNC_PROGRESS_HIDE_DELAY_MS = 200
 
 
 def _parse_order_index_int_cell(value, default=1):
@@ -1123,11 +1139,44 @@ class MainWindow(QMainWindow):
         )
 
     def _setup_startup_loading_overlay(self):
+        accent = "#21838a"
+        accent_soft = "#e8f4f5"
+
         self._startup_overlay = QFrame(self)
         self._startup_overlay.setObjectName("startupLoadingOverlay")
         self._startup_overlay.hide()
-        lay = QVBoxLayout(self._startup_overlay)
-        lay.setSpacing(14)
+        outer = QVBoxLayout(self._startup_overlay)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.addStretch(1)
+
+        row = QHBoxLayout()
+        row.addStretch(1)
+
+        card = QFrame()
+        card.setObjectName("startupLoadingCard")
+        card.setMaximumWidth(480)
+        card.setMinimumWidth(320)
+
+        self._startup_card_opacity_effect = QGraphicsOpacityEffect(card)
+        self._startup_card_opacity_effect.setOpacity(1.0)
+        card.setGraphicsEffect(self._startup_card_opacity_effect)
+
+        card_lay = QVBoxLayout(card)
+        card_lay.setContentsMargins(32, 28, 32, 28)
+        card_lay.setSpacing(12)
+
+        badge = QLabel("Easy Fulfill")
+        badge.setAlignment(Qt.AlignCenter)
+        bf = QFont()
+        bf.setFamilies(
+            ["Bahnschrift", "맑은 고딕", "Malgun Gothic", "Segoe UI Semibold", "sans-serif"]
+        )
+        bf.setPixelSize(16)
+        bf.setWeight(QFont.Weight.DemiBold)
+        bf.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 2.2)
+        badge.setFont(bf)
+        badge.setStyleSheet(f"color: {accent}; margin-bottom: 4px;")
+
         title = QLabel("초기 데이터를 불러오는 중…")
         title.setAlignment(Qt.AlignCenter)
         title_font = QFont()
@@ -1136,110 +1185,226 @@ class MainWindow(QMainWindow):
         )
         title_font.setPixelSize(24)
         title_font.setWeight(QFont.Weight.DemiBold)
-        title_font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 1.2)
+        title_font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 1.0)
         title.setFont(title_font)
+        title.setStyleSheet("color: #1a202c;")
 
-        sub = QLabel("Google 스프레드시트와 주문 인덱스를 맞추는 중입니다.")
+        sub = QLabel("Google 시트와 주문 인덱스를 동기화합니다.")
         sub.setAlignment(Qt.AlignCenter)
         sub_font = QFont(title_font)
         sub_font.setPixelSize(14)
         sub_font.setWeight(QFont.Weight.Normal)
-        sub_font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 0.3)
+        sub_font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 0.25)
         sub.setFont(sub_font)
-        sub.setStyleSheet("color: #4a5568;")
-        bar = QProgressBar()
-        bar.setRange(0, 0)
-        bar.setTextVisible(False)
-        bar.setFixedSize(320, 18)
-        bar.setStyleSheet(
-            """
-            QProgressBar {
-                border: 1px solid #c8ced9;
-                border-radius: 9px;
-                background-color: #e6e9f0;
+        sub.setStyleSheet("color: #5c6b7a;")
+        sub.setWordWrap(True)
+
+        self._startup_progress_bar = QProgressBar()
+        self._startup_progress_bar.setRange(0, 100)
+        self._startup_progress_bar.setValue(0)
+        self._startup_progress_bar.setTextVisible(True)
+        self._startup_progress_bar.setFormat("%p%")
+        self._startup_progress_bar.setFixedSize(300, 28)
+        self._startup_progress_bar.setStyleSheet(
+            f"""
+            QProgressBar {{
+                border: 1px solid #c5d0d8;
+                border-radius: 12px;
+                background-color: {accent_soft};
                 text-align: center;
-            }
-            QProgressBar::chunk {
-                background-color: #2e7d8a;
-                border-radius: 8px;
-            }
+                color: #2c3e50;
+                font-size: 11px;
+                font-weight: 600;
+            }}
+            QProgressBar::chunk {{
+                background-color: {accent};
+                border-radius: 11px;
+            }}
             """
         )
+        self._startup_progress_timer = QTimer(self)
+        self._startup_progress_timer.setInterval(STARTUP_SYNC_PROGRESS_TICK_MS)
+        self._startup_progress_timer.timeout.connect(self._on_startup_progress_tick)
+        self._startup_sync_progress_done = False
+
         bar_row = QHBoxLayout()
         bar_row.addStretch(1)
-        bar_row.addWidget(bar)
+        bar_row.addWidget(self._startup_progress_bar)
         bar_row.addStretch(1)
-        lay.addStretch(1)
-        lay.addWidget(title)
-        lay.addWidget(sub)
-        lay.addLayout(bar_row)
-        lay.addStretch(2)
+
+        hint = QLabel("환경에 따라 수 초 걸릴 수 있어요. 대부분 곧 완료됩니다.")
+        hint.setAlignment(Qt.AlignCenter)
+        hf = QFont(sub_font)
+        hf.setPixelSize(12)
+        hint.setFont(hf)
+        hint.setStyleSheet("color: #8896a3; margin-top: 4px;")
+        hint.setWordWrap(True)
+
+        card_lay.addWidget(badge)
+        card_lay.addWidget(title)
+        card_lay.addWidget(sub)
+        card_lay.addSpacing(8)
+        card_lay.addLayout(bar_row)
+        card_lay.addWidget(hint)
+
+        row.addWidget(card, alignment=Qt.AlignmentFlag.AlignHCenter)
+        row.addStretch(1)
+        outer.addLayout(row)
+        outer.addStretch(1)
+
         self._startup_overlay.setStyleSheet(
-            "QFrame#startupLoadingOverlay { background-color: rgba(250, 251, 253, 244); border: none; }"
+            """
+            QFrame#startupLoadingOverlay {
+                background-color: rgba(28, 34, 42, 0.52);
+                border: none;
+            }
+            QFrame#startupLoadingCard {
+                background-color: #fbfbfc;
+                border: 1px solid rgba(200, 210, 220, 0.95);
+                border-radius: 18px;
+            }
+            """
         )
+        self._startup_card_entrance_anim = None
+
+    def _on_startup_progress_tick(self):
+        if getattr(self, "_startup_sync_progress_done", False):
+            return
+        t0 = getattr(self, "_startup_sync_debug_t0", None)
+        if t0 is None:
+            return
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        if elapsed_ms <= 0:
+            return
+        pct = min(99, int(elapsed_ms * 100 / STARTUP_SYNC_PROGRESS_CAP_MS))
+        pb = getattr(self, "_startup_progress_bar", None)
+        if pb is not None and pb.value() < pct:
+            pb.setValue(pct)
+
+    def _hide_startup_loading_overlay_deferred(self):
+        if getattr(self, "_startup_overlay", None) is not None:
+            self._startup_overlay.hide()
+
+    def _start_startup_overlay_entrance_anim(self):
+        self._startup_card_opacity_effect.setOpacity(0.0)
+        anim = QPropertyAnimation(self._startup_card_opacity_effect, b"opacity", self)
+        anim.setDuration(280)
+        anim.setStartValue(0.0)
+        anim.setEndValue(1.0)
+        anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._startup_card_entrance_anim = anim
+        anim.start()
 
     def _kickoff_startup_order_index_sync(self):
+        self._startup_sync_progress_done = False
         self._layout_startup_overlay_full()
         self._startup_overlay.raise_()
+        print("[시트동기화 디버그] 로딩 UI 표시 직전")
+        self._startup_sync_debug_t0 = time.perf_counter()
         self._startup_overlay.show()
+        t_after_show = time.perf_counter()
+        print(
+            f"[시트동기화 디버그] 로딩 UI 표시 직후 "
+            f"(레이아웃·show): {(t_after_show - self._startup_sync_debug_t0) * 1000:.1f} ms"
+        )
+        self._start_startup_overlay_entrance_anim()
         self._startup_sync_thread = OrderIndexStartupSyncThread(self)
         self._startup_sync_thread.result_ready.connect(self._on_startup_order_index_sync_finished)
         self._startup_sync_thread.finished.connect(self._cleanup_startup_sync_thread)
+        self._startup_sync_debug_t_thread_start = time.perf_counter()
+        if getattr(self, "_startup_progress_bar", None) is not None:
+            self._startup_progress_bar.setValue(0)
+        if getattr(self, "_startup_progress_timer", None) is not None:
+            self._startup_progress_timer.start()
         self._startup_sync_thread.start()
 
     def _cleanup_startup_sync_thread(self):
         self._startup_sync_thread = None
 
     def _on_startup_order_index_sync_finished(self, payload: dict):
-        if getattr(self, "_startup_overlay", None) is not None:
-            self._startup_overlay.hide()
-        self._startup_order_index_sync_done = True
-        if not self._index_sheet_poll_timer.isActive():
-            self._index_sheet_poll_timer.start(ORDER_INDEX_SHEET_POLL_MS)
+        t_slot_enter = time.perf_counter()
+        t0 = getattr(self, "_startup_sync_debug_t0", None)
+        t_thr = getattr(self, "_startup_sync_debug_t_thread_start", None)
+        if t0 is not None:
+            print(
+                f"[시트동기화 디버그] 결과 수신(슬롯 진입) "
+                f"— UI표시직전~여기까지: {(t_slot_enter - t0) * 1000:.1f} ms"
+            )
+        if t_thr is not None:
+            print(
+                f"[시트동기화 디버그] 백그라운드 시트 작업 "
+                f"(thread.start~결과): {(t_slot_enter - t_thr) * 1000:.1f} ms"
+            )
 
-        if not payload.get("ok"):
-            err = payload.get("error", "")
-            print(f"! 시작 시 시트 동기화 실패: {err}")
-            self._update_index_sheet_sync_label()
-            return
+        self._startup_sync_progress_done = True
+        if getattr(self, "_startup_progress_timer", None) is not None:
+            self._startup_progress_timer.stop()
+        pb = getattr(self, "_startup_progress_bar", None)
+        if pb is not None:
+            pb.setValue(100)
 
-        kind = payload.get("kind")
-        if kind == "created":
-            self._last_refresh_created_today_row = True
-            self._apply_order_indices_to_ui(1, 1, 1)
+        try:
+            self._startup_order_index_sync_done = True
+            if not self._index_sheet_poll_timer.isActive():
+                self._index_sheet_poll_timer.start(ORDER_INDEX_SHEET_POLL_MS)
+
+            if not payload.get("ok"):
+                err = payload.get("error", "")
+                print(f"! 시작 시 시트 동기화 실패: {err}")
+                self._update_index_sheet_sync_label()
+                return
+
+            kind = payload.get("kind")
+            if kind == "created":
+                self._last_refresh_created_today_row = True
+                self._apply_order_indices_to_ui(1, 1, 1)
+                try:
+                    self._persist_index_values_to_json()
+                except Exception as e:
+                    print(f"! 인덱스 JSON 저장 실패(시트 신규 행): {e}")
+                self._index_sheet_push_pending = False
+                self._index_sheet_last_sync_display = datetime.now()
+                self._update_index_sheet_sync_label()
+                return
+
+            if kind != "data":
+                self._update_index_sheet_sync_label()
+                return
+
+            row = payload["row"]
+            na, co, gm = row["naver"], row["coupang"], row["gmarket"]
+            self._last_refresh_created_today_row = False
+            if (
+                self.current_idx_naver == na
+                and self.current_idx_coupang == co
+                and self.current_idx_gmarket == gm
+            ):
+                self._index_sheet_push_pending = False
+                self._index_sheet_last_sync_display = datetime.now()
+                self._update_index_sheet_sync_label()
+                return
+            self._apply_order_indices_to_ui(na, co, gm)
             try:
                 self._persist_index_values_to_json()
             except Exception as e:
-                print(f"! 인덱스 JSON 저장 실패(시트 신규 행): {e}")
+                print(f"! 인덱스 JSON 저장 실패(시트에서 읽은 뒤): {e}")
             self._index_sheet_push_pending = False
             self._index_sheet_last_sync_display = datetime.now()
             self._update_index_sheet_sync_label()
-            return
-
-        if kind != "data":
-            self._update_index_sheet_sync_label()
-            return
-
-        row = payload["row"]
-        na, co, gm = row["naver"], row["coupang"], row["gmarket"]
-        self._last_refresh_created_today_row = False
-        if (
-            self.current_idx_naver == na
-            and self.current_idx_coupang == co
-            and self.current_idx_gmarket == gm
-        ):
-            self._index_sheet_push_pending = False
-            self._index_sheet_last_sync_display = datetime.now()
-            self._update_index_sheet_sync_label()
-            return
-        self._apply_order_indices_to_ui(na, co, gm)
-        try:
-            self._persist_index_values_to_json()
-        except Exception as e:
-            print(f"! 인덱스 JSON 저장 실패(시트에서 읽은 뒤): {e}")
-        self._index_sheet_push_pending = False
-        self._index_sheet_last_sync_display = datetime.now()
-        self._update_index_sheet_sync_label()
+        finally:
+            t0f = getattr(self, "_startup_sync_debug_t0", None)
+            if t0f is not None:
+                total_ms = (time.perf_counter() - t0f) * 1000
+                ok = payload.get("ok")
+                kind = payload.get("kind")
+                print(
+                    f"[시트동기화 디버그] UI표시직전~슬롯·UI반영 전체 완료: "
+                    f"{total_ms:.1f} ms | ok={ok} kind={kind}"
+                )
+            QTimer.singleShot(
+                STARTUP_SYNC_PROGRESS_HIDE_DELAY_MS,
+                self._hide_startup_loading_overlay_deferred,
+            )
 
     def _on_first_show_splitter(self):
         self._apply_order_ship_splitter_sizes()
