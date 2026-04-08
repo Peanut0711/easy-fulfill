@@ -30,8 +30,19 @@ from PySide6.QtCore import (
     Signal,
     QPropertyAnimation,
     QEasingCurve,
+    QRectF,
 )
-from PySide6.QtGui import QPixmap, QImage, QIcon, QAction, QDesktopServices, QFont
+from PySide6.QtGui import (
+    QPixmap,
+    QImage,
+    QIcon,
+    QAction,
+    QDesktopServices,
+    QFont,
+    QPainter,
+    QColor,
+    QPen,
+)
 import requests
 from io import BytesIO
 import warnings
@@ -73,6 +84,23 @@ def _parse_order_index_int_cell(value, default=1):
         return n if n >= 1 else default
     except ValueError:
         return default
+
+
+def _normalize_key_for_mapping_value(value):
+    """상품번호/옵션ID 비교용 문자열로 정규화 (UI·백그라운드 매핑 로더 공통)."""
+    if value is None:
+        return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except Exception:
+        pass
+    s = str(value).strip()
+    if not s or s.lower() == "nan":
+        return ""
+    if s.endswith(".0"):
+        s = s[:-2]
+    return s
 
 
 def _order_index_sheet_row_looks_like_header(row):
@@ -187,6 +215,119 @@ def run_startup_order_index_sheet_sync_worker():
         }
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
+
+class CircularBusySpinner(QWidget):
+    """Google 시트·처리 대기용 무한 회전 링 스피너."""
+
+    def __init__(self, parent=None, size: int = 58, line_width: int = 4, color: str = "#21838a"):
+        super().__init__(parent)
+        self._line_width = line_width
+        self._color = QColor(color)
+        self._rotation = 0
+        self.setFixedSize(size, size)
+        self._timer = QTimer(self)
+        self._timer.setInterval(40)
+        self._timer.timeout.connect(self._on_tick)
+
+    def _on_tick(self):
+        self._rotation = (self._rotation + 24) % 360
+        self.update()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._timer.start()
+
+    def hideEvent(self, event):
+        self._timer.stop()
+        super().hideEvent(event)
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        s = min(self.width(), self.height())
+        m = self._line_width + 1
+        rf = (s - 2 * m) / 2.0
+        p.translate(self.width() / 2.0, self.height() / 2.0)
+        p.rotate(self._rotation)
+        pen = QPen(self._color)
+        pen.setWidth(self._line_width)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        p.setPen(pen)
+        rect = QRectF(-rf, -rf, 2 * rf, 2 * rf)
+        p.drawArc(rect, 40 * 16, 290 * 16)
+
+
+def run_product_code_map_load_worker(store_type: str):
+    """
+    백그라운드에서 상품코드 매핑만 로드 (_load_product_code_map_from_spreadsheet 와 동일 데이터).
+    MainWindow._gspread_client 와 별도 클라이언트 사용.
+    """
+    if gspread is None:
+        return {
+            "ok": False,
+            "error": "gspread 패키지가 필요합니다. (pip install gspread)",
+            "store_type": store_type,
+        }
+    if store_type == "naver":
+        sheet_index = 0
+        header_row_num = 1
+    elif store_type == "coupang":
+        sheet_index = 1
+        header_row_num = 2
+    else:
+        return {"ok": False, "error": f"지원되지 않는 store_type: {store_type}", "store_type": store_type}
+    try:
+        from google_sheets_oauth import get_authorized_gspread_client
+    except ImportError as e:
+        return {"ok": False, "error": str(e), "store_type": store_type}
+    try:
+        gc = get_authorized_gspread_client()
+        spreadsheet = gc.open_by_key(SPREADSHEET_ID)
+        worksheet = spreadsheet.get_worksheet(sheet_index)
+        values = worksheet.get_all_values()
+        data_start_idx = header_row_num
+
+        mapping = {}
+        coupang_vp = {}
+        for row in values[data_start_idx:]:
+            product_code = row[0].strip() if len(row) > 0 else ""
+            key_value = row[4] if len(row) > 4 else ""
+
+            key_norm = _normalize_key_for_mapping_value(key_value)
+            if not key_norm:
+                continue
+
+            product_code_norm = str(product_code).strip()
+            if product_code_norm.lower() == "nan":
+                product_code_norm = ""
+
+            mapping[key_norm] = product_code_norm
+            if store_type == "coupang":
+                vp_raw = row[3] if len(row) > 3 else ""
+                vp_norm = _normalize_key_for_mapping_value(vp_raw)
+                coupang_vp[key_norm] = vp_norm
+
+        print(f"✓ 스프레드시트 매핑 로드 완료: {store_type} - {len(mapping)}개")
+        out = {"ok": True, "store_type": store_type, "mapping": mapping}
+        if store_type == "coupang":
+            out["coupang_vp"] = coupang_vp
+        return out
+    except Exception as e:
+        return {"ok": False, "error": str(e), "store_type": store_type}
+
+
+class ProductMappingLoadThread(QThread):
+    """주문 엑셀 열 때 상품 매핑 시트 읽기만 백그라운드에서 수행."""
+
+    result_ready = Signal(dict)
+
+    def __init__(self, store_type: str):
+        super().__init__()
+        self._store_type = store_type
+
+    def run(self):
+        self.result_ready.emit(run_product_code_map_load_worker(self._store_type))
 
 
 class OrderIndexStartupSyncThread(QThread):
@@ -491,11 +632,13 @@ class MainWindow(QMainWindow):
         self._startup_order_index_sync_started = False
         self._startup_order_index_sync_done = False
         self._startup_sync_thread = None
+        self._product_mapping_thread = None
         
         self.load_ui()
         self.setup_connections()
         self.setup_status_bar()
         self._setup_startup_loading_overlay()
+        self._setup_busy_processing_overlay()
         
         # 인덱스 값 로드
         self.load_index_values()
@@ -506,19 +649,7 @@ class MainWindow(QMainWindow):
 
     def _normalize_key_for_mapping(self, value):
         """상품번호/옵션ID 비교용 문자열로 정규화합니다."""
-        if value is None:
-            return ""
-        try:
-            if pd.isna(value):
-                return ""
-        except Exception:
-            pass
-        s = str(value).strip()
-        if not s or s.lower() == "nan":
-            return ""
-        if s.endswith(".0"):
-            s = s[:-2]
-        return s
+        return _normalize_key_for_mapping_value(value)
 
     def _format_product_name_markdown_link(self, product_name, id_normalized, url_prefix):
         """id가 숫자만일 때만 상품명을 마크다운 링크로 감쌉니다. 그 외는 원문 유지."""
@@ -572,7 +703,7 @@ class MainWindow(QMainWindow):
             product_code = row[0].strip() if len(row) > 0 else ""
             key_value = row[4] if len(row) > 4 else ""
 
-            key_norm = self._normalize_key_for_mapping(key_value)
+            key_norm = _normalize_key_for_mapping_value(key_value)
             if not key_norm:
                 continue
 
@@ -1131,6 +1262,9 @@ class MainWindow(QMainWindow):
         ov = getattr(self, "_startup_overlay", None)
         if ov is not None and ov.isVisible():
             self._layout_startup_overlay_full()
+        bov = getattr(self, "_busy_overlay", None)
+        if bov is not None and bov.isVisible():
+            self._layout_busy_overlay_full()
 
     def _layout_startup_overlay_full(self):
         if getattr(self, "_startup_overlay", None) is None:
@@ -1267,6 +1401,166 @@ class MainWindow(QMainWindow):
             """
         )
         self._startup_card_entrance_anim = None
+
+    def _setup_busy_processing_overlay(self):
+        accent = "#21838a"
+        self._busy_overlay = QFrame(self)
+        self._busy_overlay.setObjectName("busyProcessingOverlay")
+        self._busy_overlay.hide()
+        outer = QVBoxLayout(self._busy_overlay)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.addStretch(1)
+        row = QHBoxLayout()
+        row.addStretch(1)
+
+        card = QFrame()
+        card.setObjectName("busyProcessingCard")
+        card.setMaximumWidth(440)
+        card.setMinimumWidth(280)
+
+        card_lay = QVBoxLayout(card)
+        card_lay.setContentsMargins(28, 24, 28, 24)
+        card_lay.setSpacing(14)
+
+        spin_row = QHBoxLayout()
+        spin_row.addStretch(1)
+        self._busy_spinner = CircularBusySpinner(card, size=56, line_width=4, color=accent)
+        spin_row.addWidget(self._busy_spinner)
+        spin_row.addStretch(1)
+
+        self._busy_overlay_title = QLabel("처리 중…")
+        self._busy_overlay_title.setAlignment(Qt.AlignCenter)
+        tf = QFont()
+        tf.setFamilies(
+            ["Bahnschrift", "맑은 고딕", "Malgun Gothic", "Segoe UI Variable Display", "sans-serif"]
+        )
+        tf.setPixelSize(18)
+        tf.setWeight(QFont.Weight.DemiBold)
+        self._busy_overlay_title.setFont(tf)
+        self._busy_overlay_title.setStyleSheet("color: #1a202c;")
+
+        self._busy_overlay_sub = QLabel("")
+        self._busy_overlay_sub.setAlignment(Qt.AlignCenter)
+        sf = QFont(tf)
+        sf.setPixelSize(13)
+        sf.setWeight(QFont.Weight.Normal)
+        self._busy_overlay_sub.setFont(sf)
+        self._busy_overlay_sub.setStyleSheet("color: #5c6b7a;")
+        self._busy_overlay_sub.setWordWrap(True)
+
+        card_lay.addLayout(spin_row)
+        card_lay.addWidget(self._busy_overlay_title)
+        card_lay.addWidget(self._busy_overlay_sub)
+
+        row.addWidget(card, alignment=Qt.AlignmentFlag.AlignHCenter)
+        row.addStretch(1)
+        outer.addLayout(row)
+        outer.addStretch(1)
+
+        self._busy_overlay.setStyleSheet(
+            """
+            QFrame#busyProcessingOverlay {
+                background-color: rgba(28, 34, 42, 0.48);
+                border: none;
+            }
+            QFrame#busyProcessingCard {
+                background-color: #fbfbfc;
+                border: 1px solid rgba(200, 210, 220, 0.95);
+                border-radius: 16px;
+            }
+            """
+        )
+
+    def _layout_busy_overlay_full(self):
+        if getattr(self, "_busy_overlay", None) is None:
+            return
+        self._busy_overlay.setGeometry(
+            0, 0, max(1, self.width()), max(1, self.height())
+        )
+
+    def _show_busy_processing_overlay(self, title: str, subtitle: str = ""):
+        if getattr(self, "_busy_overlay", None) is None:
+            return
+        self._busy_overlay_title.setText(title)
+        self._busy_overlay_sub.setText(subtitle)
+        self._busy_overlay_sub.setVisible(bool(subtitle and subtitle.strip()))
+        self._layout_busy_overlay_full()
+        self._busy_overlay.raise_()
+        if (
+            getattr(self, "_startup_overlay", None) is not None
+            and self._startup_overlay.isVisible()
+        ):
+            self._startup_overlay.raise_()
+        self._busy_overlay.show()
+
+    def _hide_busy_processing_overlay(self):
+        if getattr(self, "_busy_overlay", None) is not None:
+            self._busy_overlay.hide()
+
+    def _run_order_file_processing_with_async_mapping(self, store_type: str):
+        self._product_mapping_thread = ProductMappingLoadThread(store_type)
+        self._product_mapping_thread.result_ready.connect(
+            self._on_product_mapping_for_order_file_ready
+        )
+        self._product_mapping_thread.finished.connect(self._cleanup_product_mapping_thread)
+        self._product_mapping_thread.start()
+
+    def _cleanup_product_mapping_thread(self):
+        self._product_mapping_thread = None
+
+    def _on_product_mapping_for_order_file_ready(self, payload: dict):
+        try:
+            if not payload.get("ok"):
+                err = payload.get("error", "")
+                print(f"! 스프레드시트 매핑 로드 실패: {err}")
+                exc = RuntimeError(str(err))
+                if _is_likely_google_sheets_oauth_error(exc):
+                    QMessageBox.critical(
+                        self,
+                        "오류",
+                        "Google 스프레드시트 연동 중 오류가 발생했습니다.\n\n"
+                        f"{err}\n\n"
+                        + self._oauth_error_dialog_hint(),
+                    )
+                else:
+                    QMessageBox.warning(
+                        self,
+                        "경고",
+                        f"스프레드시트 매핑을 불러오지 못했습니다.\n\n{err}",
+                    )
+                self.is_order_file_valid = False
+                return
+
+            st = payload["store_type"]
+            self._spreadsheet_product_code_maps[st] = payload["mapping"]
+            if st == "coupang":
+                self._coupang_option_to_vp_product_no = payload.get("coupang_vp") or {}
+
+            try:
+                if st == "naver":
+                    self.process_naver_excel_file()
+                elif st == "coupang":
+                    self.process_coupang_excel_file()
+                self.is_order_file_valid = True
+            except Exception as e:
+                self.is_order_file_valid = False
+                print(f"❌ 파일 처리 중 오류 발생: {str(e)}")
+                if _is_likely_google_sheets_oauth_error(e):
+                    QMessageBox.critical(
+                        self,
+                        "오류",
+                        "Google 스프레드시트 연동 중 오류가 발생했습니다.\n\n"
+                        f"{str(e)}\n\n"
+                        + self._oauth_error_dialog_hint(),
+                    )
+                else:
+                    QMessageBox.warning(
+                        self,
+                        "오류",
+                        f"파일 처리 중 오류가 발생했습니다: {str(e)}",
+                    )
+        finally:
+            self._hide_busy_processing_overlay()
 
     def _on_startup_progress_tick(self):
         if getattr(self, "_startup_sync_progress_done", False):
@@ -2284,46 +2578,62 @@ class MainWindow(QMainWindow):
                 self.ui.filePathLabel.setText(filename)
                 self.statusBar().showMessage(f"파일 선택됨: {filename}")
                 print("✓ 파일이 성공적으로 선택되었습니다.")
-                self.refresh_order_indices_from_sheet(interactive=False)
 
-                # 스토어 타입에 따라 로고 표시
-                if self.store_type == "naver":
-                    logo_path = "image/naver-logo.png"
-                    logo_size = QSize(120, 40)  # 네이버 로고 크기
-                elif self.store_type == "coupang":
-                    logo_path = "image/coupang-logo.png"
-                    logo_size = QSize(120, 40)  # 쿠팡 로고 크기
-                elif self.store_type == "gmarket":
-                    logo_path = "image/gmarket-logo.png"
-                    logo_size = QSize(120, 40)  # 지마켓 로고 크기
-                
-                # 로고 이미지 로드 및 표시
-                if os.path.exists(logo_path):
-                    pixmap = QPixmap(logo_path)
-                    scaled_pixmap = pixmap.scaled(logo_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                    self.ui.label_logo.setPixmap(scaled_pixmap)
-                    self.ui.label_logo.setAlignment(Qt.AlignCenter)
-                else:
-                    print(f"! 로고 파일을 찾을 수 없습니다: {logo_path}")
-                
-                # 스토어 타입에 따라 다른 처리 메서드 호출
+                self._show_busy_processing_overlay(
+                    "주문 정보를 불러오는 중…",
+                    "스프레드시트와 엑셀을 처리하고 있습니다. 잠시만 기다려 주세요.",
+                )
+                QApplication.processEvents()
+
+                order_processing_async = False
                 try:
+                    self.refresh_order_indices_from_sheet(interactive=False)
+
+                    # 스토어 타입에 따라 로고 표시
                     if self.store_type == "naver":
-                        print("✓ 네이버 스토어 파일 처리 시작")
-                        self.process_naver_excel_file()
-                        self.is_order_file_valid = True  # 파일 처리 성공 시 플래그 설정
+                        logo_path = "image/naver-logo.png"
+                        logo_size = QSize(120, 40)  # 네이버 로고 크기
                     elif self.store_type == "coupang":
-                        print("✓ 쿠팡 스토어 파일 처리 시작")
-                        self.process_coupang_excel_file()
-                        self.is_order_file_valid = True  # 파일 처리 성공 시 플래그 설정
+                        logo_path = "image/coupang-logo.png"
+                        logo_size = QSize(120, 40)  # 쿠팡 로고 크기
                     elif self.store_type == "gmarket":
-                        print("✓ 지마켓 스토어 파일 처리 시작")
-                        self.process_gmarket_excel_file()
-                        self.is_order_file_valid = True  # 파일 처리 성공 시 플래그 설정
-                except Exception as e:
-                    self.is_order_file_valid = False
-                    print(f"❌ 파일 처리 중 오류 발생: {str(e)}")
-                    QMessageBox.warning(self, "오류", f"파일 처리 중 오류가 발생했습니다: {str(e)}")
+                        logo_path = "image/gmarket-logo.png"
+                        logo_size = QSize(120, 40)  # 지마켓 로고 크기
+
+                    # 로고 이미지 로드 및 표시
+                    if os.path.exists(logo_path):
+                        pixmap = QPixmap(logo_path)
+                        scaled_pixmap = pixmap.scaled(
+                            logo_size, Qt.KeepAspectRatio, Qt.SmoothTransformation
+                        )
+                        self.ui.label_logo.setPixmap(scaled_pixmap)
+                        self.ui.label_logo.setAlignment(Qt.AlignCenter)
+                    else:
+                        print(f"! 로고 파일을 찾을 수 없습니다: {logo_path}")
+
+                    # 스토어 타입에 따라 다른 처리 메서드 호출
+                    try:
+                        if self.store_type == "naver":
+                            print("✓ 네이버 스토어 파일 처리 시작")
+                            order_processing_async = True
+                            self._run_order_file_processing_with_async_mapping("naver")
+                        elif self.store_type == "coupang":
+                            print("✓ 쿠팡 스토어 파일 처리 시작")
+                            order_processing_async = True
+                            self._run_order_file_processing_with_async_mapping("coupang")
+                        elif self.store_type == "gmarket":
+                            print("✓ 지마켓 스토어 파일 처리 시작")
+                            self.process_gmarket_excel_file()
+                            self.is_order_file_valid = True
+                    except Exception as e:
+                        self.is_order_file_valid = False
+                        print(f"❌ 파일 처리 중 오류 발생: {str(e)}")
+                        QMessageBox.warning(
+                            self, "오류", f"파일 처리 중 오류가 발생했습니다: {str(e)}"
+                        )
+                finally:
+                    if not order_processing_async:
+                        self._hide_busy_processing_overlay()
             else:
                 self.is_order_file_valid = False
                 QMessageBox.warning(
