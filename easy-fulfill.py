@@ -33,6 +33,8 @@ except ImportError:  # gspread는 스프레드시트 매핑에만 필요
 SPREADSHEET_ID = "1F0l6FMjXvKXAR9WyDvxEWcRvji-TaJbBim_G12TJ2Pw"
 # 네이버 마크다운 상품 링크 (주문 처리 전용 고정 스토어)
 NAVER_SMARTSTORE_PRODUCT_URL_PREFIX = "https://smartstore.naver.com/higenis/products/"
+# 쿠팡 VP 상품 페이지 (스프레드시트 D열 상품번호 기준)
+COUPANG_VP_PRODUCT_URL_PREFIX = "https://www.coupang.com/vp/products/"
 # OAuth 경로·토큰: google_sheets_oauth.py (database-sync와 공유, google-oauth/)
 
 
@@ -287,6 +289,8 @@ class MainWindow(QMainWindow):
 
         # 스프레드시트 매핑 캐시 (네이버/쿠팡)
         self._spreadsheet_product_code_maps = {}
+        # 쿠팡: 옵션ID(E) 정규화 키 -> 스프레드시트 D열 상품번호(VP URL용)
+        self._coupang_option_to_vp_product_no = {}
         self._gspread_client = None
         
         # 인덱스 파일 경로 설정
@@ -322,22 +326,27 @@ class MainWindow(QMainWindow):
             s = s[:-2]
         return s
 
-    def _format_naver_product_name_markdown(self, product_name, product_no_normalized):
-        """상품명만 마크다운 링크로 감쌀 때 사용. 상품번호가 숫자만이 아니면 원문 유지."""
+    def _format_product_name_markdown_link(self, product_name, id_normalized, url_prefix):
+        """id가 숫자만일 때만 상품명을 마크다운 링크로 감쌉니다. 그 외는 원문 유지."""
         if not product_name or not product_name.strip():
             return product_name or ""
-        if not product_no_normalized or not product_no_normalized.isdigit():
+        if not id_normalized or not id_normalized.isdigit():
             return product_name
         if "]" in product_name:
             return product_name
-        return f"[{product_name}]({NAVER_SMARTSTORE_PRODUCT_URL_PREFIX}{product_no_normalized})"
+        return f"[{product_name}]({url_prefix}{id_normalized})"
+
+    def _format_naver_product_name_markdown(self, product_name, product_no_normalized):
+        return self._format_product_name_markdown_link(
+            product_name, product_no_normalized, NAVER_SMARTSTORE_PRODUCT_URL_PREFIX
+        )
 
     def _load_product_code_map_from_spreadsheet(self, store_type):
         """
         스프레드시트에서 상품코드 매핑을 로드합니다.
 
         - 네이버(1번 시트): A열=상품코드, E열=상품번호(스마트스토어)
-        - 쿠팡(2번 시트): A열=상품코드, E열=옵션 ID
+        - 쿠팡(2번 시트): A열=상품코드, D열=상품번호(VP URL), E열=옵션 ID
         """
         if store_type in self._spreadsheet_product_code_maps:
             return self._spreadsheet_product_code_maps[store_type]
@@ -362,8 +371,10 @@ class MainWindow(QMainWindow):
         data_start_idx = header_row_num  # 0-based index에서 header 다음 행
 
         mapping = {}
+        if store_type == "coupang":
+            self._coupang_option_to_vp_product_no = {}
         for row in values[data_start_idx:]:
-            # A(0)=상품코드, E(4)=키(상품번호/옵션ID)
+            # A(0)=상품코드, D(3)=쿠팡 상품번호(VP), E(4)=키(상품번호/옵션ID)
             product_code = row[0].strip() if len(row) > 0 else ""
             key_value = row[4] if len(row) > 4 else ""
 
@@ -376,6 +387,10 @@ class MainWindow(QMainWindow):
                 product_code_norm = ""
 
             mapping[key_norm] = product_code_norm
+            if store_type == "coupang":
+                vp_raw = row[3] if len(row) > 3 else ""
+                vp_norm = self._normalize_key_for_mapping(vp_raw)
+                self._coupang_option_to_vp_product_no[key_norm] = vp_norm
 
         self._spreadsheet_product_code_maps[store_type] = mapping
         print(f"✓ 스프레드시트 매핑 로드 완료: {store_type} - {len(mapping)}개")
@@ -1848,12 +1863,14 @@ class MainWindow(QMainWindow):
                     option_id = self._normalize_key_for_mapping(option_id_raw)
                 
                 product_code = product_code_map.get(option_id, '')  # 매칭되는 상품코드가 없으면 빈 문자열
+                vp_product_no = self._coupang_option_to_vp_product_no.get(option_id, '') if option_id else ''
                 
                 self.orders[order_number]['상품목록'].append({
                     '상품명': product_name,
                     '옵션': option,
                     '수량': quantity,
-                    '상품코드': product_code
+                    '상품코드': product_code,
+                    '쿠팡상품번호': vp_product_no,
                 })
             
             # 같은 주문자(수취인이름)로 주문 통합
@@ -1909,9 +1926,12 @@ class MainWindow(QMainWindow):
                     product_name = product['상품명']
                     quantity = product['수량']
                     option = product['옵션']
-                    product_code = product['상품코드']                    
-                    
-                    markdown_text += f"▶ [{product_code}]**[ {quantity} 개 ]** - {product_name} ( 옵션 : {option} )\n"
+                    product_code = product['상품코드']
+                    vp_no = product.get('쿠팡상품번호') or ''
+                    name_for_md = self._format_product_name_markdown_link(
+                        product_name, vp_no, COUPANG_VP_PRODUCT_URL_PREFIX
+                    )
+                    markdown_text += f"▶ [{product_code}]**[ {quantity} 개 ]** - {name_for_md} ( 옵션 : {option} )\n"
                 
                 markdown_text += "\n"
             
