@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QFileDialog, QMessageB
                               QInputDialog, QLineEdit, QTableWidgetItem, QLabel, 
                               QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QWidget)
 from PySide6.QtUiTools import QUiLoader
-from PySide6.QtCore import QFile, QIODevice, Qt, QSize, QUrl
+from PySide6.QtCore import QFile, QIODevice, Qt, QSize, QUrl, QTimer
 from PySide6.QtGui import QPixmap, QImage, QIcon, QAction, QDesktopServices
 import requests
 from io import BytesIO
@@ -611,7 +611,43 @@ class MainWindow(QMainWindow):
         self.setStatusBar(window.statusbar)
         self.setWindowTitle(window.windowTitle())
         self.resize(window.size())
-        
+        self._order_ship_splitter_initialized = False
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if not self._order_ship_splitter_initialized:
+            QTimer.singleShot(0, self._on_first_show_splitter)
+
+    def _on_first_show_splitter(self):
+        self._apply_order_ship_splitter_sizes()
+        self._order_ship_splitter_initialized = True
+
+    def _apply_order_ship_splitter_sizes(self):
+        """주문·발송 탭 스플리터 초기 비율 (레이아웃 적용 후 한 프레임 뒤에 호출)."""
+        splitter = getattr(self.ui, "splitter_order_ship", None)
+        if splitter is None:
+            return
+
+        def _stretch_last_column(panel: QWidget):
+            lay = panel.layout()
+            if isinstance(lay, QVBoxLayout) and lay.count() > 0:
+                last = lay.count() - 1
+                for i in range(lay.count()):
+                    lay.setStretch(i, 1 if i == last else 0)
+
+        op = getattr(self.ui, "widget_order_panel", None)
+        spanel = getattr(self.ui, "widget_ship_panel", None)
+        if op:
+            _stretch_last_column(op)
+        if spanel:
+            _stretch_last_column(spanel)
+
+        w = splitter.width()
+        if w < 200:
+            w = max(self.width() - 48, 1200)
+        left = int(w * 0.52)
+        splitter.setSizes([left, max(w - left, 200)])
+
     def setup_toolbar(self):
         """툴바를 설정합니다."""
         # 툴바 생성
@@ -793,7 +829,7 @@ class MainWindow(QMainWindow):
         
     def setup_connections(self):
         """버튼과 메뉴 동작을 연결합니다."""        
-        # 발송 처리 탭 버튼 연결
+        # 주문·발송 탭(송장 영역) 버튼 연결
         self.ui.pushButton_load_invoice.clicked.connect(self.load_invoice_file)
         self.ui.pushButton_generate_invoice.clicked.connect(self.generate_invoice_file)
         
@@ -2317,7 +2353,7 @@ class MainWindow(QMainWindow):
         self.ui.label_logo.clear()
         self.ui.label_logo.setText("image")
         
-        # 발송처리 탭 텍스트 초기화
+        # 송장 미리보기(주문·발송 탭) 텍스트 초기화
         self.ui.label_invoice.setText("송장 정보가 없습니다.")
         self.ui.label_generate_invoice.setText("생성 버튼을 누르세요.")
         self.ui.plainTextEdit_invoice.setPlainText("")
