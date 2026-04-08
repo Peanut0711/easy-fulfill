@@ -776,6 +776,105 @@
          </property>
         </widget>
        </widget>
+       <widget class="QGroupBox" name="groupBox_google_sheets">
+        <property name="geometry">
+         <rect>
+          <x>30</x>
+          <y>520</y>
+          <width>640</width>
+          <height>155</height>
+         </rect>
+        </property>
+        <property name="title">
+         <string>Google Sheets 연동</string>
+        </property>
+        <widget class="QLabel" name="label_google_auth_status">
+         <property name="geometry">
+          <rect>
+           <x>12</x>
+           <y>28</y>
+           <width>400</width>
+           <height>60</height>
+          </rect>
+         </property>
+         <property name="text">
+          <string>상태를 불러오는 중…</string>
+         </property>
+         <property name="wordWrap">
+          <bool>true</bool>
+         </property>
+         <property name="alignment">
+          <set>Qt::AlignmentFlag::AlignTop|Qt::AlignmentFlag::AlignLeft</set>
+         </property>
+        </widget>
+        <widget class="QLabel" name="label_google_auth_tip">
+         <property name="geometry">
+          <rect>
+           <x>12</x>
+           <y>92</y>
+           <width>620</width>
+           <height>50</height>
+          </rect>
+         </property>
+         <property name="font">
+          <font>
+           <family>맑은 고딕</family>
+           <pointsize>8</pointsize>
+          </font>
+         </property>
+         <property name="text">
+          <string>invalid_scope 등 Google 인증 오류가 나면 「연결 해제」 후 「재인증」을 눌러 주세요. (google-oauth 폴더의 token.json 갱신)</string>
+         </property>
+         <property name="wordWrap">
+          <bool>true</bool>
+         </property>
+        </widget>
+        <widget class="QPushButton" name="pushButton_google_reauth">
+         <property name="geometry">
+          <rect>
+           <x>430</x>
+           <y>28</y>
+           <width>95</width>
+           <height>32</height>
+          </rect>
+         </property>
+         <property name="text">
+          <string>재인증</string>
+         </property>
+         <property name="toolTip">
+          <string>저장된 로그인을 지우고 브라우저에서 다시 Google 계정 연결</string>
+         </property>
+        </widget>
+        <widget class="QPushButton" name="pushButton_google_disconnect">
+         <property name="geometry">
+          <rect>
+           <x>530</x>
+           <y>28</y>
+           <width>95</width>
+           <height>32</height>
+          </rect>
+         </property>
+         <property name="text">
+          <string>연결 해제</string>
+         </property>
+         <property name="toolTip">
+          <string>이 PC의 token.json만 삭제합니다. (계정 비밀번호 변경과는 별개)</string>
+         </property>
+        </widget>
+        <widget class="QPushButton" name="pushButton_google_open_oauth_folder">
+         <property name="geometry">
+          <rect>
+           <x>430</x>
+           <y>68</y>
+           <width>195</width>
+           <height>28</height>
+          </rect>
+         </property>
+         <property name="text">
+          <string>google-oauth 폴더 열기</string>
+         </property>
+        </widget>
+       </widget>
       </widget>
      </widget>
     </item>

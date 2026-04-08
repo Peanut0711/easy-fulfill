@@ -48,3 +48,38 @@ def get_authorized_gspread_client():
         TOKEN_PATH.write_text(creds.to_json(), encoding="utf-8")
 
     return gspread.authorize(creds)
+
+
+def delete_oauth_token_file() -> bool:
+    """로컬 token.json만 삭제합니다. 있어서 지웠으면 True, 원래 없으면 False."""
+    if TOKEN_PATH.exists():
+        TOKEN_PATH.unlink()
+        return True
+    return False
+
+
+def get_oauth_status_description() -> str:
+    """환경설정 등에 표시할 Google Sheets OAuth 상태 설명(짧은 단락)."""
+    if not OAUTH_CREDENTIAL_PATH.exists():
+        return (
+            "OAuth 클라이언트 파일(credentials.json)이 없습니다.\n"
+            f"경로: {OAUTH_CREDENTIAL_PATH}"
+        )
+    if not TOKEN_PATH.exists():
+        return (
+            "저장된 Google 로그인이 없습니다.\n"
+            "「재인증」으로 로그인하거나, 주문 엑셀을 불러올 때 브라우저 로그인이 열릴 수 있습니다."
+        )
+    try:
+        creds = Credentials.from_authorized_user_file(str(TOKEN_PATH), SCOPES)
+    except Exception:
+        return "token.json을 읽을 수 없습니다.\n「연결 해제」 후 「재인증」을 시도하세요."
+
+    if creds.valid:
+        return "상태: 연결됨 (저장된 토큰이 유효합니다)."
+    if creds.expired and creds.refresh_token:
+        return (
+            "상태: 토큰 만료됨 — 사용 시 자동 갱신을 시도합니다.\n"
+            "문제가 계속되면 「연결 해제」 후 「재인증」하세요."
+        )
+    return "상태: 로그인 정보가 불완전합니다.\n「재인증」이 필요합니다."

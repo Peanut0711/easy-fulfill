@@ -272,6 +272,29 @@ class ImageDialog(QDialog):
         except Exception as e:
             self.image_label.setText(f"이미지를 불러올 수 없습니다.\n{str(e)}")
 
+
+def _is_likely_google_sheets_oauth_error(exc: BaseException) -> bool:
+    """스프레드시트 OAuth·토큰 문제로 복구(재인증) 가능한 오류인지 휴리스틱 판별."""
+    text = str(exc).lower()
+    for needle in (
+        "invalid_scope",
+        "invalid_grant",
+        "token has been expired",
+        "token expired",
+        "could not refresh",
+        "bad request",
+        "unauthorized",
+        "access denied",
+        "refresh",
+    ):
+        if needle in text:
+            return True
+    mod = getattr(type(exc), "__module__", "") or ""
+    if "google.auth" in mod or "google_auth" in mod:
+        return True
+    return False
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -309,7 +332,8 @@ class MainWindow(QMainWindow):
         # 인덱스 값 로드
         self.load_index_values()
         self.load_app_settings()
-        
+        self._refresh_google_auth_status_ui()
+
         print("초기화 완료")
 
     def _normalize_key_for_mapping(self, value):
@@ -856,7 +880,109 @@ class MainWindow(QMainWindow):
         self.ui.actionOpenExcel.triggered.connect(self.select_excel_file)
         self.ui.actionExit.triggered.connect(self.close)
         self.ui.actionAbout.triggered.connect(self.show_about)
+
+        if hasattr(self.ui, "pushButton_google_reauth"):
+            self.ui.pushButton_google_reauth.clicked.connect(self._on_google_reauth_clicked)
+        if hasattr(self.ui, "pushButton_google_disconnect"):
+            self.ui.pushButton_google_disconnect.clicked.connect(self._on_google_disconnect_clicked)
+        if hasattr(self.ui, "pushButton_google_open_oauth_folder"):
+            self.ui.pushButton_google_open_oauth_folder.clicked.connect(
+                self._on_google_open_oauth_folder_clicked
+            )
+        if hasattr(self.ui, "tabWidget"):
+            self.ui.tabWidget.currentChanged.connect(self._on_main_tab_changed)
+
         print("버튼과 메뉴 연결 완료")
+
+    def _invalidate_google_sheets_client_and_caches(self):
+        self._gspread_client = None
+        self._spreadsheet_product_code_maps = {}
+        self._coupang_option_to_vp_product_no = {}
+
+    def _refresh_google_auth_status_ui(self):
+        if not hasattr(self.ui, "label_google_auth_status"):
+            return
+        try:
+            from google_sheets_oauth import get_oauth_status_description
+
+            self.ui.label_google_auth_status.setText(get_oauth_status_description())
+        except Exception as e:
+            self.ui.label_google_auth_status.setText(f"상태를 표시할 수 없습니다.\n{e}")
+
+    def _on_main_tab_changed(self, index):
+        if index == 1:
+            self._refresh_google_auth_status_ui()
+
+    def _on_google_disconnect_clicked(self):
+        reply = QMessageBox.question(
+            self,
+            "연결 해제",
+            "이 PC에 저장된 Google 로그인 정보(token.json)를 삭제할까요?\n"
+            "다음에 스프레드시트 연동 시 다시 브라우저 로그인이 필요합니다.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        from google_sheets_oauth import delete_oauth_token_file
+
+        deleted = delete_oauth_token_file()
+        self._invalidate_google_sheets_client_and_caches()
+        self._refresh_google_auth_status_ui()
+        if deleted:
+            QMessageBox.information(self, "연결 해제", "저장된 로그인 정보를 삭제했습니다.")
+        else:
+            QMessageBox.information(self, "연결 해제", "삭제할 token.json이 없었습니다.")
+
+    def _on_google_reauth_clicked(self):
+        reply = QMessageBox.question(
+            self,
+            "재인증",
+            "브라우저가 열리면 Google 계정으로 로그인·권한 승인을 완료해 주세요.\n"
+            "진행 시 기존 token.json은 삭제됩니다.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        if gspread is None:
+            QMessageBox.warning(self, "재인증", "gspread 패키지가 필요합니다. (pip install gspread)")
+            return
+        try:
+            from google_sheets_oauth import delete_oauth_token_file, get_authorized_gspread_client
+        except ImportError:
+            QMessageBox.warning(self, "재인증", "google-auth-oauthlib 패키지가 필요합니다.")
+            return
+
+        delete_oauth_token_file()
+        self._invalidate_google_sheets_client_and_caches()
+        try:
+            self._gspread_client = get_authorized_gspread_client()
+        except Exception as e:
+            self._gspread_client = None
+            QMessageBox.critical(
+                self,
+                "재인증 실패",
+                f"Google 로그인에 실패했습니다.\n\n{e}",
+            )
+            self._refresh_google_auth_status_ui()
+            return
+        self._refresh_google_auth_status_ui()
+        QMessageBox.information(self, "재인증", "Google Sheets 연동이 완료되었습니다.")
+
+    def _on_google_open_oauth_folder_clicked(self):
+        from google_sheets_oauth import GOOGLE_AUTH_DIR
+
+        GOOGLE_AUTH_DIR.mkdir(parents=True, exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(GOOGLE_AUTH_DIR.resolve())))
+
+    @staticmethod
+    def _oauth_error_dialog_hint() -> str:
+        return (
+            "「환경설정」탭 → 「Google Sheets 연동」에서 "
+            "「연결 해제」 후 「재인증」을 눌러 보세요."
+        )
 
     def generate_quick_excel(self):
         """클립보드 정보를 기반으로 단건 엑셀을 생성합니다."""
@@ -1812,17 +1938,26 @@ class MainWindow(QMainWindow):
         except Exception as e:
             error_msg = str(e)
             print(f"❌ 엑셀 파일 처리 중 오류 발생: {error_msg}")
-            QMessageBox.critical(
-                self,
-                "오류",
-                "엑셀 파일 처리 중 오류가 발생했습니다.\n\n"
-                f"{error_msg}\n\n"
-                "다음 사항을 확인해주세요:\n"
-                "1. 파일이 손상되지 않았는지\n"
-                "2. 다른 프로그램에서 파일을 열고 있지 않은지\n"
-                "3. 파일을 다시 저장하거나 다른 형식(.xlsx)으로 변환해보세요."
-            )
-            
+            if _is_likely_google_sheets_oauth_error(e):
+                QMessageBox.critical(
+                    self,
+                    "오류",
+                    "Google 스프레드시트 연동 중 오류가 발생했습니다.\n\n"
+                    f"{error_msg}\n\n"
+                    + self._oauth_error_dialog_hint(),
+                )
+            else:
+                QMessageBox.critical(
+                    self,
+                    "오류",
+                    "엑셀 파일 처리 중 오류가 발생했습니다.\n\n"
+                    f"{error_msg}\n\n"
+                    "다음 사항을 확인해주세요:\n"
+                    "1. 파일이 손상되지 않았는지\n"
+                    "2. 다른 프로그램에서 파일을 열고 있지 않은지\n"
+                    "3. 파일을 다시 저장하거나 다른 형식(.xlsx)으로 변환해보세요.",
+                )
+
     def process_coupang_excel_file(self):
         """쿠팡 스토어 엑셀 파일에서 주문번호를 처리합니다."""
         try:
@@ -1857,7 +1992,10 @@ class MainWindow(QMainWindow):
                 product_code_map = self._load_product_code_map_from_spreadsheet("coupang")
             except Exception as e:
                 print(f"! 스프레드시트 매핑 로드 중 오류 발생: {str(e)}")
-                QMessageBox.warning(self, "경고", f"스프레드시트 매핑 로드 중 오류가 발생했습니다.\n\n{str(e)}")
+                msg = f"스프레드시트 매핑 로드 중 오류가 발생했습니다.\n\n{str(e)}"
+                if _is_likely_google_sheets_oauth_error(e):
+                    msg += "\n\n" + self._oauth_error_dialog_hint()
+                QMessageBox.warning(self, "경고", msg)
                 return
             
             # 필요한 열 찾기
@@ -2033,12 +2171,21 @@ class MainWindow(QMainWindow):
         except Exception as e:
             error_msg = str(e)
             print(f"❌ 엑셀 파일 처리 중 오류 발생: {error_msg}")
-            QMessageBox.critical(
-                self,
-                "오류",
-                f"엑셀 파일 처리 중 오류가 발생했습니다.\n\n{error_msg}"
-            )   
-    
+            if _is_likely_google_sheets_oauth_error(e):
+                QMessageBox.critical(
+                    self,
+                    "오류",
+                    "Google 스프레드시트 연동 중 오류가 발생했습니다.\n\n"
+                    f"{error_msg}\n\n"
+                    + self._oauth_error_dialog_hint(),
+                )
+            else:
+                QMessageBox.critical(
+                    self,
+                    "오류",
+                    f"엑셀 파일 처리 중 오류가 발생했습니다.\n\n{error_msg}",
+                )
+
     def process_gmarket_excel_file(self):
         """지마켓 스토어의 주문 정보 엑셀 파일을 처리합니다."""
         try:
@@ -2320,12 +2467,21 @@ class MainWindow(QMainWindow):
         except Exception as e:
             error_msg = str(e)
             print(f"❌ 엑셀 파일 처리 중 오류 발생: {error_msg}")
-            QMessageBox.critical(
-                self,
-                "오류",
-                f"엑셀 파일 처리 중 오류가 발생했습니다.\n\n{error_msg}"
-            )           
-    
+            if _is_likely_google_sheets_oauth_error(e):
+                QMessageBox.critical(
+                    self,
+                    "오류",
+                    "Google 스프레드시트 연동 중 오류가 발생했습니다.\n\n"
+                    f"{error_msg}\n\n"
+                    + self._oauth_error_dialog_hint(),
+                )
+            else:
+                QMessageBox.critical(
+                    self,
+                    "오류",
+                    f"엑셀 파일 처리 중 오류가 발생했습니다.\n\n{error_msg}",
+                )
+
     def generate_work_order(self):
         """작업지시서 생성 버튼 클릭 시 실행되는 함수입니다."""
         if not self.selected_file_path:
