@@ -31,6 +31,8 @@ except ImportError:  # gspread는 스프레드시트 매핑에만 필요
     gspread = None
 # 구글 스프레드시트(로컬 DB 대체) 설정
 SPREADSHEET_ID = "1F0l6FMjXvKXAR9WyDvxEWcRvji-TaJbBim_G12TJ2Pw"
+# 네이버 마크다운 상품 링크 (주문 처리 전용 고정 스토어)
+NAVER_SMARTSTORE_PRODUCT_URL_PREFIX = "https://smartstore.naver.com/higenis/products/"
 # OAuth 경로·토큰: google_sheets_oauth.py (database-sync와 공유, google-oauth/)
 
 
@@ -319,6 +321,16 @@ class MainWindow(QMainWindow):
         if s.endswith(".0"):
             s = s[:-2]
         return s
+
+    def _format_naver_product_name_markdown(self, product_name, product_no_normalized):
+        """상품명만 마크다운 링크로 감쌀 때 사용. 상품번호가 숫자만이 아니면 원문 유지."""
+        if not product_name or not product_name.strip():
+            return product_name or ""
+        if not product_no_normalized or not product_no_normalized.isdigit():
+            return product_name
+        if "]" in product_name:
+            return product_name
+        return f"[{product_name}]({NAVER_SMARTSTORE_PRODUCT_URL_PREFIX}{product_no_normalized})"
 
     def _load_product_code_map_from_spreadsheet(self, store_type):
         """
@@ -1617,7 +1629,8 @@ class MainWindow(QMainWindow):
                             '수량': quantity,
                             '옵션': option,
                             '상품코드': product_code,
-                            '금액': product_amount
+                            '금액': product_amount,
+                            '상품번호': product_number,
                         })
                         
                         # 수취인 정보가 다른 경우 경고
@@ -1678,8 +1691,11 @@ class MainWindow(QMainWindow):
                     quantity = product['수량']
                     option = product['옵션']
                     product_code = product['상품코드']
-                    
-                    markdown_text += f"▶ [{product_code}]**[ {quantity} 개 ]** - {product_name} ( 옵션 : {option} )\n"
+                    product_no = product.get('상품번호') or ''
+                    name_for_md = self._format_naver_product_name_markdown(
+                        product_name, product_no
+                    )
+                    markdown_text += f"▶ [{product_code}]**[ {quantity} 개 ]** - {name_for_md} ( 옵션 : {option} )\n"
                 
                 markdown_text += "\n"  # 주문 간 구분을 위한 빈 줄
             
