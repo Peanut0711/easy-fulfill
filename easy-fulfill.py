@@ -1300,14 +1300,14 @@ class MainWindow(QMainWindow):
         self._startup_sync_progress_done = False
         self._layout_startup_overlay_full()
         self._startup_overlay.raise_()
-        print("[시트동기화 디버그] 로딩 UI 표시 직전")
+        # print("[시트동기화 디버그] 로딩 UI 표시 직전")
         self._startup_sync_debug_t0 = time.perf_counter()
         self._startup_overlay.show()
-        t_after_show = time.perf_counter()
-        print(
-            f"[시트동기화 디버그] 로딩 UI 표시 직후 "
-            f"(레이아웃·show): {(t_after_show - self._startup_sync_debug_t0) * 1000:.1f} ms"
-        )
+        # t_after_show = time.perf_counter()
+        # print(
+        #     f"[시트동기화 디버그] 로딩 UI 표시 직후 "
+        #     f"(레이아웃·show): {(t_after_show - self._startup_sync_debug_t0) * 1000:.1f} ms"
+        # )
         self._start_startup_overlay_entrance_anim()
         self._startup_sync_thread = OrderIndexStartupSyncThread(self)
         self._startup_sync_thread.result_ready.connect(self._on_startup_order_index_sync_finished)
@@ -1323,19 +1323,19 @@ class MainWindow(QMainWindow):
         self._startup_sync_thread = None
 
     def _on_startup_order_index_sync_finished(self, payload: dict):
-        t_slot_enter = time.perf_counter()
-        t0 = getattr(self, "_startup_sync_debug_t0", None)
-        t_thr = getattr(self, "_startup_sync_debug_t_thread_start", None)
-        if t0 is not None:
-            print(
-                f"[시트동기화 디버그] 결과 수신(슬롯 진입) "
-                f"— UI표시직전~여기까지: {(t_slot_enter - t0) * 1000:.1f} ms"
-            )
-        if t_thr is not None:
-            print(
-                f"[시트동기화 디버그] 백그라운드 시트 작업 "
-                f"(thread.start~결과): {(t_slot_enter - t_thr) * 1000:.1f} ms"
-            )
+        # t_slot_enter = time.perf_counter()
+        # t0 = getattr(self, "_startup_sync_debug_t0", None)
+        # t_thr = getattr(self, "_startup_sync_debug_t_thread_start", None)
+        # if t0 is not None:
+        #     print(
+        #         f"[시트동기화 디버그] 결과 수신(슬롯 진입) "
+        #         f"— UI표시직전~여기까지: {(t_slot_enter - t0) * 1000:.1f} ms"
+        #     )
+        # if t_thr is not None:
+        #     print(
+        #         f"[시트동기화 디버그] 백그라운드 시트 작업 "
+        #         f"(thread.start~결과): {(t_slot_enter - t_thr) * 1000:.1f} ms"
+        #     )
 
         self._startup_sync_progress_done = True
         if getattr(self, "_startup_progress_timer", None) is not None:
@@ -1393,15 +1393,15 @@ class MainWindow(QMainWindow):
             self._index_sheet_last_sync_display = datetime.now()
             self._update_index_sheet_sync_label()
         finally:
-            t0f = getattr(self, "_startup_sync_debug_t0", None)
-            if t0f is not None:
-                total_ms = (time.perf_counter() - t0f) * 1000
-                ok = payload.get("ok")
-                kind = payload.get("kind")
-                print(
-                    f"[시트동기화 디버그] UI표시직전~슬롯·UI반영 전체 완료: "
-                    f"{total_ms:.1f} ms | ok={ok} kind={kind}"
-                )
+            # t0f = getattr(self, "_startup_sync_debug_t0", None)
+            # if t0f is not None:
+            #     total_ms = (time.perf_counter() - t0f) * 1000
+            #     ok = payload.get("ok")
+            #     kind = payload.get("kind")
+            #     print(
+            #         f"[시트동기화 디버그] UI표시직전~슬롯·UI반영 전체 완료: "
+            #         f"{total_ms:.1f} ms | ok={ok} kind={kind}"
+            #     )
             QTimer.singleShot(
                 STARTUP_SYNC_PROGRESS_HIDE_DELAY_MS,
                 self._hide_startup_loading_overlay_deferred,
