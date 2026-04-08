@@ -1220,7 +1220,6 @@ class MainWindow(QMainWindow):
     def _on_main_tab_changed(self, index):
         if index == 1:
             self._refresh_google_auth_status_ui()
-            self.refresh_order_indices_from_sheet(interactive=False)
 
     def _on_google_disconnect_clicked(self):
         reply = QMessageBox.question(
