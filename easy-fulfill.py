@@ -36,6 +36,12 @@ NAVER_SMARTSTORE_PRODUCT_URL_PREFIX = "https://smartstore.naver.com/higenis/prod
 # 쿠팡 VP 상품 페이지 (스프레드시트 D열 상품번호 기준)
 COUPANG_VP_PRODUCT_URL_PREFIX = "https://www.coupang.com/vp/products/"
 # OAuth 경로·토큰: google_sheets_oauth.py (database-sync와 공유, google-oauth/)
+# 일별 주문 인덱스(네이버·쿠팡·지마켓) 공유용 — 스프레드시트에서 세 번째 탭(gspread 워크시트 인덱스 2)
+ORDER_INDEX_WORKSHEET_INDEX = 2
+ORDER_INDEX_SHEET_TITLE = "일별 주문번호"
+ORDER_INDEX_SHEET_HEADERS = ["날짜", "네이버", "쿠팡", "지마켓"]
+ORDER_INDEX_SHEET_POLL_MS = 150_000  # 2.5분 (2~3분 간격)
+ORDER_INDEX_SHEET_PUSH_DEBOUNCE_MS = 800
 
 
 class ImageDialog(QDialog):
@@ -319,6 +325,15 @@ class MainWindow(QMainWindow):
         self.current_idx_naver = 1
         self.current_idx_coupang = 1
         self.current_idx_gmarket = 1
+
+        self._index_sheet_push_pending = False
+        self._index_sheet_last_sync_display = None
+        self._index_sheet_push_timer = QTimer(self)
+        self._index_sheet_push_timer.setSingleShot(True)
+        self._index_sheet_push_timer.timeout.connect(self._flush_order_indices_to_sheet)
+        self._index_sheet_poll_timer = QTimer(self)
+        self._index_sheet_poll_timer.timeout.connect(self._on_order_index_sheet_poll)
+        self._last_refresh_created_today_row = False
         
         self.load_ui()
         self.setup_connections()
@@ -328,6 +343,8 @@ class MainWindow(QMainWindow):
         self.load_index_values()
         self.load_app_settings()
         self._refresh_google_auth_status_ui()
+        self._index_sheet_poll_timer.start(ORDER_INDEX_SHEET_POLL_MS)
+        self.refresh_order_indices_from_sheet(interactive=False)
 
         print("초기화 완료")
 
@@ -482,6 +499,7 @@ class MainWindow(QMainWindow):
 
     def load_index_values(self):
         """저장된 인덱스 값을 로드합니다."""
+        self._block_index_line_edit_signals(True)
         try:
             if self.index_file_path.exists():
                 with open(self.index_file_path, 'r', encoding='utf-8') as f:
@@ -528,44 +546,44 @@ class MainWindow(QMainWindow):
                 self.ui.lineEdit_idx_gmarket.setText('1')
             if hasattr(self.ui, 'lineEdit_idx_coupang'):
                 self.ui.lineEdit_idx_coupang.setText('1')
+        finally:
+            self._block_index_line_edit_signals(False)
 
-    def save_index_values(self):
-        """현재 인덱스 값을 저장합니다."""
+    def _persist_index_values_to_json(self):
+        """order_index.json 에만 저장합니다(스프레드시트 푸시 없음)."""
+        self.index_file_path.parent.mkdir(exist_ok=True)
+
+        index_data = {}
+        if self.index_file_path.exists() and self.index_file_path.stat().st_size > 0:
+            try:
+                with open(self.index_file_path, 'r', encoding='utf-8') as f:
+                    index_data = json.load(f)
+            except json.JSONDecodeError:
+                print("! 인덱스 파일이 손상되었습니다. 새로 생성합니다.")
+                index_data = {}
+
+        today = date.today().strftime('%Y-%m-%d')
+        if today not in index_data:
+            index_data[today] = {}
+
+        index_data[today]['naver'] = self.current_idx_naver
+        index_data[today]['gmarket'] = self.current_idx_gmarket
+        index_data[today]['coupang'] = self.current_idx_coupang
+
+        with open(self.index_file_path, 'w', encoding='utf-8') as f:
+            json.dump(index_data, f, ensure_ascii=False, indent=2)
+
+        print(f"✓ 인덱스 값 저장 완료 (날짜: {today})")
+        print(f"  - 네이버: {self.current_idx_naver}")
+        print(f"  - 지마켓: {self.current_idx_gmarket}")
+        print(f"  - 쿠팡: {self.current_idx_coupang}")
+
+    def save_index_values(self, push_sheet=True):
+        """현재 인덱스 값을 저장합니다. 로컬 JSON 후 스프레드시트 반영은 디바운스됩니다."""
         try:
-            # database 디렉토리 생성
-            self.index_file_path.parent.mkdir(exist_ok=True)
-            
-            # 기존 데이터 로드
-            index_data = {}
-            if self.index_file_path.exists() and self.index_file_path.stat().st_size > 0:
-                try:
-                    with open(self.index_file_path, 'r', encoding='utf-8') as f:
-                        index_data = json.load(f)
-                except json.JSONDecodeError:
-                    print("! 인덱스 파일이 손상되었습니다. 새로 생성합니다.")
-                    index_data = {}
-            
-            # 오늘 날짜의 데이터 업데이트
-            today = date.today().strftime('%Y-%m-%d')
-            if today not in index_data:
-                index_data[today] = {}
-            
-            # 인덱스 값 저장
-            index_data[today]['naver'] = self.current_idx_naver
-            index_data[today]['gmarket'] = self.current_idx_gmarket
-            index_data[today]['coupang'] = self.current_idx_coupang
-            
-            # 파일에 저장
-            with open(self.index_file_path, 'w', encoding='utf-8') as f:
-                json.dump(index_data, f, ensure_ascii=False, indent=2)
-            
-            print(f"✓ 인덱스 값 저장 완료 (날짜: {today})")
-            print(f"  - 네이버: {self.current_idx_naver}")
-            print(f"  - 지마켓: {self.current_idx_gmarket}")
-            print(f"  - 쿠팡: {self.current_idx_coupang}")
+            self._persist_index_values_to_json()
         except Exception as e:
             print(f"! 인덱스 값 저장 중 오류 발생: {str(e)}")
-            # 오류 발생 시 파일이 손상되지 않도록 기존 파일 백업
             if self.index_file_path.exists():
                 backup_path = self.index_file_path.with_suffix('.json.bak')
                 try:
@@ -573,26 +591,317 @@ class MainWindow(QMainWindow):
                     print(f"! 기존 인덱스 파일을 백업했습니다: {backup_path}")
                 except Exception as backup_error:
                     print(f"! 백업 파일 생성 실패: {str(backup_error)}")
+            return
+
+        self._update_index_sheet_sync_label()
+        if push_sheet:
+            self._schedule_order_index_sheet_push()
+
+    @staticmethod
+    def _parse_order_index_cell(value, default=1):
+        """스프레드시트·입력 칸에서 정수 인덱스로 변환합니다."""
+        if value is None:
+            return default
+        s = str(value).strip()
+        if not s:
+            return default
+        try:
+            n = int(s.replace(",", ""))
+            return n if n >= 1 else default
+        except ValueError:
+            return default
+
+    def _block_index_line_edit_signals(self, block):
+        for name in ("lineEdit_idx_naver", "lineEdit_idx_coupang", "lineEdit_idx_gmarket"):
+            w = getattr(self.ui, name, None)
+            if w:
+                w.blockSignals(block)
+
+    def _init_order_index_worksheet_if_blank(self, ws):
+        """인덱스 시트가 비어 있으면 헤더·오늘 날짜·1,1,1 행을 씁니다."""
+        if ws.get_all_values():
+            return
+        today = date.today().strftime("%Y-%m-%d")
+        ws.update(
+            [ORDER_INDEX_SHEET_HEADERS, [today, 1, 1, 1]],
+            range_name="A1:D2",
+        )
+        print(
+            f"✓ 「{ORDER_INDEX_SHEET_TITLE}」 시트에 헤더와 오늘({today}) 인덱스 1·1·1을 초기 입력했습니다."
+        )
+
+    def _get_order_index_worksheet(self):
+        if gspread is None:
+            raise ImportError("gspread 패키지가 필요합니다. (pip install gspread)")
+        gc = self._get_gspread_client()
+        spreadsheet = gc.open_by_key(SPREADSHEET_ID)
+        worksheets = spreadsheet.worksheets()
+
+        # 3번째 탭(index 2)까지 앞에 시트가 부족하면 자동 생성 불가(네이버·쿠팡 탭 먼저 필요)
+        if len(worksheets) < ORDER_INDEX_WORKSHEET_INDEX:
+            raise ValueError(
+                f"스프레드시트에「{ORDER_INDEX_SHEET_TITLE}」({ORDER_INDEX_WORKSHEET_INDEX + 1}번째 탭)을 "
+                f"둘 공간이 없습니다. 앞쪽 탭이 {ORDER_INDEX_WORKSHEET_INDEX}개(예: 네이버·쿠팡 DB) "
+                f"있어야 합니다. (현재 탭 {len(worksheets)}개)"
+            )
+
+        if len(worksheets) == ORDER_INDEX_WORKSHEET_INDEX:
+            spreadsheet.add_worksheet(
+                title=ORDER_INDEX_SHEET_TITLE,
+                rows=100,
+                cols=10,
+                index=ORDER_INDEX_WORKSHEET_INDEX,
+            )
+            print(f"✓ 스프레드시트에 「{ORDER_INDEX_SHEET_TITLE}」 탭을 만들었습니다.")
+
+        ws = spreadsheet.get_worksheet(ORDER_INDEX_WORKSHEET_INDEX)
+        self._init_order_index_worksheet_if_blank(ws)
+        return ws
+
+    def _sheet_row_looks_like_order_index_header(self, row):
+        if not row:
+            return False
+        cell = (row[0] or "").strip()
+        return cell in ("날짜", "date", "Date")
+
+    def _read_today_order_indices_from_sheet(self):
+        """OAuth·시트 OK이고 오늘 행이 있을 때만 dict, 없으면 None."""
+        ws = self._get_order_index_worksheet()
+        values = ws.get_all_values()
+        if not values:
+            return None
+        today = date.today().strftime("%Y-%m-%d")
+        header_like = self._sheet_row_looks_like_order_index_header(values[0])
+        data_rows = values[1:] if header_like else values
+        for row in data_rows:
+            if not row:
+                continue
+            if (row[0] or "").strip() != today:
+                continue
+            naver = self._parse_order_index_cell(row[1] if len(row) > 1 else None)
+            coupang = self._parse_order_index_cell(row[2] if len(row) > 2 else None)
+            gmarket = self._parse_order_index_cell(row[3] if len(row) > 3 else None)
+            return {"naver": naver, "coupang": coupang, "gmarket": gmarket}
+        return None
+
+    def _write_order_indices_to_sheet(self):
+        ws = self._get_order_index_worksheet()
+        today = date.today().strftime("%Y-%m-%d")
+        n, c, g = self.current_idx_naver, self.current_idx_coupang, self.current_idx_gmarket
+        values = ws.get_all_values()
+        if not values:
+            ws.update(
+                [ORDER_INDEX_SHEET_HEADERS, [today, n, c, g]],
+                range_name="A1:D2",
+            )
+            return
+
+        header_like = self._sheet_row_looks_like_order_index_header(values[0])
+        if header_like:
+            search_ranges = list(enumerate(values[1:], start=2))
+        else:
+            search_ranges = list(enumerate(values, start=1))
+
+        row_1based = None
+        for ridx, row in search_ranges:
+            if row and (row[0] or "").strip() == today:
+                row_1based = ridx
+                break
+
+        if row_1based is not None:
+            ws.update([[n, c, g]], range_name=f"B{row_1based}:D{row_1based}")
+        else:
+            ws.append_row([today, n, c, g])
+
+    def _apply_order_indices_to_ui(self, naver, coupang, gmarket):
+        self.current_idx_naver = naver
+        self.current_idx_coupang = coupang
+        self.current_idx_gmarket = gmarket
+        self._block_index_line_edit_signals(True)
+        try:
+            if hasattr(self.ui, "lineEdit_idx_naver"):
+                self.ui.lineEdit_idx_naver.setText(str(naver))
+            if hasattr(self.ui, "lineEdit_idx_coupang"):
+                self.ui.lineEdit_idx_coupang.setText(str(coupang))
+            if hasattr(self.ui, "lineEdit_idx_gmarket"):
+                self.ui.lineEdit_idx_gmarket.setText(str(gmarket))
+        finally:
+            self._block_index_line_edit_signals(False)
+
+    def _schedule_order_index_sheet_push(self):
+        self._index_sheet_push_timer.start(ORDER_INDEX_SHEET_PUSH_DEBOUNCE_MS)
+        self._update_index_sheet_sync_label()
+
+    def _flush_order_indices_to_sheet(self):
+        if gspread is None:
+            self._index_sheet_push_pending = True
+            self._update_index_sheet_sync_label()
+            return
+        try:
+            self._write_order_indices_to_sheet()
+            self._index_sheet_push_pending = False
+            self._index_sheet_last_sync_display = datetime.now()
+        except Exception as e:
+            self._index_sheet_push_pending = True
+            print(f"! 스프레드시트 인덱스 반영 실패: {e}")
+        self._update_index_sheet_sync_label()
+
+    def _update_index_sheet_sync_label(self):
+        if not hasattr(self.ui, "label_index_sheet_sync"):
+            return
+        if self._index_sheet_push_timer.isActive():
+            self.ui.label_index_sheet_sync.setText(
+                "저장 대기: 스프레드시트에 곧 반영됩니다…"
+            )
+            return
+        if self._index_sheet_push_pending:
+            self.ui.label_index_sheet_sync.setText(
+                "저장 대기: 스프레드시트에 반영하지 못했습니다. "
+                "「Google Sheets 연동」 재인증 또는 네트워크를 확인해 주세요."
+            )
+            return
+        if self._index_sheet_last_sync_display:
+            t = self._index_sheet_last_sync_display.strftime("%H:%M:%S")
+            self.ui.label_index_sheet_sync.setText(
+                f"스프레드시트와 동기화됨 (마지막 반영 {t})"
+            )
+        else:
+            self.ui.label_index_sheet_sync.setText(
+                "스프레드시트와 인덱스를 맞추려면 Google 로그인 후 자동으로 반영됩니다."
+            )
+
+    def _create_today_order_index_row_with_ones(self, interactive=False):
+        """시트에 오늘 행이 없을 때 네이버·쿠팡·지마켓을 각 1로 새 행을 만듭니다."""
+        self._last_refresh_created_today_row = True
+        self._apply_order_indices_to_ui(1, 1, 1)
+        try:
+            self._persist_index_values_to_json()
+        except Exception as e:
+            print(f"! 인덱스 JSON 저장 실패(시트 신규 행): {e}")
+
+        if gspread is None:
+            self._index_sheet_push_pending = True
+            self._update_index_sheet_sync_label()
+            if interactive:
+                QMessageBox.warning(
+                    self,
+                    "인덱스 동기화",
+                    "gspread 패키지가 없어 스프레드시트에 행을 만들 수 없습니다.",
+                )
+            return False
+
+        try:
+            self._write_order_indices_to_sheet()
+            self._index_sheet_push_pending = False
+            self._index_sheet_last_sync_display = datetime.now()
+        except Exception as e:
+            self._index_sheet_push_pending = True
+            print(f"! 스프레드시트에 오늘 인덱스 행 생성 실패: {e}")
+            if interactive:
+                hint = self._oauth_error_dialog_hint()
+                QMessageBox.warning(
+                    self,
+                    "인덱스 동기화",
+                    f"오늘 날짜 행을 스프레드시트에 만들지 못했습니다.\n\n{e}\n\n{hint}",
+                )
+            self._update_index_sheet_sync_label()
+            return False
+
+        self._update_index_sheet_sync_label()
+        return True
+
+    def refresh_order_indices_from_sheet(self, interactive=False):
+        """스프레드시트에서 오늘 날짜 행을 읽어 UI·JSON에 반영합니다."""
+        self._index_sheet_push_timer.stop()
+        self._last_refresh_created_today_row = False
+        try:
+            row = self._read_today_order_indices_from_sheet()
+        except Exception as e:
+            if interactive:
+                hint = self._oauth_error_dialog_hint()
+                QMessageBox.warning(
+                    self,
+                    "인덱스 동기화",
+                    f"스프레드시트에서 인덱스를 읽지 못했습니다.\n\n{e}\n\n{hint}",
+                )
+            print(f"! 시트에서 인덱스 읽기 실패: {e}")
+            self._update_index_sheet_sync_label()
+            return False
+
+        if row is None:
+            return self._create_today_order_index_row_with_ones(interactive=interactive)
+
+        self._apply_order_indices_to_ui(row["naver"], row["coupang"], row["gmarket"])
+        try:
+            self._persist_index_values_to_json()
+        except Exception as e:
+            print(f"! 인덱스 JSON 저장 실패(시트에서 읽은 뒤): {e}")
+        self._index_sheet_push_pending = False
+        self._index_sheet_last_sync_display = datetime.now()
+        self._update_index_sheet_sync_label()
+        return True
+
+    def _on_order_index_sheet_poll(self):
+        if self._index_sheet_push_timer.isActive():
+            return
+        for name in ("lineEdit_idx_naver", "lineEdit_idx_coupang", "lineEdit_idx_gmarket"):
+            w = getattr(self.ui, name, None)
+            if w is not None and w.hasFocus():
+                return
+        self.refresh_order_indices_from_sheet(interactive=False)
+
+    def _on_push_button_index_sheet_refresh_clicked(self):
+        applied = self.refresh_order_indices_from_sheet(interactive=True)
+        if not applied:
+            return
+        if self._last_refresh_created_today_row:
+            QMessageBox.information(
+                self,
+                "인덱스 동기화",
+                "오늘 날짜 행이 없어 네이버·쿠팡·지마켓 인덱스를 각 1로 "
+                "스프레드시트에 새로 만들었습니다.",
+            )
+        else:
+            QMessageBox.information(
+                self,
+                "인덱스 동기화",
+                "스프레드시트에서 인덱스를 불러왔습니다.",
+            )
 
     def update_naver_index(self):
         """네이버 인덱스 값을 업데이트하고 저장합니다."""
         self.current_idx_naver += 1
         if hasattr(self.ui, 'lineEdit_idx_naver'):
-            self.ui.lineEdit_idx_naver.setText(str(self.current_idx_naver))
+            w = self.ui.lineEdit_idx_naver
+            w.blockSignals(True)
+            try:
+                w.setText(str(self.current_idx_naver))
+            finally:
+                w.blockSignals(False)
         self.save_index_values()
 
     def update_coupang_index(self):
         """쿠팡 인덱스 값을 업데이트하고 저장합니다."""
         self.current_idx_coupang += 1
         if hasattr(self.ui, 'lineEdit_idx_coupang'):
-            self.ui.lineEdit_idx_coupang.setText(str(self.current_idx_coupang))
+            w = self.ui.lineEdit_idx_coupang
+            w.blockSignals(True)
+            try:
+                w.setText(str(self.current_idx_coupang))
+            finally:
+                w.blockSignals(False)
         self.save_index_values()
 
     def update_gmarket_index(self):
         """지마켓 인덱스 값을 업데이트하고 저장합니다."""
         self.current_idx_gmarket += 1
         if hasattr(self.ui, 'lineEdit_idx_gmarket'):
-            self.ui.lineEdit_idx_gmarket.setText(str(self.current_idx_gmarket))
+            w = self.ui.lineEdit_idx_gmarket
+            w.blockSignals(True)
+            try:
+                w.setText(str(self.current_idx_gmarket))
+            finally:
+                w.blockSignals(False)
         self.save_index_values()
 
     def load_ui(self):
@@ -886,6 +1195,10 @@ class MainWindow(QMainWindow):
             )
         if hasattr(self.ui, "tabWidget"):
             self.ui.tabWidget.currentChanged.connect(self._on_main_tab_changed)
+        if hasattr(self.ui, "pushButton_index_sheet_refresh"):
+            self.ui.pushButton_index_sheet_refresh.clicked.connect(
+                self._on_push_button_index_sheet_refresh_clicked
+            )
 
         print("버튼과 메뉴 연결 완료")
 
@@ -907,6 +1220,7 @@ class MainWindow(QMainWindow):
     def _on_main_tab_changed(self, index):
         if index == 1:
             self._refresh_google_auth_status_ui()
+            self.refresh_order_indices_from_sheet(interactive=False)
 
     def _on_google_disconnect_clicked(self):
         reply = QMessageBox.question(
@@ -1510,7 +1824,8 @@ class MainWindow(QMainWindow):
                 self.ui.filePathLabel.setText(filename)
                 self.statusBar().showMessage(f"파일 선택됨: {filename}")
                 print("✓ 파일이 성공적으로 선택되었습니다.")
-                
+                self.refresh_order_indices_from_sheet(interactive=False)
+
                 # 스토어 타입에 따라 로고 표시
                 if self.store_type == "naver":
                     logo_path = "image/naver-logo.png"
