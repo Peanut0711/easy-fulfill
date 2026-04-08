@@ -295,6 +295,7 @@ class MainWindow(QMainWindow):
         
         # 인덱스 파일 경로 설정
         self.index_file_path = Path("database") / "order_index.json"
+        self.app_settings_path = Path("database") / "app_settings.json"
         
         # 인덱스 값 초기화
         self.current_idx_naver = 1
@@ -307,6 +308,7 @@ class MainWindow(QMainWindow):
         
         # 인덱스 값 로드
         self.load_index_values()
+        self.load_app_settings()
         
         print("초기화 완료")
 
@@ -414,6 +416,50 @@ class MainWindow(QMainWindow):
 
         self._gspread_client = get_authorized_gspread_client()
         return self._gspread_client
+
+    def load_app_settings(self):
+        """앱 설정(체크박스 등)을 로드합니다."""
+        key = "auto_generate_after_invoice_load"
+        default_checked = False
+        if not hasattr(self.ui, "checkBox_invoice_load_auto_generate"):
+            return
+        cb = self.ui.checkBox_invoice_load_auto_generate
+        checked = default_checked
+        try:
+            if self.app_settings_path.exists() and self.app_settings_path.stat().st_size > 0:
+                with open(self.app_settings_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, dict) and key in data:
+                    checked = bool(data[key])
+        except Exception as e:
+            print(f"! 앱 설정 로드 중 오류: {e}")
+        cb.blockSignals(True)
+        cb.setChecked(checked)
+        cb.blockSignals(False)
+
+    def save_app_settings(self):
+        """앱 설정을 database/app_settings.json 에 저장합니다."""
+        if not hasattr(self.ui, "checkBox_invoice_load_auto_generate"):
+            return
+        try:
+            self.app_settings_path.parent.mkdir(parents=True, exist_ok=True)
+            data = {}
+            if self.app_settings_path.exists() and self.app_settings_path.stat().st_size > 0:
+                try:
+                    with open(self.app_settings_path, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                except json.JSONDecodeError:
+                    data = {}
+            if not isinstance(data, dict):
+                data = {}
+            data["auto_generate_after_invoice_load"] = (
+                self.ui.checkBox_invoice_load_auto_generate.isChecked()
+            )
+            with open(self.app_settings_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            print("✓ 앱 설정 저장 완료")
+        except Exception as e:
+            print(f"! 앱 설정 저장 중 오류: {e}")
 
     def load_index_values(self):
         """저장된 인덱스 값을 로드합니다."""
@@ -764,6 +810,11 @@ class MainWindow(QMainWindow):
             self.ui.lineEdit_idx_coupang.textChanged.connect(self.on_coupang_index_changed)
         if hasattr(self.ui, 'lineEdit_idx_gmarket'):
             self.ui.lineEdit_idx_gmarket.textChanged.connect(self.on_gmarket_index_changed)
+        
+        if hasattr(self.ui, 'checkBox_invoice_load_auto_generate'):
+            self.ui.checkBox_invoice_load_auto_generate.stateChanged.connect(
+                self.save_app_settings
+            )
         
         # 메뉴 동작 연결
         self.ui.actionOpenExcel.triggered.connect(self.select_excel_file)
@@ -2713,6 +2764,10 @@ class MainWindow(QMainWindow):
                 self.statusBar().showMessage(f"송장 파일 선택됨: {filename}")
                 print("✓ 송장 파일이 성공적으로 선택되었습니다.")
                 self.is_invoice_file_valid = True  # 파일 처리 성공 시 플래그 설정
+
+                if hasattr(self.ui, "checkBox_invoice_load_auto_generate"):
+                    if self.ui.checkBox_invoice_load_auto_generate.isChecked():
+                        self.generate_invoice_file()
                 
             except Exception as e:
                 self.is_invoice_file_valid = False

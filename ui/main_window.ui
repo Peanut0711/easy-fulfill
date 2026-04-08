@@ -605,6 +605,35 @@
          </property>
         </widget>
        </widget>
+       <widget class="QGroupBox" name="groupBox_batch_ship">
+        <property name="geometry">
+         <rect>
+          <x>30</x>
+          <y>450</y>
+          <width>341</width>
+          <height>61</height>
+         </rect>
+        </property>
+        <property name="title">
+         <string>일괄 발송</string>
+        </property>
+        <widget class="QCheckBox" name="checkBox_invoice_load_auto_generate">
+         <property name="geometry">
+          <rect>
+           <x>16</x>
+           <y>24</y>
+           <width>311</width>
+           <height>24</height>
+          </rect>
+         </property>
+         <property name="text">
+          <string>송장 불러오기 성공 시 일괄 발송 파일 자동 생성</string>
+         </property>
+         <property name="checked">
+          <bool>false</bool>
+         </property>
+        </widget>
+       </widget>
       </widget>
      </widget>
     </item>
