@@ -66,7 +66,7 @@ ORDER_INDEX_SHEET_TITLE = "일별 주문번호"
 ORDER_INDEX_SHEET_HEADERS = ["날짜", "네이버", "쿠팡", "지마켓"]
 ORDER_INDEX_SHEET_POLL_MS = 150_000  # 2.5분 (2~3분 간격)
 ORDER_INDEX_SHEET_PUSH_DEBOUNCE_MS = 800
-# 시작 시 시트 동기화 로딩 바: 약 2초+여유 안에 99%까지 선형 증가, 완료 시 즉시 100%
+# 시작 시 DB동기화 로딩 바: 약 2초+여유 안에 99%까지 선형 증가, 완료 시 즉시 100%
 STARTUP_SYNC_PROGRESS_CAP_MS = 2200
 STARTUP_SYNC_PROGRESS_TICK_MS = 40
 # 100% 도달 후 오버레이를 닫기까지 대기(너무 짧으면 급하게 사라진 느낌, 너무 길면 지루)
@@ -350,6 +350,45 @@ class OrderIndexStartupSyncThread(QThread):
 
     def run(self):
         self.result_ready.emit(run_startup_order_index_sheet_sync_worker())
+
+
+class DbSheetSyncThread(QThread):
+    """database 폴더 내보내기 → 스프레드시트 신규 행 append (백그라운드)."""
+
+    result_ready = Signal(dict)
+
+    def __init__(self, params: dict):
+        super().__init__()
+        self._params = params
+
+    def run(self):
+        p = self._params
+        try:
+            from db_sheet_sync import run_db_sheet_sync_job
+
+            self.result_ready.emit(
+                run_db_sheet_sync_job(
+                    p["spreadsheet_id"],
+                    do_naver=p["do_naver"],
+                    do_coupang=p["do_coupang"],
+                    test_mode=p["test_mode"],
+                    test_count=p["test_count"],
+                    naver_path=p.get("naver_path"),
+                    coupang_path=p.get("coupang_path"),
+                    verbose_log=p.get("verbose_log", True),
+                )
+            )
+        except Exception as e:
+            self.result_ready.emit(
+                {
+                    "ok": False,
+                    "logs": [f"❌ DB동기화 작업 중 예외: {e}"],
+                    "test_mode": p.get("test_mode"),
+                    "naver": None,
+                    "coupang": None,
+                    "error": str(e),
+                }
+            )
 
 
 class ImageDialog(QDialog):
@@ -646,6 +685,7 @@ class MainWindow(QMainWindow):
         self._startup_order_index_sync_done = False
         self._startup_sync_thread = None
         self._product_mapping_thread = None
+        self._db_sheet_sync_thread = None
         
         self.load_ui()
         self.setup_connections()
@@ -1659,7 +1699,7 @@ class MainWindow(QMainWindow):
 
             if not payload.get("ok"):
                 err = payload.get("error", "")
-                print(f"! 시작 시 시트 동기화 실패: {err}")
+                print(f"! 시작 시 DB동기화 실패: {err}")
                 self._update_index_sheet_sync_label()
                 return
 
@@ -1969,6 +2009,12 @@ class MainWindow(QMainWindow):
             self.ui.pushButton_index_sheet_refresh.clicked.connect(
                 self._on_push_button_index_sheet_refresh_clicked
             )
+        if hasattr(self.ui, "pushButton_db_sync_refresh_paths"):
+            self.ui.pushButton_db_sync_refresh_paths.clicked.connect(
+                self._refresh_db_sheet_sync_path_labels
+            )
+        if hasattr(self.ui, "pushButton_db_sync_run"):
+            self.ui.pushButton_db_sync_run.clicked.connect(self._on_db_sheet_sync_run_clicked)
 
         print("버튼과 메뉴 연결 완료")
 
@@ -1990,6 +2036,122 @@ class MainWindow(QMainWindow):
     def _on_main_tab_changed(self, index):
         if index == 1:
             self._refresh_google_auth_status_ui()
+        if index == 2:
+            self._refresh_db_sheet_sync_path_labels()
+
+    def _refresh_db_sheet_sync_path_labels(self):
+        if not hasattr(self.ui, "label_db_sync_naver_file"):
+            return
+        try:
+            from db_sheet_sync import COUPANG_CONFIG, NAVER_CONFIG, get_latest_file_from_pattern
+        except ImportError as e:
+            self.ui.label_db_sync_naver_file.setText(f"네이버 CSV: (모듈 오류: {e})")
+            self.ui.label_db_sync_coupang_file.setText("쿠팡 XLSX: —")
+            return
+        n = get_latest_file_from_pattern(NAVER_CONFIG["db_dir"], NAVER_CONFIG["file_pattern"])
+        c = get_latest_file_from_pattern(COUPANG_CONFIG["db_dir"], COUPANG_CONFIG["file_pattern"])
+        self.ui.label_db_sync_naver_file.setText(
+            f"네이버 CSV: {n if n else '(해당 패턴 파일 없음)'}"
+        )
+        self.ui.label_db_sync_coupang_file.setText(
+            f"쿠팡 XLSX: {c if c else '(해당 패턴 파일 없음)'}"
+        )
+
+    def _on_db_sheet_sync_run_clicked(self):
+        if not hasattr(self.ui, "plainTextEdit_db_sync_log"):
+            return
+        if self._db_sheet_sync_thread is not None and self._db_sheet_sync_thread.isRunning():
+            QMessageBox.information(self, "DB동기화", "이미 실행 중입니다.")
+            return
+        if gspread is None:
+            QMessageBox.warning(self, "DB동기화", "gspread 패키지가 필요합니다. (pip install gspread)")
+            return
+        do_naver = self.ui.checkBox_db_sync_naver.isChecked()
+        do_coupang = self.ui.checkBox_db_sync_coupang.isChecked()
+        if not do_naver and not do_coupang:
+            QMessageBox.warning(self, "DB동기화", "네이버 또는 쿠팡 중 하나 이상 선택하세요.")
+            return
+        test_mode = self.ui.checkBox_db_sync_preview.isChecked()
+        test_count = int(self.ui.spinBox_db_sync_limit.value())
+        verbose_log = (
+            hasattr(self.ui, "checkBox_db_sync_verbose_log")
+            and self.ui.checkBox_db_sync_verbose_log.isChecked()
+        )
+        if not test_mode:
+            reply = QMessageBox.question(
+                self,
+                "DB동기화",
+                "테스트 모드가 꺼져 있습니다. 스프레드시트에 신규 행을 실제로 추가합니다. 계속할까요?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+        self._show_busy_processing_overlay(
+            "DB 동기화 작업 중…",
+            "시트와 로컬 DB 파일을 처리하고 있습니다. 잠시만 기다려 주세요.",
+        )
+        QApplication.processEvents()
+        self.ui.pushButton_db_sync_run.setEnabled(False)
+        self.ui.pushButton_db_sync_refresh_paths.setEnabled(False)
+        self.ui.plainTextEdit_db_sync_log.setPlainText("실행 중… 잠시만 기다려 주세요.\n")
+        params = {
+            "spreadsheet_id": SPREADSHEET_ID,
+            "do_naver": do_naver,
+            "do_coupang": do_coupang,
+            "test_mode": test_mode,
+            "test_count": test_count,
+            "naver_path": None,
+            "coupang_path": None,
+            "verbose_log": verbose_log,
+        }
+        self._db_sheet_sync_thread = DbSheetSyncThread(params)
+        self._db_sheet_sync_thread.result_ready.connect(self._on_db_sheet_sync_finished)
+        self._db_sheet_sync_thread.start()
+
+    def _on_db_sheet_sync_finished(self, result: dict):
+        self._hide_busy_processing_overlay()
+        self.ui.pushButton_db_sync_run.setEnabled(True)
+        self.ui.pushButton_db_sync_refresh_paths.setEnabled(True)
+        self._db_sheet_sync_thread = None
+        lines = result.get("logs") or []
+        self.ui.plainTextEdit_db_sync_log.setPlainText("\n".join(lines))
+        if result.get("error"):
+            QMessageBox.warning(self, "DB동기화", result["error"])
+        wrote = False
+        for key in ("naver", "coupang"):
+            ch = result.get(key)
+            if ch and ch.get("appended"):
+                wrote = True
+        if not result.get("test_mode") and wrote and result.get("ok"):
+            self._invalidate_google_sheets_client_and_caches()
+
+        done_ch = []
+        skipped_ch = []
+        for key, label in (("naver", "네이버"), ("coupang", "쿠팡")):
+            ch = result.get(key)
+            if not ch:
+                continue
+            if ch.get("skipped_missing_file"):
+                skipped_ch.append(label)
+            elif ch.get("ok"):
+                done_ch.append(label)
+
+        if result.get("error"):
+            self.statusBar().showMessage("DB동기화 중 오류가 있습니다.", 8000)
+        elif result.get("ok"):
+            if skipped_ch and done_ch:
+                self.statusBar().showMessage(
+                    "DB동기화 완료 · 일부 채널은 로컬 파일 없음으로 건너뜀", 7000
+                )
+            elif skipped_ch and not done_ch:
+                self.statusBar().showMessage(
+                    "DB동기화: 선택한 채널에 해당하는 로컬 파일이 없습니다", 7000
+                )
+            else:
+                self.statusBar().showMessage("DB동기화 완료", 5000)
+        else:
+            self.statusBar().showMessage("DB동기화 중 오류가 있습니다.", 8000)
 
     def _on_google_disconnect_clicked(self):
         reply = QMessageBox.question(
