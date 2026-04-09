@@ -1976,6 +1976,11 @@ class MainWindow(QMainWindow):
         # 신규 DB 반영 UI·로직 제거(2026-04). (pushButton_database_* / load·apply_database_* 삭제)
         if hasattr(self.ui, 'pushButton_quick_excel_gen'):
             self.ui.pushButton_quick_excel_gen.clicked.connect(self.generate_quick_excel)
+        if hasattr(self.ui, 'comboBox_store_select'):
+            self.ui.comboBox_store_select.currentIndexChanged.connect(
+                self._refresh_quick_excel_manual_ui
+            )
+            self._refresh_quick_excel_manual_ui()
         
         # 인덱스 입력 필드 연결
         if hasattr(self.ui, 'lineEdit_idx_naver'):
@@ -2224,9 +2229,102 @@ class MainWindow(QMainWindow):
             "「연결 해제」 후 「재인증」을 눌러 보세요."
         )
 
+    def _iter_quick_excel_manual_widgets(self):
+        for name in (
+            "label_quick_manual_name",
+            "lineEdit_quick_manual_name",
+            "label_quick_manual_phone",
+            "lineEdit_quick_manual_phone",
+            "label_quick_manual_address",
+            "lineEdit_quick_manual_address",
+        ):
+            if hasattr(self.ui, name):
+                yield getattr(self.ui, name)
+
+    def _refresh_quick_excel_manual_ui(self):
+        """수동 모드일 때만 이름·전화·주소 입력란을 표시하고 그룹 높이를 조정합니다."""
+        if not hasattr(self.ui, "comboBox_store_select"):
+            return
+        manual = self.ui.comboBox_store_select.currentText().strip() == "수동"
+        for w in self._iter_quick_excel_manual_widgets():
+            w.setVisible(manual)
+        if hasattr(self.ui, "label_gift_3"):
+            self.ui.label_gift_3.setVisible(not manual)
+
+        gb = getattr(self.ui, "groupBox", None)
+        if gb is None:
+            return
+        quick_h = 191 if manual else 102
+        grect = gb.geometry()
+        gb.setGeometry(grect.x(), grect.y(), grect.width(), quick_h)
+
+        gap_after_quick = 13
+        if hasattr(self.ui, "groupBox_batch_ship"):
+            bb = self.ui.groupBox_batch_ship
+            brect = bb.geometry()
+            batch_y = grect.y() + quick_h + gap_after_quick
+            bb.setGeometry(brect.x(), batch_y, brect.width(), brect.height())
+
+        if hasattr(self.ui, "groupBox_google_sheets"):
+            gs = self.ui.groupBox_google_sheets
+            gsrect = gs.geometry()
+            gap_after_batch = 9
+            if hasattr(self.ui, "groupBox_batch_ship"):
+                bbr = self.ui.groupBox_batch_ship.geometry()
+                google_y = bbr.y() + bbr.height() + gap_after_batch
+            else:
+                google_y = grect.y() + quick_h + gap_after_quick + 61 + gap_after_batch
+            gs.setGeometry(gsrect.x(), google_y, gsrect.width(), gsrect.height())
+
     def generate_quick_excel(self):
-        """클립보드 정보를 기반으로 단건 엑셀을 생성합니다."""
+        """클립보드 정보를 기반으로 단건 엑셀을 생성합니다. 수동 선택 시 입력란 값으로 생성합니다."""
         try:
+            if hasattr(self.ui, "comboBox_store_select"):
+                if self.ui.comboBox_store_select.currentText().strip() == "수동":
+                    name = ""
+                    phone = ""
+                    address = ""
+                    if hasattr(self.ui, "lineEdit_quick_manual_name"):
+                        name = self.ui.lineEdit_quick_manual_name.text().strip()
+                    if hasattr(self.ui, "lineEdit_quick_manual_phone"):
+                        phone = self.ui.lineEdit_quick_manual_phone.text().strip()
+                    if hasattr(self.ui, "lineEdit_quick_manual_address"):
+                        address = self.ui.lineEdit_quick_manual_address.text().strip()
+                    missing = []
+                    if not name:
+                        missing.append("이름")
+                    if not phone:
+                        missing.append("전화번호")
+                    if not address:
+                        missing.append("주소")
+                    if missing:
+                        QMessageBox.warning(
+                            self,
+                            "입력 필요",
+                            "수동 모드에서는 다음 항목을 모두 입력해 주세요.\n\n"
+                            f"누락: {', '.join(missing)}",
+                        )
+                        return
+
+                    invoice_data = [{
+                        '주문번호': '',
+                        '고객주문처명': '',
+                        '수취인명': name,
+                        '우편번호': '',
+                        '수취인 주소': address,
+                        '수취인 전화번호': phone,
+                        '수취인 이동통신': phone,
+                        '상품명': '',
+                        '상품모델': '',
+                        '배송메세지': '',
+                        '비고': ''
+                    }]
+                    output_file = self.save_invoice_excel(invoice_data, "퀵_수동")
+                    self.statusBar().showMessage(
+                        f"퀵 엑셀 생성 완료: {output_file.name}", 3000
+                    )
+                    return
+
             clipboard = QApplication.clipboard()
             clipboard_text = clipboard.text()
             if not clipboard_text or not clipboard_text.strip():
@@ -2368,6 +2466,8 @@ class MainWindow(QMainWindow):
         if hasattr(self.ui, 'comboBox_store_select'):
             selected_text = self.ui.comboBox_store_select.currentText().strip()
 
+        if selected_text == "수동":
+            return "manual"
         if selected_text == "쿠팡":
             return "coupang"
         if selected_text == "네이버":
