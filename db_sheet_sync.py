@@ -5,6 +5,9 @@
 easy-fulfill UI·database-sync CLI 모두 이 모듈을 사용합니다.
 """
 
+import re
+from datetime import datetime
+
 import gspread
 import pandas as pd
 from pathlib import Path
@@ -83,6 +86,55 @@ def get_latest_file_from_patterns(directory, file_patterns):
     files = list(dict.fromkeys(files))
     latest_file = max(files, key=os.path.getmtime)
     return Path(latest_file)
+
+
+def try_parse_db_sync_filename_date(filename: str):
+    """
+    네이버·쿠팡 DB 내보내기 파일명에서 (년, 월, 일) 추출. 인식 실패 시 None.
+
+    - Product_YYYYMMDD_… / 스마트스토어상품_YYYYMMDD_… .csv
+    - price_inventory_YYMMDD.xlsx · price_inventory_YYYYMMDD.xlsx
+    """
+    m = re.match(
+        r"^(?:Product_|스마트스토어상품_)(\d{8})_\d{6}\.csv$",
+        filename,
+    )
+    if m:
+        s = m.group(1)
+        return int(s[:4]), int(s[4:6]), int(s[6:8])
+    m = re.match(r"^price_inventory_(\d{6})\.xlsx$", filename, re.I)
+    if m:
+        s = m.group(1)
+        return 2000 + int(s[:2]), int(s[2:4]), int(s[4:6])
+    m = re.match(r"^price_inventory_(\d{8})\.xlsx$", filename, re.I)
+    if m:
+        s = m.group(1)
+        return int(s[:4]), int(s[4:6]), int(s[6:8])
+    return None
+
+
+def format_db_sync_label_line(channel_title: str, path: Path | None) -> str:
+    """
+    DB동기화 탭용 한 줄: 「네이버 DB [ 4월 9일 ] : 경로」 형식.
+
+    Args:
+        channel_title: 예) "네이버 DB", "쿠팡 DB"
+        path: 최신 파일 경로 (없으면 안내 문구만)
+    """
+    if path is None:
+        return f"{channel_title} [ — ] : (해당 패턴 파일 없음)"
+    ymd = try_parse_db_sync_filename_date(path.name)
+    if ymd is None:
+        try:
+            dt = datetime.fromtimestamp(path.stat().st_mtime)
+            ymd = (dt.year, dt.month, dt.day)
+        except OSError:
+            date_label = "—"
+        else:
+            date_label = f"{ymd[1]}월 {ymd[2]}일"
+    else:
+        date_label = f"{ymd[1]}월 {ymd[2]}일"
+    return f"{channel_title} [ {date_label} ] : {path}"
 
 
 def get_spreadsheet_headers(worksheet, header_row_num):

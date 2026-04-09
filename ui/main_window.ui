@@ -968,20 +968,14 @@
          </widget>
         </item>
         <item>
-         <layout class="QHBoxLayout" name="horizontalLayout_db_channels">
+         <layout class="QHBoxLayout" name="horizontalLayout_db_naver_row">
           <property name="spacing">
-           <number>20</number>
+           <number>8</number>
           </property>
           <item>
            <widget class="QCheckBox" name="checkBox_db_sync_naver">
-            <property name="sizePolicy">
-             <sizepolicy hsizetype="Minimum" vsizetype="Fixed">
-              <horstretch>0</horstretch>
-              <verstretch>0</verstretch>
-             </sizepolicy>
-            </property>
             <property name="text">
-             <string>네이버</string>
+             <string/>
             </property>
             <property name="checked">
              <bool>true</bool>
@@ -989,21 +983,67 @@
            </widget>
           </item>
           <item>
-           <widget class="QCheckBox" name="checkBox_db_sync_coupang">
+           <widget class="QLabel" name="label_db_sync_naver_file">
             <property name="sizePolicy">
-             <sizepolicy hsizetype="Minimum" vsizetype="Fixed">
-              <horstretch>0</horstretch>
+             <sizepolicy hsizetype="Expanding" vsizetype="Preferred">
+              <horstretch>1</horstretch>
               <verstretch>0</verstretch>
              </sizepolicy>
             </property>
             <property name="text">
-             <string>쿠팡</string>
+             <string>네이버 DB [ — ] : (없음)</string>
+            </property>
+            <property name="wordWrap">
+             <bool>true</bool>
+            </property>
+            <property name="textInteractionFlags">
+             <set>Qt::TextInteractionFlag::TextSelectableByMouse</set>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </item>
+        <item>
+         <layout class="QHBoxLayout" name="horizontalLayout_db_coupang_row">
+          <property name="spacing">
+           <number>8</number>
+          </property>
+          <item>
+           <widget class="QCheckBox" name="checkBox_db_sync_coupang">
+            <property name="text">
+             <string/>
             </property>
             <property name="checked">
              <bool>true</bool>
             </property>
            </widget>
           </item>
+          <item>
+           <widget class="QLabel" name="label_db_sync_coupang_file">
+            <property name="sizePolicy">
+             <sizepolicy hsizetype="Expanding" vsizetype="Preferred">
+              <horstretch>1</horstretch>
+              <verstretch>0</verstretch>
+             </sizepolicy>
+            </property>
+            <property name="text">
+             <string>쿠팡 DB [ — ] : (없음)</string>
+            </property>
+            <property name="wordWrap">
+             <bool>true</bool>
+            </property>
+            <property name="textInteractionFlags">
+             <set>Qt::TextInteractionFlag::TextSelectableByMouse</set>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </item>
+        <item>
+         <layout class="QHBoxLayout" name="horizontalLayout_db_options">
+          <property name="spacing">
+           <number>20</number>
+          </property>
           <item>
            <widget class="QCheckBox" name="checkBox_db_sync_preview">
             <property name="sizePolicy">
@@ -1013,7 +1053,7 @@
              </sizepolicy>
             </property>
             <property name="text">
-             <string>테스트 (시트에 적용 안함)</string>
+             <string>테스트 모드(적용 안함)</string>
             </property>
             <property name="checked">
              <bool>false</bool>
@@ -1034,7 +1074,7 @@
            </widget>
           </item>
           <item>
-           <spacer name="horizontalSpacer_db_channels">
+           <spacer name="horizontalSpacer_db_options">
             <property name="orientation">
              <enum>Qt::Orientation::Horizontal</enum>
             </property>
@@ -1050,93 +1090,6 @@
            </spacer>
           </item>
          </layout>
-        </item>
-        <item>
-         <layout class="QHBoxLayout" name="horizontalLayout_db_limit">
-          <property name="spacing">
-           <number>10</number>
-          </property>
-          <item>
-           <widget class="QLabel" name="label_db_sync_limit">
-            <property name="sizePolicy">
-             <sizepolicy hsizetype="Minimum" vsizetype="Preferred">
-              <horstretch>0</horstretch>
-              <verstretch>0</verstretch>
-             </sizepolicy>
-            </property>
-            <property name="text">
-             <string>채널당 최대 추가 개수 (0=제한 없음)</string>
-            </property>
-           </widget>
-          </item>
-          <item>
-           <widget class="QSpinBox" name="spinBox_db_sync_limit">
-            <property name="sizePolicy">
-             <sizepolicy hsizetype="Maximum" vsizetype="Fixed">
-              <horstretch>0</horstretch>
-              <verstretch>0</verstretch>
-             </sizepolicy>
-            </property>
-            <property name="minimumSize">
-             <size>
-              <width>88</width>
-              <height>0</height>
-             </size>
-            </property>
-            <property name="maximumSize">
-             <size>
-              <width>110</width>
-              <height>16777215</height>
-             </size>
-            </property>
-            <property name="minimum">
-             <number>0</number>
-            </property>
-            <property name="maximum">
-             <number>999999</number>
-            </property>
-            <property name="value">
-             <number>0</number>
-            </property>
-           </widget>
-          </item>
-          <item>
-           <spacer name="horizontalSpacer_db_limit_tail">
-            <property name="orientation">
-             <enum>Qt::Orientation::Horizontal</enum>
-            </property>
-            <property name="sizeHint" stdset="0">
-             <size>
-              <width>0</width>
-              <height>0</height>
-             </size>
-            </property>
-            <property name="sizeType">
-             <enum>QSizePolicy::Policy::Expanding</enum>
-            </property>
-           </spacer>
-          </item>
-         </layout>
-        </item>
-        <item>
-         <widget class="QLabel" name="label_db_sync_naver_file">
-          <property name="text">
-           <string>네이버 CSV: (없음)</string>
-          </property>
-          <property name="textInteractionFlags">
-           <set>Qt::TextInteractionFlag::TextSelectableByMouse</set>
-          </property>
-         </widget>
-        </item>
-        <item>
-         <widget class="QLabel" name="label_db_sync_coupang_file">
-          <property name="text">
-           <string>쿠팡 XLSX: (없음)</string>
-          </property>
-          <property name="textInteractionFlags">
-           <set>Qt::TextInteractionFlag::TextSelectableByMouse</set>
-          </property>
-         </widget>
         </item>
         <item>
          <layout class="QHBoxLayout" name="horizontalLayout_db_run">

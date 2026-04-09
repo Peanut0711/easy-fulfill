@@ -785,6 +785,7 @@ class MainWindow(QMainWindow):
         self.load_index_values()
         self.load_app_settings()
         self._refresh_google_auth_status_ui()
+        self._refresh_db_sheet_sync_path_labels()
 
         print("초기화 완료")
 
@@ -2147,21 +2148,18 @@ class MainWindow(QMainWindow):
             from db_sheet_sync import (
                 COUPANG_CONFIG,
                 NAVER_CONFIG,
+                format_db_sync_label_line,
                 get_latest_file_from_pattern,
                 get_latest_file_from_patterns,
             )
         except ImportError as e:
-            self.ui.label_db_sync_naver_file.setText(f"네이버 CSV: (모듈 오류: {e})")
-            self.ui.label_db_sync_coupang_file.setText("쿠팡 XLSX: —")
+            self.ui.label_db_sync_naver_file.setText(f"네이버 DB [ — ] : (모듈 오류: {e})")
+            self.ui.label_db_sync_coupang_file.setText("쿠팡 DB [ — ] : —")
             return
         n = get_latest_file_from_patterns(NAVER_CONFIG["db_dir"], NAVER_CONFIG["file_patterns"])
         c = get_latest_file_from_pattern(COUPANG_CONFIG["db_dir"], COUPANG_CONFIG["file_pattern"])
-        self.ui.label_db_sync_naver_file.setText(
-            f"네이버 CSV: {n if n else '(해당 패턴 파일 없음)'}"
-        )
-        self.ui.label_db_sync_coupang_file.setText(
-            f"쿠팡 XLSX: {c if c else '(해당 패턴 파일 없음)'}"
-        )
+        self.ui.label_db_sync_naver_file.setText(format_db_sync_label_line("네이버 DB", n))
+        self.ui.label_db_sync_coupang_file.setText(format_db_sync_label_line("쿠팡 DB", c))
 
     def _on_db_sheet_sync_run_clicked(self):
         if not hasattr(self.ui, "plainTextEdit_db_sync_log"):
@@ -2178,7 +2176,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "DB동기화", "네이버 또는 쿠팡 중 하나 이상 선택하세요.")
             return
         test_mode = self.ui.checkBox_db_sync_preview.isChecked()
-        test_count = int(self.ui.spinBox_db_sync_limit.value())
+        test_count = 0
         verbose_log = (
             hasattr(self.ui, "checkBox_db_sync_verbose_log")
             and self.ui.checkBox_db_sync_verbose_log.isChecked()
