@@ -20,7 +20,8 @@ NAVER_CONFIG = {
     "header_row": 1,   # 1행이 헤더
     "option_id_column": "상품번호(스마트스토어)",  # 네이버는 옵션ID가 없고 상품번호를 사용
     "db_dir": "database",
-    "file_pattern": "Product_*.csv"
+    # 구 스마트스토어 내보내기: Product_*.csv / 신규: 스마트스토어상품_YYYYMMDD_HHMMSS.csv
+    "file_patterns": ["Product_*.csv", "스마트스토어상품_*.csv"],
 }
 
 COUPANG_CONFIG = {
@@ -56,6 +57,30 @@ def get_latest_file_from_pattern(directory, file_pattern):
         return None
     
     # 수정 시간 기준으로 정렬하여 가장 최신 파일 반환
+    latest_file = max(files, key=os.path.getmtime)
+    return Path(latest_file)
+
+
+def get_latest_file_from_patterns(directory, file_patterns):
+    """
+    디렉토리에서 여러 glob 패턴에 맞는 파일 중 수정 시각이 가장 최근인 경로 반환.
+
+    Args:
+        directory: 디렉토리 경로
+        file_patterns: glob 문자열 리스트 (예: ["Product_*.csv", "스마트스토어상품_*.csv"])
+
+    Returns:
+        Path | None
+    """
+    from glob import glob
+    import os
+
+    files = []
+    for fp in file_patterns:
+        files.extend(glob(os.path.join(directory, fp)))
+    if not files:
+        return None
+    files = list(dict.fromkeys(files))
     latest_file = max(files, key=os.path.getmtime)
     return Path(latest_file)
 
@@ -666,14 +691,14 @@ def sync_naver(
         log("\n🔵 네이버 동기화")
 
     if realtime_file_path is None:
-        latest_file = get_latest_file_from_pattern(
+        latest_file = get_latest_file_from_patterns(
             NAVER_CONFIG["db_dir"],
-            NAVER_CONFIG["file_pattern"],
+            NAVER_CONFIG["file_patterns"],
         )
         if latest_file is None:
             log(
                 f"⏭️ 네이버 건너뜀: {NAVER_CONFIG['db_dir']} 폴더에 "
-                f"{NAVER_CONFIG['file_pattern']} 에 맞는 파일이 없습니다."
+                f"다음 패턴에 맞는 파일이 없습니다: {', '.join(NAVER_CONFIG['file_patterns'])}"
             )
             log(
                 "   (네이버만 건너뜁니다. 쿠팡 등 다른 선택 채널 동기화는 계속 진행됩니다.)"

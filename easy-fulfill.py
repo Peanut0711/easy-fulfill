@@ -2144,12 +2144,17 @@ class MainWindow(QMainWindow):
         if not hasattr(self.ui, "label_db_sync_naver_file"):
             return
         try:
-            from db_sheet_sync import COUPANG_CONFIG, NAVER_CONFIG, get_latest_file_from_pattern
+            from db_sheet_sync import (
+                COUPANG_CONFIG,
+                NAVER_CONFIG,
+                get_latest_file_from_pattern,
+                get_latest_file_from_patterns,
+            )
         except ImportError as e:
             self.ui.label_db_sync_naver_file.setText(f"네이버 CSV: (모듈 오류: {e})")
             self.ui.label_db_sync_coupang_file.setText("쿠팡 XLSX: —")
             return
-        n = get_latest_file_from_pattern(NAVER_CONFIG["db_dir"], NAVER_CONFIG["file_pattern"])
+        n = get_latest_file_from_patterns(NAVER_CONFIG["db_dir"], NAVER_CONFIG["file_patterns"])
         c = get_latest_file_from_pattern(COUPANG_CONFIG["db_dir"], COUPANG_CONFIG["file_pattern"])
         self.ui.label_db_sync_naver_file.setText(
             f"네이버 CSV: {n if n else '(해당 패턴 파일 없음)'}"

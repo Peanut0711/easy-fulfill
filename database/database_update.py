@@ -36,7 +36,7 @@ class DatabaseUpdater:
         # 스토어별 설정
         self.stores = {
             'naver': {
-                'pattern': 'Product_YYYYMMDD_HHMMSS.csv',
+                'pattern': 'Product_YYYYMMDD_HHMMSS.csv 또는 스마트스토어상품_YYYYMMDD_HHMMSS.csv',
                 'sheet_name': '네이버 스토어 DB',
                 'key_column': '상품번호(스마트스토어)',
                 'channel': '네이버'
@@ -53,30 +53,33 @@ class DatabaseUpdater:
         """최신 날짜의 스토어 파일을 찾는 함수 (파일명의 날짜를 기준으로 정렬)"""
         try:
             if store_type == 'naver':
-                # Product_로 시작하고 .csv로 끝나는 파일 찾기
-                pattern = os.path.join(self.current_dir, 'Product_*.csv')
-                files = glob.glob(pattern)
+                globs = (
+                    os.path.join(self.current_dir, 'Product_*.csv'),
+                    os.path.join(self.current_dir, '스마트스토어상품_*.csv'),
+                )
+                files = []
+                for g in globs:
+                    files.extend(glob.glob(g))
+                files = list(dict.fromkeys(files))
                 if not files:
                     return None
-                
-                # 파일명에서 날짜 추출 (Product_20251027_104406.csv -> 20251027)
+
                 file_dates = []
                 for file in files:
                     filename = os.path.basename(file)
-                    # Product_YYYYMMDD_HHMMSS.csv 패턴 매칭
-                    match = re.search(r'Product_(\d{8})_(\d{6})\.csv', filename)
+                    match = re.search(r'Product_(\d{8})_(\d{6})\.csv$', filename)
+                    if not match:
+                        match = re.search(r'스마트스토어상품_(\d{8})_(\d{6})\.csv$', filename)
                     if match:
-                        date_str = match.group(1)  # YYYYMMDD
-                        time_str = match.group(2)  # HHMMSS
-                        datetime_str = f"{date_str}{time_str}"  # YYYYMMDDHHMMSS
+                        date_str = match.group(1)
+                        time_str = match.group(2)
+                        datetime_str = f"{date_str}{time_str}"
                         file_dates.append((file, datetime_str))
-                
+
                 if file_dates:
-                    # 날짜+시간을 기준으로 정렬하여 최신 파일 반환
                     file_dates.sort(key=lambda x: x[1], reverse=True)
                     return file_dates[0][0]
-                
-                # 날짜 추출 실패 시 기존 방식 사용 (수정 시간 기준)
+
                 files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
                 return files[0]
             
