@@ -4353,23 +4353,62 @@ class MainWindow(QMainWindow):
             
             # 3. 운송장번호 매칭 및 채우기
             print("\n[운송장번호 매칭 및 채우기]")
+            print(
+                "[참고] 매칭은 수취인명과 전화번호가 송장·주문서에서 문자열이 동일할 때만 됩니다. "
+                "이름만으로 맞추지 않는 이유는 동명이인·같은 이름의 서로 다른 주문이 한 배치에 있을 때 "
+                "송장이 엉키면 오배송·CS 위험이 크기 때문입니다."
+            )
+            
+            def _coupang_norm_str(val):
+                if pd.isna(val):
+                    return ''
+                s = str(val).strip()
+                if s.lower() == 'nan':
+                    return ''
+                return s
+            
+            def _coupang_explain_invoice_unmatched(odf, inv_name, inv_phone):
+                nc = required_order_columns['수취인이름']
+                pc = required_order_columns['수취인전화번호']
+                reasons = []
+                if not inv_name:
+                    reasons.append("송장 수취인명이 비어 있음")
+                if not inv_phone:
+                    reasons.append("송장 수취인 전화번호가 비어 있음")
+                on = odf[nc].map(_coupang_norm_str)
+                same_name = odf[on == inv_name]
+                if same_name.empty:
+                    reasons.append(
+                        "주문서에 동일한 수취인명이 없음 "
+                        "(철자·띄어쓰기·괄호·별칭 등 표기 차이 가능)"
+                    )
+                else:
+                    ophones = sorted(
+                        {p for p in same_name[pc].map(_coupang_norm_str).tolist() if p}
+                    )
+                    reasons.append(
+                        f"이름은 주문서와 일치하나 전화번호 불일치 "
+                        f"(송장: {inv_phone!r}, 주문서: {ophones})"
+                    )
+                return " / ".join(reasons)
             
             # 운송장번호 컬럼 추가
             order_df['운송장번호'] = ''
             
             # 매칭 카운터
             matched_count = 0
+            unmatched_invoice = 0
             
             # 각 송장 행에 대해 매칭 시도
             for idx, invoice_row in invoice_df.iterrows():
                 invoice_number = str(invoice_row[required_invoice_columns['등기번호']])
-                invoice_name = str(invoice_row[required_invoice_columns['수취인명']]).strip()
-                invoice_phone = str(invoice_row[required_invoice_columns['수취인 전화번호']]).strip()
+                invoice_name = _coupang_norm_str(invoice_row[required_invoice_columns['수취인명']])
+                invoice_phone = _coupang_norm_str(invoice_row[required_invoice_columns['수취인 전화번호']])
                 
                 # 수취인명과 전화번호로 매칭
                 matching_rows = order_df[
-                    (order_df[required_order_columns['수취인이름']].str.strip() == invoice_name) &
-                    (order_df[required_order_columns['수취인전화번호']].str.strip() == invoice_phone)
+                    (order_df[required_order_columns['수취인이름']].map(_coupang_norm_str) == invoice_name) &
+                    (order_df[required_order_columns['수취인전화번호']].map(_coupang_norm_str) == invoice_phone)
                 ]
                 
                 if not matching_rows.empty:
@@ -4382,8 +4421,26 @@ class MainWindow(QMainWindow):
                     
                     order_df.loc[matching_rows.index, '운송장번호'] = invoice_number
                     print(f"✓ 송장번호 업데이트 완료")
+                else:
+                    unmatched_invoice += 1
+                    why = _coupang_explain_invoice_unmatched(order_df, invoice_name, invoice_phone)
+                    print(f"\n[매칭 실패 — 송장 행 {unmatched_invoice}]")
+                    print(f"수취인명: {invoice_name or '(비어 있음)'}")
+                    print(f"전화번호: {invoice_phone or '(비어 있음)'}")
+                    print(f"등기번호: {invoice_number}")
+                    print(f"사유: {why}")
             
             print(f"\n✓ 총 {matched_count}개의 주문이 매칭되었습니다.")
+            if unmatched_invoice:
+                print(f"⚠ 송장 {unmatched_invoice}건은 주문서와 맞는 조합이 없어 운송장번호를 넣지 못했습니다.")
+            
+            blank_tr = order_df['운송장번호'].map(_coupang_norm_str) == ''
+            if blank_tr.any():
+                print("\n[운송장번호가 비어 있는 주문 (위 매칭 실패와 대응되는 경우가 많음)]")
+                for _, orow in order_df[blank_tr].iterrows():
+                    oname = _coupang_norm_str(orow[required_order_columns['수취인이름']])
+                    ophone = _coupang_norm_str(orow[required_order_columns['수취인전화번호']])
+                    print(f"  - {oname} / {ophone}")
             
             # 4. 결과 파일 저장
             self._save_invoice_file(order_df)
