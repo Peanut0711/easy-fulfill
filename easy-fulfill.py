@@ -75,6 +75,8 @@ STARTUP_SYNC_PROGRESS_TICK_MS = 40
 STARTUP_SYNC_PROGRESS_HIDE_DELAY_MS = 500
 # 우정사업본부 KpostPortal 우편번호 통합검색 (target=postNew, UTF-8)
 KPOST_OPENAPI2_URL = "http://biz.epost.go.kr/KpostPortal/openapi2"
+# _show_kpost_api_error: 서버가 아닌 앱 내부용(인증키 미설정)
+KPOST_ERROR_NO_REGKEY = "NO_REGKEY"
 
 
 def _xml_local_lower(tag: str) -> str:
@@ -2363,8 +2365,24 @@ class MainWindow(QMainWindow):
         code, msg = err_pair
         code = (code or "—").strip()
         msg = (msg or "사유를 확인할 수 없습니다.").strip()
+        parent = parent_widget if parent_widget is not None else self
+
+        if code == KPOST_ERROR_NO_REGKEY:
+            QMessageBox.warning(
+                parent,
+                "우체국 API 인증키가 없습니다",
+                "「조회」나「주소 검색」은 우체국 우편번호 오픈API를 사용합니다.\n\n"
+                "이 PC에는 아직 API 인증키(regkey)가 등록되어 있지 않습니다.\n\n"
+                "등록 방법(택 1):\n"
+                "· 환경 변수 KPOST_REGKEY 또는 EPOST_REGKEY 에 발급받은 키 설정\n"
+                '· database/app_settings.json 에 "kpost_regkey": "발급키" 추가\n\n'
+                "인증키 없이도 이름·기본주소·상세주소·우편번호를 직접 입력한 뒤 "
+                "「생성」을 누르면 엑셀은 정상적으로 만들 수 있습니다.",
+            )
+            return
+
         QMessageBox.warning(
-            parent_widget if parent_widget is not None else self,
+            parent,
             "우편번호 조회 오류",
             f"오류 코드: {code}\n\n원인:\n{msg}",
         )
@@ -2416,12 +2434,7 @@ class MainWindow(QMainWindow):
         """postNew 통합검색. (items, None) 또는 (None, (code, msg))."""
         regkey = self._get_kpost_regkey()
         if not regkey:
-            return None, (
-                "설정 없음",
-                "우체국 우편번호 API 인증키(regkey)가 없습니다.\n\n"
-                "환경변수 KPOST_REGKEY 또는 EPOST_REGKEY,\n"
-                '또는 database/app_settings.json 에 "kpost_regkey": "발급키" 를 넣어 주세요.',
-            )
+            return None, (KPOST_ERROR_NO_REGKEY, "")
 
         q = (query or "").strip()
         if len(q) < 2:
