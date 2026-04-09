@@ -17,7 +17,8 @@ import shutil
 from PySide6.QtWidgets import (QApplication, QMainWindow, QFileDialog, QMessageBox, 
                               QInputDialog, QLineEdit, QTableWidgetItem, QLabel, 
                               QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QWidget,
-                              QProgressBar, QFrame, QGraphicsOpacityEffect)
+                              QProgressBar, QFrame, QGraphicsOpacityEffect, QListWidget,
+                              QAbstractItemView)
 from PySide6.QtUiTools import QUiLoader
 from PySide6.QtCore import (
     QFile,
@@ -48,6 +49,7 @@ from io import BytesIO
 import warnings
 import logging
 import json
+import xml.etree.ElementTree as ET
 
 try:
     import gspread
@@ -71,6 +73,14 @@ STARTUP_SYNC_PROGRESS_CAP_MS = 2200
 STARTUP_SYNC_PROGRESS_TICK_MS = 40
 # 100% 도달 후 오버레이를 닫기까지 대기(너무 짧으면 급하게 사라진 느낌, 너무 길면 지루)
 STARTUP_SYNC_PROGRESS_HIDE_DELAY_MS = 500
+# 우정사업본부 KpostPortal 우편번호 통합검색 (target=postNew, UTF-8)
+KPOST_OPENAPI2_URL = "http://biz.epost.go.kr/KpostPortal/openapi2"
+
+
+def _xml_local_lower(tag: str) -> str:
+    if not tag:
+        return ""
+    return tag.split("}", 1)[-1].lower()
 
 
 def _parse_order_index_int_cell(value, default=1):
@@ -646,6 +656,82 @@ def _is_likely_google_sheets_oauth_error(exc: BaseException) -> bool:
     if "google.auth" in mod or "google_auth" in mod:
         return True
     return False
+
+
+class KpostAddressSearchDialog(QDialog):
+    """우체국 KpostPortal(postNew)으로 주소를 검색·선택합니다."""
+
+    def __init__(self, host: "MainWindow", parent=None):
+        super().__init__(parent or host)
+        self.setWindowTitle("우체국 주소 검색")
+        self.resize(540, 440)
+        self._host = host
+        self._items = []
+        self.selected_postcd = ""
+        self.selected_address = ""
+        self.detail_address = ""
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(
+            QLabel("검색어 (도로명+번지, 읍면동+지번, 건물명 등 · 2자 이상)")
+        )
+        self._query = QLineEdit()
+        layout.addWidget(self._query)
+        row = QHBoxLayout()
+        btn_search = QPushButton("검색")
+        btn_search.clicked.connect(self._on_search_clicked)
+        row.addWidget(btn_search)
+        row.addStretch()
+        layout.addLayout(row)
+        layout.addWidget(QLabel("검색 결과에서 한 건을 선택하세요."))
+        self._list = QListWidget()
+        self._list.setSelectionMode(QAbstractItemView.SingleSelection)
+        layout.addWidget(self._list, 1)
+        layout.addWidget(QLabel("상세주소 (동·호수 등, 선택)"))
+        self._detail = QLineEdit()
+        layout.addWidget(self._detail)
+        btn_row = QHBoxLayout()
+        btn_ok = QPushButton("확인")
+        btn_cancel = QPushButton("취소")
+        btn_ok.clicked.connect(self._on_accept)
+        btn_cancel.clicked.connect(self.reject)
+        btn_row.addWidget(btn_ok)
+        btn_row.addWidget(btn_cancel)
+        layout.addLayout(btn_row)
+
+    def _on_search_clicked(self):
+        q = self._query.text().strip()
+        if len(q) < 2:
+            QMessageBox.warning(self, "입력", "검색어는 2자 이상 입력해 주세요.")
+            return
+        items, err = self._host._kpost_postnew_lookup_items(q)
+        if err:
+            self._host._show_kpost_api_error(self, err)
+            return
+        if not items:
+            QMessageBox.information(
+                self,
+                "결과 없음",
+                "검색 결과가 없습니다.\n검색어를 더 구체적으로 바꿔 보세요.",
+            )
+            return
+        self._items = items
+        self._list.clear()
+        for it in items:
+            self._list.addItem(f"[{it['postcd']}] {it['address']}")
+
+    def _on_accept(self):
+        row = self._list.currentRow()
+        if row < 0 or row >= len(self._items):
+            QMessageBox.warning(
+                self, "선택 필요", "목록에서 주소 한 건을 선택한 뒤 확인을 눌러 주세요."
+            )
+            return
+        it = self._items[row]
+        self.selected_postcd = it.get("postcd", "")
+        self.selected_address = it.get("address", "")
+        self.detail_address = self._detail.text().strip()
+        self.accept()
 
 
 class MainWindow(QMainWindow):
@@ -1981,7 +2067,15 @@ class MainWindow(QMainWindow):
                 self._refresh_quick_excel_manual_ui
             )
             self._refresh_quick_excel_manual_ui()
-        
+        if hasattr(self.ui, "pushButton_quick_manual_postcode_lookup"):
+            self.ui.pushButton_quick_manual_postcode_lookup.clicked.connect(
+                self._on_quick_manual_postcode_lookup_clicked
+            )
+        if hasattr(self.ui, "pushButton_quick_manual_address_search"):
+            self.ui.pushButton_quick_manual_address_search.clicked.connect(
+                self._on_quick_manual_address_search_clicked
+            )
+
         # 인덱스 입력 필드 연결
         if hasattr(self.ui, 'lineEdit_idx_naver'):
             self.ui.lineEdit_idx_naver.textChanged.connect(self.on_naver_index_changed)
@@ -2237,9 +2331,163 @@ class MainWindow(QMainWindow):
             "lineEdit_quick_manual_phone",
             "label_quick_manual_address",
             "lineEdit_quick_manual_address",
+            "label_quick_manual_postcode",
+            "lineEdit_quick_manual_postcode",
+            "pushButton_quick_manual_postcode_lookup",
+            "pushButton_quick_manual_address_search",
+            "label_quick_manual_detail",
+            "lineEdit_quick_manual_detail",
         ):
             if hasattr(self.ui, name):
                 yield getattr(self.ui, name)
+
+    def _get_kpost_regkey(self) -> str:
+        """우체국 KpostPortal 우편번호 조회 regkey."""
+        for env_name in ("KPOST_REGKEY", "EPOST_REGKEY"):
+            v = os.environ.get(env_name, "").strip()
+            if v:
+                return v
+        try:
+            if self.app_settings_path.exists() and self.app_settings_path.stat().st_size > 0:
+                with open(self.app_settings_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, dict):
+                    raw = data.get("kpost_regkey") or data.get("epost_regkey")
+                    if isinstance(raw, str) and raw.strip():
+                        return raw.strip()
+        except Exception as e:
+            print(f"! kpost regkey 로드 오류: {e}")
+        return ""
+
+    def _show_kpost_api_error(self, parent_widget, err_pair):
+        code, msg = err_pair
+        code = (code or "—").strip()
+        msg = (msg or "사유를 확인할 수 없습니다.").strip()
+        QMessageBox.warning(
+            parent_widget if parent_widget is not None else self,
+            "우편번호 조회 오류",
+            f"오류 코드: {code}\n\n원인:\n{msg}",
+        )
+
+    def _kpost_parse_postnew_response(self, text: str):
+        """
+        Returns:
+            (items, None) — items: [{postcd, address, addrjibun}, ...]
+            (None, (error_code, message)) — API 오류 XML
+        """
+        try:
+            root = ET.fromstring(text)
+        except ET.ParseError:
+            return None, ("XML 오류", "응답을 XML로 해석할 수 없습니다.")
+
+        for el in root.iter():
+            if _xml_local_lower(el.tag) != "error":
+                continue
+            code, msg = "", ""
+            for ch in el:
+                ln = _xml_local_lower(ch.tag)
+                if ln == "error_code":
+                    code = (ch.text or "").strip()
+                elif ln == "message":
+                    msg = (ch.text or "").strip()
+            return None, (code or "오류", msg or "알 수 없는 오류입니다.")
+
+        items = []
+        for el in root.iter():
+            if _xml_local_lower(el.tag) != "item":
+                continue
+            row = {}
+            for ch in el:
+                ln = _xml_local_lower(ch.tag)
+                if ln in ("postcd", "address", "addrjibun"):
+                    row[ln] = (ch.text or "").strip()
+            if row.get("postcd") or row.get("address"):
+                items.append(
+                    {
+                        "postcd": row.get("postcd", ""),
+                        "address": row.get("address", ""),
+                        "addrjibun": row.get("addrjibun", ""),
+                    }
+                )
+
+        return items, None
+
+    def _kpost_postnew_lookup_items(self, query: str):
+        """postNew 통합검색. (items, None) 또는 (None, (code, msg))."""
+        regkey = self._get_kpost_regkey()
+        if not regkey:
+            return None, (
+                "설정 없음",
+                "우체국 우편번호 API 인증키(regkey)가 없습니다.\n\n"
+                "환경변수 KPOST_REGKEY 또는 EPOST_REGKEY,\n"
+                '또는 database/app_settings.json 에 "kpost_regkey": "발급키" 를 넣어 주세요.',
+            )
+
+        q = (query or "").strip()
+        if len(q) < 2:
+            return None, (
+                "ERR-121",
+                "검색어는 2자 이상 입력해야 합니다.",
+            )
+
+        params = {
+            "regkey": regkey,
+            "target": "postNew",
+            "query": q,
+            "countPerPage": 20,
+            "currentPage": 1,
+        }
+        try:
+            resp = requests.get(KPOST_OPENAPI2_URL, params=params, timeout=15)
+            resp.raise_for_status()
+        except requests.RequestException as e:
+            return None, ("HTTP 오류", str(e))
+
+        text = resp.content.decode("utf-8", errors="replace")
+        return self._kpost_parse_postnew_response(text)
+
+    def _on_quick_manual_postcode_lookup_clicked(self):
+        """주소란 검색어로 우편번호만 조회해 첫 결과를 입력합니다."""
+        if not hasattr(self.ui, "lineEdit_quick_manual_address"):
+            return
+        q = self.ui.lineEdit_quick_manual_address.text().strip()
+        if len(q) < 2:
+            QMessageBox.warning(
+                self,
+                "입력",
+                "기본주소 칸에 도로명·번지 등 검색에 쓸 내용을 2자 이상 입력해 주세요.",
+            )
+            return
+        items, err = self._kpost_postnew_lookup_items(q)
+        if err:
+            self._show_kpost_api_error(self, err)
+            return
+        if not items:
+            QMessageBox.information(
+                self,
+                "결과 없음",
+                "우편번호를 찾지 못했습니다.\n"
+                "「주소 검색」으로 목록에서 고르거나 주소를 더 구체적으로 입력해 보세요.",
+            )
+            return
+        if hasattr(self.ui, "lineEdit_quick_manual_postcode"):
+            self.ui.lineEdit_quick_manual_postcode.setText(items[0]["postcd"])
+        hint = items[0].get("address", "")
+        self.statusBar().showMessage(
+            f"우편번호 입력됨 (첫 번째 결과) — {hint[:60]}{'…' if len(hint) > 60 else ''}",
+            5000,
+        )
+
+    def _on_quick_manual_address_search_clicked(self):
+        dlg = KpostAddressSearchDialog(self, self)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        if hasattr(self.ui, "lineEdit_quick_manual_address"):
+            self.ui.lineEdit_quick_manual_address.setText(dlg.selected_address)
+        if hasattr(self.ui, "lineEdit_quick_manual_postcode"):
+            self.ui.lineEdit_quick_manual_postcode.setText(dlg.selected_postcd)
+        if hasattr(self.ui, "lineEdit_quick_manual_detail"):
+            self.ui.lineEdit_quick_manual_detail.setText(dlg.detail_address)
 
     def _refresh_quick_excel_manual_ui(self):
         """수동 모드일 때만 이름·전화·주소 입력란을 표시하고 그룹 높이를 조정합니다."""
@@ -2254,7 +2502,7 @@ class MainWindow(QMainWindow):
         gb = getattr(self.ui, "groupBox", None)
         if gb is None:
             return
-        quick_h = 191 if manual else 102
+        quick_h = 248 if manual else 102
         grect = gb.geometry()
         gb.setGeometry(grect.x(), grect.y(), grect.width(), quick_h)
 
@@ -2290,13 +2538,22 @@ class MainWindow(QMainWindow):
                         phone = self.ui.lineEdit_quick_manual_phone.text().strip()
                     if hasattr(self.ui, "lineEdit_quick_manual_address"):
                         address = self.ui.lineEdit_quick_manual_address.text().strip()
+                    postcode = ""
+                    detail = ""
+                    if hasattr(self.ui, "lineEdit_quick_manual_postcode"):
+                        postcode = self.ui.lineEdit_quick_manual_postcode.text().strip()
+                    if hasattr(self.ui, "lineEdit_quick_manual_detail"):
+                        detail = self.ui.lineEdit_quick_manual_detail.text().strip()
+                    full_address = address
+                    if detail:
+                        full_address = f"{address} {detail}".strip()
                     missing = []
                     if not name:
                         missing.append("이름")
                     if not phone:
                         missing.append("전화번호")
                     if not address:
-                        missing.append("주소")
+                        missing.append("기본주소")
                     if missing:
                         QMessageBox.warning(
                             self,
@@ -2310,8 +2567,8 @@ class MainWindow(QMainWindow):
                         '주문번호': '',
                         '고객주문처명': '',
                         '수취인명': name,
-                        '우편번호': '',
-                        '수취인 주소': address,
+                        '우편번호': postcode,
+                        '수취인 주소': full_address,
                         '수취인 전화번호': phone,
                         '수취인 이동통신': phone,
                         '상품명': '',

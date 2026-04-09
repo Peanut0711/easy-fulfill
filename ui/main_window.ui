@@ -673,7 +673,7 @@
           </rect>
          </property>
         </widget>
-        <widget class="QLabel" name="label_quick_manual_address">
+        <widget class="QLabel" name="label_quick_manual_postcode">
          <property name="visible">
           <bool>false</bool>
          </property>
@@ -686,7 +686,58 @@
           </rect>
          </property>
          <property name="text">
-          <string>주소</string>
+          <string>우편번호</string>
+         </property>
+        </widget>
+        <widget class="QLineEdit" name="lineEdit_quick_manual_postcode">
+         <property name="visible">
+          <bool>false</bool>
+         </property>
+         <property name="geometry">
+          <rect>
+           <x>76</x>
+           <y>144</y>
+           <width>80</width>
+           <height>22</height>
+          </rect>
+         </property>
+         <property name="placeholderText">
+          <string>5자리</string>
+         </property>
+        </widget>
+        <widget class="QPushButton" name="pushButton_quick_manual_address_search">
+         <property name="visible">
+          <bool>false</bool>
+         </property>
+         <property name="geometry">
+          <rect>
+           <x>164</x>
+           <y>142</y>
+           <width>149</width>
+           <height>26</height>
+          </rect>
+         </property>
+         <property name="text">
+          <string>주소 검색</string>
+         </property>
+         <property name="toolTip">
+          <string>우체국 검색창에서 주소를 고르면 우편번호·기본주소·상세주소를 한꺼번에 채울 수 있습니다.</string>
+         </property>
+        </widget>
+        <widget class="QLabel" name="label_quick_manual_address">
+         <property name="visible">
+          <bool>false</bool>
+         </property>
+         <property name="geometry">
+          <rect>
+           <x>16</x>
+           <y>174</y>
+           <width>56</width>
+           <height>22</height>
+          </rect>
+         </property>
+         <property name="text">
+          <string>기본주소</string>
          </property>
         </widget>
         <widget class="QLineEdit" name="lineEdit_quick_manual_address">
@@ -696,10 +747,64 @@
          <property name="geometry">
           <rect>
            <x>76</x>
-           <y>144</y>
+           <y>172</y>
+           <width>158</width>
+           <height>22</height>
+          </rect>
+         </property>
+         <property name="placeholderText">
+          <string>도로명 주소 등</string>
+         </property>
+        </widget>
+        <widget class="QPushButton" name="pushButton_quick_manual_postcode_lookup">
+         <property name="visible">
+          <bool>false</bool>
+         </property>
+         <property name="geometry">
+          <rect>
+           <x>242</x>
+           <y>170</y>
+           <width>71</width>
+           <height>26</height>
+          </rect>
+         </property>
+         <property name="text">
+          <string>조회</string>
+         </property>
+         <property name="toolTip">
+          <string>기본주소 칸 내용으로 우체국 API를 검색해, 첫 번째 결과의 우편번호만 위 칸에 넣습니다. 목록에서 고르려면 「주소 검색」을 이용하세요.</string>
+         </property>
+        </widget>
+        <widget class="QLabel" name="label_quick_manual_detail">
+         <property name="visible">
+          <bool>false</bool>
+         </property>
+         <property name="geometry">
+          <rect>
+           <x>16</x>
+           <y>202</y>
+           <width>56</width>
+           <height>22</height>
+          </rect>
+         </property>
+         <property name="text">
+          <string>상세주소</string>
+         </property>
+        </widget>
+        <widget class="QLineEdit" name="lineEdit_quick_manual_detail">
+         <property name="visible">
+          <bool>false</bool>
+         </property>
+         <property name="geometry">
+          <rect>
+           <x>76</x>
+           <y>200</y>
            <width>237</width>
            <height>22</height>
           </rect>
+         </property>
+         <property name="placeholderText">
+          <string>동·호수 등 (선택)</string>
          </property>
         </widget>
        </widget>
