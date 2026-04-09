@@ -110,6 +110,18 @@ def _order_index_sheet_row_looks_like_header(row):
     return cell in ("날짜", "date", "Date")
 
 
+def _ensure_order_index_worksheet_header_row(ws):
+    """레거시 시트(1행이 바로 날짜 데이터)면 맨 위에 헤더 행을 삽입합니다."""
+    values = ws.get_all_values()
+    if not values or _order_index_sheet_row_looks_like_header(values[0]):
+        return
+    ws.insert_row(ORDER_INDEX_SHEET_HEADERS, index=1)
+    print(
+        f"✓ 「{ORDER_INDEX_SHEET_TITLE}」 시트 1행에 "
+        "날짜·네이버·쿠팡·지마켓 열 제목을 추가했습니다. (기존 데이터는 한 행 아래로 밀렸습니다.)"
+    )
+
+
 def _standalone_init_order_index_ws_if_blank(ws):
     if ws.get_all_values():
         return
@@ -143,6 +155,7 @@ def _standalone_ensure_order_index_worksheet(gc):
         print(f"✓ 스프레드시트에 「{ORDER_INDEX_SHEET_TITLE}」 탭을 만들었습니다.")
     ws = spreadsheet.get_worksheet(ORDER_INDEX_WORKSHEET_INDEX)
     _standalone_init_order_index_ws_if_blank(ws)
+    _ensure_order_index_worksheet_header_row(ws)
     return ws
 
 
@@ -951,6 +964,7 @@ class MainWindow(QMainWindow):
 
         ws = spreadsheet.get_worksheet(ORDER_INDEX_WORKSHEET_INDEX)
         self._init_order_index_worksheet_if_blank(ws)
+        _ensure_order_index_worksheet_header_row(ws)
         return ws
 
     def _sheet_row_looks_like_order_index_header(self, row):
