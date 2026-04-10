@@ -774,7 +774,9 @@ class MainWindow(QMainWindow):
         self._startup_sync_thread = None
         self._product_mapping_thread = None
         self._db_sheet_sync_thread = None
-        
+        self._db_sync_naver_path_override = None
+        self._db_sync_coupang_path_override = None
+
         self.load_ui()
         self.setup_connections()
         self.setup_status_bar()
@@ -2113,7 +2115,15 @@ class MainWindow(QMainWindow):
             )
         if hasattr(self.ui, "pushButton_db_sync_refresh_paths"):
             self.ui.pushButton_db_sync_refresh_paths.clicked.connect(
-                self._refresh_db_sheet_sync_path_labels
+                self._on_db_sync_refresh_paths_clicked
+            )
+        if hasattr(self.ui, "pushButton_db_sync_naver_browse"):
+            self.ui.pushButton_db_sync_naver_browse.clicked.connect(
+                self._on_db_sync_naver_browse_clicked
+            )
+        if hasattr(self.ui, "pushButton_db_sync_coupang_browse"):
+            self.ui.pushButton_db_sync_coupang_browse.clicked.connect(
+                self._on_db_sync_coupang_browse_clicked
             )
         if hasattr(self.ui, "pushButton_db_sync_run"):
             self.ui.pushButton_db_sync_run.clicked.connect(self._on_db_sheet_sync_run_clicked)
@@ -2141,7 +2151,64 @@ class MainWindow(QMainWindow):
         if index == 2:
             self._refresh_db_sheet_sync_path_labels()
 
-    def _refresh_db_sheet_sync_path_labels(self):
+    def _on_db_sync_refresh_paths_clicked(self):
+        self._refresh_db_sheet_sync_path_labels(reset_manual_overrides=True)
+
+    def _db_sync_start_dir(self, config_db_dir: str) -> str:
+        p = Path(config_db_dir).resolve()
+        return str(p) if p.is_dir() else str(Path.cwd())
+
+    def _on_db_sync_naver_browse_clicked(self):
+        if not hasattr(self.ui, "label_db_sync_naver_file"):
+            return
+        try:
+            from db_sheet_sync import NAVER_CONFIG
+        except ImportError:
+            QMessageBox.warning(self, "DB동기화", "db_sheet_sync 모듈을 불러올 수 없습니다.")
+            return
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "네이버 상품 DB (CSV) 선택",
+            self._db_sync_start_dir(NAVER_CONFIG["db_dir"]),
+            "CSV (*.csv);;모든 파일 (*.*)",
+        )
+        if not path:
+            return
+        self._db_sync_naver_path_override = Path(path)
+        self._refresh_db_sheet_sync_path_labels()
+
+    def _on_db_sync_coupang_browse_clicked(self):
+        if not hasattr(self.ui, "label_db_sync_coupang_file"):
+            return
+        try:
+            from db_sheet_sync import COUPANG_CONFIG
+        except ImportError:
+            QMessageBox.warning(self, "DB동기화", "db_sheet_sync 모듈을 불러올 수 없습니다.")
+            return
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "쿠팡 가격·재고 DB (Excel) 선택",
+            self._db_sync_start_dir(COUPANG_CONFIG["db_dir"]),
+            "Excel (*.xlsx);;모든 파일 (*.*)",
+        )
+        if not path:
+            return
+        self._db_sync_coupang_path_override = Path(path)
+        self._refresh_db_sheet_sync_path_labels()
+
+    def _set_db_sync_path_controls_busy(self, busy: bool):
+        w = self.ui
+        for name in (
+            "pushButton_db_sync_refresh_paths",
+            "pushButton_db_sync_run",
+            "pushButton_db_sync_naver_browse",
+            "pushButton_db_sync_coupang_browse",
+        ):
+            b = getattr(w, name, None)
+            if b is not None:
+                b.setEnabled(not busy)
+
+    def _refresh_db_sheet_sync_path_labels(self, reset_manual_overrides=False):
         if not hasattr(self.ui, "label_db_sync_naver_file"):
             return
         try:
@@ -2156,8 +2223,15 @@ class MainWindow(QMainWindow):
             self.ui.label_db_sync_naver_file.setText(f"네이버 DB [ — ] : (모듈 오류: {e})")
             self.ui.label_db_sync_coupang_file.setText("쿠팡 DB [ — ] : —")
             return
-        n = get_latest_file_from_patterns(NAVER_CONFIG["db_dir"], NAVER_CONFIG["file_patterns"])
-        c = get_latest_file_from_pattern(COUPANG_CONFIG["db_dir"], COUPANG_CONFIG["file_pattern"])
+        if reset_manual_overrides:
+            self._db_sync_naver_path_override = None
+            self._db_sync_coupang_path_override = None
+        n = self._db_sync_naver_path_override
+        if n is None:
+            n = get_latest_file_from_patterns(NAVER_CONFIG["db_dir"], NAVER_CONFIG["file_patterns"])
+        c = self._db_sync_coupang_path_override
+        if c is None:
+            c = get_latest_file_from_pattern(COUPANG_CONFIG["db_dir"], COUPANG_CONFIG["file_pattern"])
         self.ui.label_db_sync_naver_file.setText(format_db_sync_label_line("네이버 DB", n))
         self.ui.label_db_sync_coupang_file.setText(format_db_sync_label_line("쿠팡 DB", c))
 
@@ -2196,8 +2270,7 @@ class MainWindow(QMainWindow):
             "시트와 로컬 DB 파일을 처리하고 있습니다. 잠시만 기다려 주세요.",
         )
         QApplication.processEvents()
-        self.ui.pushButton_db_sync_run.setEnabled(False)
-        self.ui.pushButton_db_sync_refresh_paths.setEnabled(False)
+        self._set_db_sync_path_controls_busy(True)
         self.ui.plainTextEdit_db_sync_log.setPlainText("실행 중… 잠시만 기다려 주세요.\n")
         params = {
             "spreadsheet_id": SPREADSHEET_ID,
@@ -2205,8 +2278,16 @@ class MainWindow(QMainWindow):
             "do_coupang": do_coupang,
             "test_mode": test_mode,
             "test_count": test_count,
-            "naver_path": None,
-            "coupang_path": None,
+            "naver_path": (
+                str(self._db_sync_naver_path_override)
+                if self._db_sync_naver_path_override is not None
+                else None
+            ),
+            "coupang_path": (
+                str(self._db_sync_coupang_path_override)
+                if self._db_sync_coupang_path_override is not None
+                else None
+            ),
             "verbose_log": verbose_log,
         }
         self._db_sheet_sync_thread = DbSheetSyncThread(params)
@@ -2215,8 +2296,7 @@ class MainWindow(QMainWindow):
 
     def _on_db_sheet_sync_finished(self, result: dict):
         self._hide_busy_processing_overlay()
-        self.ui.pushButton_db_sync_run.setEnabled(True)
-        self.ui.pushButton_db_sync_refresh_paths.setEnabled(True)
+        self._set_db_sync_path_controls_busy(False)
         self._db_sheet_sync_thread = None
         lines = result.get("logs") or []
         self.ui.plainTextEdit_db_sync_log.setPlainText("\n".join(lines))

@@ -960,7 +960,7 @@
         <item>
          <widget class="QLabel" name="label_db_sync_intro">
           <property name="text">
-           <string>database 폴더의 최신 Product_*.csv·price_inventory_*.xlsx를 읽어서&#10;구글 시트의 네이버·쿠팡 시트명(각 탭)에 아직 없는 상품만 행으로&#10;추가합니다. 기존 행의 가격·재고는 갱신하지 않습니다.</string>
+           <string>기본은 database 폴더에서 최신 Product_*.csv·price_inventory_*.xlsx를 찾습니다.&#10;각 행 끝 「직접지정」으로 다른 위치의 파일을 지정할 수 있습니다(새로고침 시 자동 탐지로 복귀).&#10;구글 시트의 네이버·쿠팡 탭에 아직 없는 상품만 행으로 추가하며, 기존 행의 가격·재고는 갱신하지 않습니다.</string>
           </property>
           <property name="wordWrap">
            <bool>true</bool>
@@ -1001,6 +1001,28 @@
             </property>
            </widget>
           </item>
+          <item>
+           <widget class="QPushButton" name="pushButton_db_sync_naver_browse">
+            <property name="sizePolicy">
+             <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+              <horstretch>0</horstretch>
+              <verstretch>0</verstretch>
+             </sizepolicy>
+            </property>
+            <property name="minimumSize">
+             <size>
+              <width>72</width>
+              <height>0</height>
+             </size>
+            </property>
+            <property name="text">
+             <string>직접지정</string>
+            </property>
+            <property name="toolTip">
+             <string>CSV 파일을 직접 선택합니다. 새로고침을 누르면 database 폴더 자동 탐지로 돌아갑니다.</string>
+            </property>
+           </widget>
+          </item>
          </layout>
         </item>
         <item>
@@ -1037,6 +1059,28 @@
             </property>
            </widget>
           </item>
+          <item>
+           <widget class="QPushButton" name="pushButton_db_sync_coupang_browse">
+            <property name="sizePolicy">
+             <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+              <horstretch>0</horstretch>
+              <verstretch>0</verstretch>
+             </sizepolicy>
+            </property>
+            <property name="minimumSize">
+             <size>
+              <width>72</width>
+              <height>0</height>
+             </size>
+            </property>
+            <property name="text">
+             <string>직접지정</string>
+            </property>
+            <property name="toolTip">
+             <string>엑셀(.xlsx) 파일을 직접 선택합니다. 새로고침을 누르면 database 폴더 자동 탐지로 돌아갑니다.</string>
+            </property>
+           </widget>
+          </item>
          </layout>
         </item>
         <item>
@@ -1053,7 +1097,7 @@
              </sizepolicy>
             </property>
             <property name="text">
-             <string>테스트 모드(적용 안함)</string>
+             <string>테스트 모드 (적용 안함)</string>
             </property>
             <property name="checked">
              <bool>false</bool>
@@ -1120,7 +1164,7 @@
              <string>새로고침</string>
             </property>
             <property name="toolTip">
-             <string>database 폴더에서 네이버·쿠팡 최신 파일 경로를 다시 찾아 라벨을 갱신합니다.</string>
+             <string>수동으로 고른 파일 지정을 해제하고, database 폴더에서 네이버·쿠팡 최신 파일 경로를 다시 찾아 라벨을 갱신합니다.</string>
             </property>
            </widget>
           </item>
