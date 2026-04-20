@@ -1791,6 +1791,11 @@ class MainWindow(QMainWindow):
             if not payload.get("ok"):
                 err = payload.get("error", "")
                 print(f"! 시작 시 DB동기화 실패: {err}")
+                if _is_likely_google_sheets_oauth_error(RuntimeError(str(err))):
+                    self._prompt_google_reauth_for_oauth_error(
+                        title="Google 로그인 만료",
+                        err_text=str(err),
+                    )
                 self._update_index_sheet_sync_label()
                 return
 
@@ -2301,7 +2306,16 @@ class MainWindow(QMainWindow):
         lines = result.get("logs") or []
         self.ui.plainTextEdit_db_sync_log.setPlainText("\n".join(lines))
         if result.get("error"):
-            QMessageBox.warning(self, "DB동기화", result["error"])
+            err_text = str(result["error"])
+            if _is_likely_google_sheets_oauth_error(RuntimeError(err_text)):
+                handled = self._prompt_google_reauth_for_oauth_error(
+                    title="DB동기화",
+                    err_text=err_text,
+                )
+                if not handled:
+                    QMessageBox.warning(self, "DB동기화", err_text)
+            else:
+                QMessageBox.warning(self, "DB동기화", err_text)
         wrote = False
         for key in ("naver", "coupang"):
             ch = result.get(key)
@@ -2358,26 +2372,27 @@ class MainWindow(QMainWindow):
         else:
             QMessageBox.information(self, "연결 해제", "삭제할 token.json이 없었습니다.")
 
-    def _on_google_reauth_clicked(self):
-        reply = QMessageBox.question(
-            self,
-            "재인증",
-            "브라우저가 열리면 Google 계정으로 로그인·권한 승인을 완료해 주세요.\n"
-            "진행 시 기존 token.json은 삭제됩니다.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.Yes,
-        )
-        if reply != QMessageBox.StandardButton.Yes:
-            return
+    def _on_google_reauth_clicked(self, ask_confirm: bool = True):
+        if ask_confirm:
+            reply = QMessageBox.question(
+                self,
+                "재인증",
+                "브라우저가 열리면 Google 계정으로 로그인·권한 승인을 완료해 주세요.\n"
+                "진행 시 기존 token.json은 삭제됩니다.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return False
 
         if gspread is None:
             QMessageBox.warning(self, "재인증", "gspread 패키지가 필요합니다. (pip install gspread)")
-            return
+            return False
         try:
             from google_sheets_oauth import delete_oauth_token_file, get_authorized_gspread_client
         except ImportError:
             QMessageBox.warning(self, "재인증", "google-auth-oauthlib 패키지가 필요합니다.")
-            return
+            return False
 
         delete_oauth_token_file()
         self._invalidate_google_sheets_client_and_caches()
@@ -2391,9 +2406,10 @@ class MainWindow(QMainWindow):
                 f"Google 로그인에 실패했습니다.\n\n{e}",
             )
             self._refresh_google_auth_status_ui()
-            return
+            return False
         self._refresh_google_auth_status_ui()
         QMessageBox.information(self, "재인증", "Google Sheets 연동이 완료되었습니다.")
+        return True
 
     def _on_google_open_oauth_folder_clicked(self):
         from google_sheets_oauth import GOOGLE_AUTH_DIR
@@ -2407,6 +2423,20 @@ class MainWindow(QMainWindow):
             "「환경설정」탭 → 「Google Sheets 연동」에서 "
             "「연결 해제」 후 「재인증」을 눌러 보세요."
         )
+
+    def _prompt_google_reauth_for_oauth_error(self, *, title: str, err_text: str) -> bool:
+        reply = QMessageBox.question(
+            self,
+            title,
+            "Google Sheets 로그인 토큰이 만료되었거나 철회되었습니다.\n\n"
+            f"{err_text}\n\n"
+            "지금 저장된 토큰을 삭제하고 재인증하시겠습니까?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return False
+        return bool(self._on_google_reauth_clicked(ask_confirm=False))
 
     def _iter_quick_excel_manual_widgets(self):
         for name in (

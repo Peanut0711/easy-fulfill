@@ -23,6 +23,16 @@ TOKEN_PATH = GOOGLE_AUTH_DIR / "token.json"
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 
 
+def _is_invalid_grant_error(error: BaseException) -> bool:
+    """리프레시 토큰 폐기/만료(invalid_grant) 류 오류인지 문자열 기반 판별."""
+    text = str(error).lower()
+    return (
+        "invalid_grant" in text
+        or "token has been expired or revoked" in text
+        or "token has expired or revoked" in text
+    )
+
+
 def get_authorized_gspread_client():
     """OAuth로 로그인한 gspread Client를 반환합니다. 브라우저 로그인이 필요할 수 있습니다."""
     GOOGLE_AUTH_DIR.mkdir(parents=True, exist_ok=True)
@@ -33,8 +43,15 @@ def get_authorized_gspread_client():
 
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
+            try:
+                creds.refresh(Request())
+            except Exception as e:
+                # 리프레시 토큰이 만료/폐기되면 기존 token.json을 지우고 재인증으로 복구한다.
+                if not _is_invalid_grant_error(e):
+                    raise
+                delete_oauth_token_file()
+                creds = None
+        if not creds or not creds.valid:
             if not OAUTH_CREDENTIAL_PATH.exists():
                 raise FileNotFoundError(
                     "OAuth 클라이언트 파일이 없습니다.\n"
