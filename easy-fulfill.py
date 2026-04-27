@@ -2452,6 +2452,8 @@ class MainWindow(QMainWindow):
             "pushButton_quick_manual_address_search",
             "label_quick_manual_detail",
             "lineEdit_quick_manual_detail",
+            "label_quick_manual_product",
+            "lineEdit_quick_manual_product",
         ):
             if hasattr(self.ui, name):
                 yield getattr(self.ui, name)
@@ -2628,7 +2630,7 @@ class MainWindow(QMainWindow):
         gb = getattr(self.ui, "groupBox", None)
         if gb is None:
             return
-        quick_h = 248 if manual else 102
+        quick_h = 278 if manual else 102
         grect = gb.geometry()
         gb.setGeometry(grect.x(), grect.y(), grect.width(), quick_h)
 
@@ -2670,6 +2672,11 @@ class MainWindow(QMainWindow):
                         postcode = self.ui.lineEdit_quick_manual_postcode.text().strip()
                     if hasattr(self.ui, "lineEdit_quick_manual_detail"):
                         detail = self.ui.lineEdit_quick_manual_detail.text().strip()
+                    product_name = ""
+                    if hasattr(self.ui, "lineEdit_quick_manual_product"):
+                        product_name = self.ui.lineEdit_quick_manual_product.text().strip()
+                    if not product_name:
+                        product_name = "전자제품"
                     full_address = address
                     if detail:
                         full_address = f"{address} {detail}".strip()
@@ -2697,7 +2704,7 @@ class MainWindow(QMainWindow):
                         '수취인 주소': full_address,
                         '수취인 전화번호': phone,
                         '수취인 이동통신': phone,
-                        '상품명': '',
+                        '상품명': product_name,
                         '상품모델': '',
                         '배송메세지': '',
                         '비고': ''

@@ -807,6 +807,38 @@
           <string>동·호수 등 (선택)</string>
          </property>
         </widget>
+        <widget class="QLabel" name="label_quick_manual_product">
+         <property name="visible">
+          <bool>false</bool>
+         </property>
+         <property name="geometry">
+          <rect>
+           <x>16</x>
+           <y>230</y>
+           <width>56</width>
+           <height>22</height>
+          </rect>
+         </property>
+         <property name="text">
+          <string>상품명</string>
+         </property>
+        </widget>
+        <widget class="QLineEdit" name="lineEdit_quick_manual_product">
+         <property name="visible">
+          <bool>false</bool>
+         </property>
+         <property name="geometry">
+          <rect>
+           <x>76</x>
+           <y>228</y>
+           <width>237</width>
+           <height>22</height>
+          </rect>
+         </property>
+         <property name="placeholderText">
+          <string>전자제품</string>
+         </property>
+        </widget>
        </widget>
        <widget class="QGroupBox" name="groupBox_batch_ship">
         <property name="geometry">
