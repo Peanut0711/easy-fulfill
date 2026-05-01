@@ -562,12 +562,12 @@
          </property>
          <item>
           <property name="text">
-           <string>자동</string>
+           <string>수동</string>
           </property>
          </item>
          <item>
           <property name="text">
-           <string>수동</string>
+           <string>자동</string>
           </property>
          </item>
          <item>
