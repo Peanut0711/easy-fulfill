@@ -843,8 +843,8 @@
        <widget class="QGroupBox" name="groupBox_batch_ship">
         <property name="geometry">
          <rect>
-          <x>30</x>
-          <y>325</y>
+          <x>390</x>
+          <y>559</y>
           <width>341</width>
           <height>61</height>
          </rect>
@@ -872,8 +872,8 @@
        <widget class="QGroupBox" name="groupBox_google_sheets">
         <property name="geometry">
          <rect>
-          <x>30</x>
-          <y>395</y>
+          <x>390</x>
+          <y>325</y>
           <width>341</width>
           <height>225</height>
          </rect>

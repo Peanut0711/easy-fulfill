@@ -2635,22 +2635,54 @@ class MainWindow(QMainWindow):
         gb.setGeometry(grect.x(), grect.y(), grect.width(), quick_h)
 
         gap_after_quick = 13
-        if hasattr(self.ui, "groupBox_batch_ship"):
-            bb = self.ui.groupBox_batch_ship
-            brect = bb.geometry()
-            batch_y = grect.y() + quick_h + gap_after_quick
-            bb.setGeometry(brect.x(), batch_y, brect.width(), brect.height())
+        gs = getattr(self.ui, "groupBox_google_sheets", None)
+        bb = getattr(self.ui, "groupBox_batch_ship", None)
 
-        if hasattr(self.ui, "groupBox_google_sheets"):
-            gs = self.ui.groupBox_google_sheets
-            gsrect = gs.geometry()
-            gap_after_batch = 9
-            if hasattr(self.ui, "groupBox_batch_ship"):
-                bbr = self.ui.groupBox_batch_ship.geometry()
-                google_y = bbr.y() + bbr.height() + gap_after_batch
-            else:
-                google_y = grect.y() + quick_h + gap_after_quick + 61 + gap_after_batch
-            gs.setGeometry(gsrect.x(), google_y, gsrect.width(), gsrect.height())
+        # 우측 컬럼으로 이동된 경우(퀵 엑셀과 x축이 충분히 떨어진 경우),
+        # 순서를 Google Sheets -> 일괄 발송으로 고정한다.
+        right_column_x = None
+        if gs is not None:
+            right_column_x = gs.geometry().x()
+        elif bb is not None:
+            right_column_x = bb.geometry().x()
+        is_right_column = (
+            right_column_x is not None
+            and right_column_x >= (grect.x() + grect.width() + 8)
+        )
+
+        if is_right_column:
+            top_anchor_y = grect.y()
+            order_index_gb = getattr(self.ui, "groupBox_order_index", None)
+            if order_index_gb is not None:
+                top_anchor_y = order_index_gb.geometry().y()
+
+            gap_between_right = 9
+            if gs is not None:
+                gsrect = gs.geometry()
+                gs.setGeometry(gsrect.x(), top_anchor_y, gsrect.width(), gsrect.height())
+            if bb is not None:
+                brect = bb.geometry()
+                if gs is not None:
+                    gsrect_after = gs.geometry()
+                    batch_y = gsrect_after.y() + gsrect_after.height() + gap_between_right
+                else:
+                    batch_y = top_anchor_y
+                bb.setGeometry(brect.x(), batch_y, brect.width(), brect.height())
+        else:
+            if bb is not None:
+                brect = bb.geometry()
+                batch_y = grect.y() + quick_h + gap_after_quick
+                bb.setGeometry(brect.x(), batch_y, brect.width(), brect.height())
+
+            if gs is not None:
+                gsrect = gs.geometry()
+                gap_after_batch = 9
+                if bb is not None:
+                    bbr = bb.geometry()
+                    google_y = bbr.y() + bbr.height() + gap_after_batch
+                else:
+                    google_y = grect.y() + quick_h + gap_after_quick + 61 + gap_after_batch
+                gs.setGeometry(gsrect.x(), google_y, gsrect.width(), gsrect.height())
 
     def generate_quick_excel(self):
         """클립보드 정보를 기반으로 단건 엑셀을 생성합니다. 수동 선택 시 입력란 값으로 생성합니다."""
