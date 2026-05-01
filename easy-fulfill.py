@@ -1512,7 +1512,7 @@ class MainWindow(QMainWindow):
         bar_row.addWidget(self._startup_progress_bar)
         bar_row.addStretch(1)
 
-        hint = QLabel("환경에 따라 수 초 걸릴 수 있어요. 대부분 곧 완료됩니다.")
+        hint = QLabel("환경에 따라 수 초 걸릴 수 있습니다.")
         hint.setAlignment(Qt.AlignCenter)
         hf = QFont(sub_font)
         hf.setPixelSize(12)
