@@ -3673,12 +3673,9 @@ class MainWindow(QMainWindow):
                 # 주문 총액 가져오기
                 total_amount = info.get('주문총액', 0)
                 
-                # 만원 단위로 포맷팅 (100원 단위 아래는 내림, 소수점 첫째 자리에서도 내림)
-                # 예: 61000 -> 6.1만, 63820 -> 6.3만
-                amount_in_100 = total_amount // 100  # 100원 단위로 내림
-                amount_in_manwon = amount_in_100 / 100  # 만원 단위로 변환
-                # 소수점 첫째 자리까지 표시 (둘째 자리에서 내림)
-                amount_rounded = math.floor(amount_in_manwon * 10) / 10
+                # 만원 단위로 포맷팅 (0.1만 단위로 올림)
+                # 예: 950 -> 0.1만, 61000 -> 6.1만, 63820 -> 6.4만
+                amount_rounded = math.ceil(total_amount / 1000) / 10 if total_amount > 0 else 0
                 formatted_amount = f"{amount_rounded}만"
                 
                 # 배송 방법이 '택배,등기,소포'인 경우에만 기존 형식으로 표시
@@ -3877,25 +3874,6 @@ class MainWindow(QMainWindow):
                     '쿠팡상품번호': vp_product_no,
                 })
             
-            # 같은 주문자(수취인이름)로 주문 통합
-            consolidated_orders = {}
-            for order_number, info in self.orders.items():
-                # 수취인이름을 키로 사용하여 주문 통합
-                customer_name = info['수취인이름']
-                
-                if customer_name not in consolidated_orders:
-                    consolidated_orders[customer_name] = {
-                        '수취인이름': customer_name,
-                        '주문번호목록': [order_number],
-                        '상품목록': info['상품목록'].copy(),
-                        '총결제액': info.get('결제액', 0)
-                    }
-                else:
-                    # 기존 주문에 추가
-                    consolidated_orders[customer_name]['주문번호목록'].append(order_number)
-                    consolidated_orders[customer_name]['상품목록'].extend(info['상품목록'])
-                    consolidated_orders[customer_name]['총결제액'] += info.get('결제액', 0)
-            
             # 마크다운 형식으로 주문 정보 생성
             markdown_text = ""
             
@@ -3908,19 +3886,16 @@ class MainWindow(QMainWindow):
                     self.current_idx_coupang = 1
                     self.ui.lineEdit_idx_coupang.setText(str(self.current_idx_coupang))
             
-            for customer_name, info in consolidated_orders.items():
-                # 총결제액 가져오기
-                total_amount = info.get('총결제액', 0)
+            for order_number, info in self.orders.items():
+                # 주문번호별 결제액 가져오기
+                total_amount = info.get('결제액', 0)
                 
-                # 만원 단위로 포맷팅 (100원 단위 아래는 내림, 소수점 첫째 자리에서도 내림)
-                # 예: 61000 -> 6.1만, 63820 -> 6.3만
-                amount_in_100 = total_amount // 100  # 100원 단위로 내림
-                amount_in_manwon = amount_in_100 / 100  # 만원 단위로 변환
-                # 소수점 첫째 자리까지 표시 (둘째 자리에서 내림)
-                amount_rounded = math.floor(amount_in_manwon * 10) / 10
+                # 만원 단위로 포맷팅 (0.1만 단위로 올림)
+                # 예: 950 -> 0.1만, 61000 -> 6.1만, 63820 -> 6.4만
+                amount_rounded = math.ceil(total_amount / 1000) / 10 if total_amount > 0 else 0
                 formatted_amount = f"{amount_rounded}만"
                 
-                markdown_text += f"[ ] {self.current_idx_coupang}.{customer_name} - {formatted_amount}\n"
+                markdown_text += f"[ ] {self.current_idx_coupang}.{info['수취인이름']} - {formatted_amount}\n"
                 self.update_coupang_index()
                 if hasattr(self.ui, 'lineEdit_idx_coupang'):
                     self.ui.lineEdit_idx_coupang.setText(str(self.current_idx_coupang))
