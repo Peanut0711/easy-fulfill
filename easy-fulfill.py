@@ -49,6 +49,7 @@ from io import BytesIO
 import warnings
 import logging
 import json
+import traceback
 import xml.etree.ElementTree as ET
 
 try:
@@ -4937,6 +4938,7 @@ class MainWindow(QMainWindow):
             
         except Exception as e:
             error_msg = str(e)
+            traceback.print_exc()
             print(f"❌ 일괄 발송 파일 처리 중 오류 발생: {error_msg}")
             raise Exception(f"일괄 발송 파일 처리 중 오류가 발생했습니다: {error_msg}")
 
@@ -5120,6 +5122,7 @@ class MainWindow(QMainWindow):
             
         except Exception as e:
             error_msg = str(e)
+            traceback.print_exc()
             print(f"❌ 일괄 발송 파일 처리 중 오류 발생: {error_msg}")
             raise Exception(f"일괄 발송 파일 처리 중 오류가 발생했습니다: {error_msg}")
 
@@ -5143,6 +5146,17 @@ class MainWindow(QMainWindow):
             order_df['택배사'] = '우체국택배'
         elif self.store_type == "coupang":
             order_df['택배사'] = '우체국'
+
+        order_df = order_df.copy()
+        order_df.columns = [
+            f"Column_{idx}" if pd.isna(col) else str(col).strip()
+            for idx, col in enumerate(order_df.columns)
+        ]
+
+        def _display_width(value):
+            if pd.isna(value):
+                return 0
+            return len(str(value))
         
         with pd.ExcelWriter(output_file, engine='xlsxwriter') as writer:
             order_df.to_excel(writer, index=False, sheet_name='발송처리')
@@ -5171,9 +5185,10 @@ class MainWindow(QMainWindow):
             
             # 열 너비 및 포맷 적용
             for idx, col in enumerate(order_df.columns):
+                column_values = order_df.iloc[:, idx]
                 max_length = max(
-                    order_df[col].astype(str).apply(len).max(),
-                    len(str(col))
+                    column_values.map(_display_width).max(),
+                    _display_width(col)
                 )
                 adjusted_width = max_length * 2 if any('\u3131' <= c <= '\u318E' or '\uAC00' <= c <= '\uD7A3' for c in str(col)) else max_length
                 
