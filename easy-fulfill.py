@@ -228,9 +228,10 @@ def _standalone_write_order_indices_ws(ws, n, c, g, values=None):
         ws.append_row([today, n, c, g])
 
 
-def run_startup_order_index_sheet_sync_worker():
+def run_order_index_read_sync_worker():
     """
-    UI 스레드가 아닌 곳에서 호출. Google API만 수행.
+    UI 스레드가 아닌 곳에서 호출. Google API만 수행(읽기 + 필요 시 오늘 행 생성).
+    앱 시작 동기화와 주기적 폴링이 공유합니다.
     반환 dict: ok, kind(data|created), row — 또는 ok False, error
     """
     if gspread is None:
@@ -253,6 +254,29 @@ def run_startup_order_index_sheet_sync_worker():
             "kind": "created",
             "row": {"naver": 1, "coupang": 1, "gmarket": 1},
         }
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+def run_order_index_write_worker(naver, coupang, gmarket):
+    """
+    UI 스레드가 아닌 곳에서 호출. 오늘 날짜 행에 인덱스 3종을 기록합니다.
+    시트 전체 읽기는 한 번만 수행하고 그 값을 그대로 재사용합니다.
+    반환 dict: ok — 또는 ok False, error
+    """
+    if gspread is None:
+        return {"ok": False, "error": "gspread 패키지가 필요합니다. (pip install gspread)"}
+    try:
+        from google_sheets_oauth import get_authorized_gspread_client
+    except ImportError as e:
+        return {"ok": False, "error": str(e)}
+    try:
+        gc = get_authorized_gspread_client()
+        ws = _standalone_open_order_index_ws(gc)
+        values = ws.get_all_values()  # 쓰기 위치 판단용 단일 읽기
+        values = _standalone_normalize_order_index_values(ws, values)
+        _standalone_write_order_indices_ws(ws, naver, coupang, gmarket, values=values)
+        return {"ok": True}
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
@@ -370,13 +394,30 @@ class ProductMappingLoadThread(QThread):
         self.result_ready.emit(run_product_code_map_load_worker(self._store_type))
 
 
-class OrderIndexStartupSyncThread(QThread):
-    """앱 시작 시 스프레드시트 인덱스만 백그라운드에서 맞춥니다."""
+class OrderIndexReadSyncThread(QThread):
+    """스프레드시트 인덱스를 백그라운드에서 읽습니다(앱 시작·주기적 폴링 공용)."""
 
     result_ready = Signal(dict)
 
     def run(self):
-        self.result_ready.emit(run_startup_order_index_sheet_sync_worker())
+        self.result_ready.emit(run_order_index_read_sync_worker())
+
+
+class OrderIndexWriteThread(QThread):
+    """현재 인덱스 값을 백그라운드에서 스프레드시트에 기록합니다."""
+
+    result_ready = Signal(dict)
+
+    def __init__(self, naver, coupang, gmarket, parent=None):
+        super().__init__(parent)
+        self._naver = naver
+        self._coupang = coupang
+        self._gmarket = gmarket
+
+    def run(self):
+        self.result_ready.emit(
+            run_order_index_write_worker(self._naver, self._coupang, self._gmarket)
+        )
 
 
 class DbSheetSyncThread(QThread):
@@ -787,6 +828,8 @@ class MainWindow(QMainWindow):
         self._startup_order_index_sync_started = False
         self._startup_order_index_sync_done = False
         self._startup_sync_thread = None
+        # 폴링(읽기)·인덱스 쓰기 백그라운드 작업 단일 실행 추적 (None이면 유휴)
+        self._index_sheet_op_thread = None
         self._product_mapping_thread = None
         self._db_sheet_sync_thread = None
         self._db_sync_naver_path_override = None
@@ -1192,13 +1235,28 @@ class MainWindow(QMainWindow):
             self._index_sheet_push_pending = True
             self._update_index_sheet_sync_label()
             return
-        try:
-            self._write_order_indices_to_sheet()
+        if self._index_sheet_op_thread is not None:
+            # 다른 시트 작업(폴링·이전 쓰기)이 진행 중 → 디바운스 타이머를 재가동해
+            # 잠시 후 최신 값으로 다시 시도(쓰기 유실 방지).
+            self._index_sheet_push_pending = True
+            self._index_sheet_push_timer.start(ORDER_INDEX_SHEET_PUSH_DEBOUNCE_MS)
+            self._update_index_sheet_sync_label()
+            return
+        n, c, g = self.current_idx_naver, self.current_idx_coupang, self.current_idx_gmarket
+        thread = OrderIndexWriteThread(n, c, g, self)
+        self._index_sheet_op_thread = thread
+        thread.result_ready.connect(self._on_order_index_write_finished)
+        thread.finished.connect(self._cleanup_index_sheet_op_thread)
+        thread.finished.connect(thread.deleteLater)
+        thread.start()
+
+    def _on_order_index_write_finished(self, payload: dict):
+        if payload.get("ok"):
             self._index_sheet_push_pending = False
             self._index_sheet_last_sync_display = datetime.now()
-        except Exception as e:
+        else:
             self._index_sheet_push_pending = True
-            print(f"! 스프레드시트 인덱스 반영 실패: {e}")
+            print(f"! 스프레드시트 인덱스 반영 실패: {payload.get('error', '')}")
         self._update_index_sheet_sync_label()
 
     def _update_index_sheet_sync_label(self):
@@ -1310,13 +1368,20 @@ class MainWindow(QMainWindow):
     def _on_order_index_sheet_poll(self):
         if not self._startup_order_index_sync_done:
             return
-        if self._index_sheet_push_timer.isActive():
+        if self._index_sheet_op_thread is not None:
+            return  # 진행 중인 시트 작업(읽기·쓰기)이 있으면 이번 폴링은 건너뜀
+        if self._index_sheet_push_timer.isActive() or self._index_sheet_push_pending:
+            return  # 반영 대기 중인 로컬 변경이 있으면 시트 값으로 덮어쓰지 않음
+        if self._index_idx_field_has_focus():
             return
-        for name in ("lineEdit_idx_naver", "lineEdit_idx_coupang", "lineEdit_idx_gmarket"):
-            w = getattr(self.ui, name, None)
-            if w is not None and w.hasFocus():
-                return
-        self.refresh_order_indices_from_sheet(interactive=False)
+        if gspread is None:
+            return
+        thread = OrderIndexReadSyncThread(self)
+        self._index_sheet_op_thread = thread
+        thread.result_ready.connect(self._on_order_index_read_finished)
+        thread.finished.connect(self._cleanup_index_sheet_op_thread)
+        thread.finished.connect(thread.deleteLater)
+        thread.start()
 
     def _on_push_button_index_sheet_refresh_clicked(self):
         applied = self.refresh_order_indices_from_sheet(interactive=True)
@@ -1763,7 +1828,7 @@ class MainWindow(QMainWindow):
         #  여기서 표시하지 않습니다 — 되돌릴 때 show 만 다시 켜면 됩니다.)
         self._startup_sync_progress_done = False
         self._set_startup_syncing_indicator()
-        self._startup_sync_thread = OrderIndexStartupSyncThread(self)
+        self._startup_sync_thread = OrderIndexReadSyncThread(self)
         self._startup_sync_thread.result_ready.connect(self._on_startup_order_index_sync_finished)
         self._startup_sync_thread.finished.connect(self._cleanup_startup_sync_thread)
         self._startup_sync_thread.start()
@@ -1771,17 +1836,14 @@ class MainWindow(QMainWindow):
     def _cleanup_startup_sync_thread(self):
         self._startup_sync_thread = None
 
-    def _on_startup_order_index_sync_finished(self, payload: dict):
-        # 논블로킹 시작: 결과는 백그라운드 완료 후 라벨·UI에만 조용히 반영합니다.
-        self._startup_sync_progress_done = True
-        self._startup_order_index_sync_done = True
-        if not self._index_sheet_poll_timer.isActive():
-            self._index_sheet_poll_timer.start(ORDER_INDEX_SHEET_POLL_MS)
-
+    def _apply_order_index_sync_payload(self, payload: dict, *, prompt_reauth: bool):
+        """읽기 worker 결과(payload)를 UI·JSON에 반영합니다(시작·폴링 공용)."""
         if not payload.get("ok"):
             err = payload.get("error", "")
-            print(f"! 시작 시 DB동기화 실패: {err}")
-            if _is_likely_google_sheets_oauth_error(RuntimeError(str(err))):
+            print(f"! 인덱스 시트 동기화 실패: {err}")
+            if prompt_reauth and _is_likely_google_sheets_oauth_error(
+                RuntimeError(str(err))
+            ):
                 self._prompt_google_reauth_for_oauth_error(
                     title="Google 로그인 만료",
                     err_text=str(err),
@@ -1826,6 +1888,36 @@ class MainWindow(QMainWindow):
         self._index_sheet_push_pending = False
         self._index_sheet_last_sync_display = datetime.now()
         self._update_index_sheet_sync_label()
+
+    def _on_startup_order_index_sync_finished(self, payload: dict):
+        # 논블로킹 시작: 결과는 백그라운드 완료 후 라벨·UI에만 조용히 반영합니다.
+        self._startup_sync_progress_done = True
+        self._startup_order_index_sync_done = True
+        if not self._index_sheet_poll_timer.isActive():
+            self._index_sheet_poll_timer.start(ORDER_INDEX_SHEET_POLL_MS)
+        self._apply_order_index_sync_payload(payload, prompt_reauth=True)
+
+    def _cleanup_index_sheet_op_thread(self):
+        self._index_sheet_op_thread = None
+
+    def _index_idx_field_has_focus(self):
+        for name in ("lineEdit_idx_naver", "lineEdit_idx_coupang", "lineEdit_idx_gmarket"):
+            w = getattr(self.ui, name, None)
+            if w is not None and w.hasFocus():
+                return True
+        return False
+
+    def _on_order_index_read_finished(self, payload: dict):
+        # 폴링(비대화형) 읽기 결과. 적용 직전 로컬 변경/포커스가 생겼으면 덮어쓰지 않음.
+        if payload.get("ok"):
+            if (
+                self._index_sheet_push_timer.isActive()
+                or self._index_sheet_push_pending
+                or self._index_idx_field_has_focus()
+            ):
+                self._update_index_sheet_sync_label()
+                return
+        self._apply_order_index_sync_payload(payload, prompt_reauth=False)
 
     def _on_first_show_splitter(self):
         self._apply_order_ship_splitter_sizes()
