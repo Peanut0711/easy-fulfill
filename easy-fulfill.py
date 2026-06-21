@@ -135,21 +135,11 @@ def _ensure_order_index_worksheet_header_row(ws):
     )
 
 
-def _standalone_init_order_index_ws_if_blank(ws):
-    if ws.get_all_values():
-        return
-    today = date.today().strftime("%Y-%m-%d")
-    ws.update(
-        [ORDER_INDEX_SHEET_HEADERS, [today, 1, 1, 1]],
-        range_name="A1:D2",
-    )
-    print(
-        f"✓ 「{ORDER_INDEX_SHEET_TITLE}」 시트에 헤더와 오늘({today}) 인덱스 1·1·1을 초기 입력했습니다."
-    )
-
-
-def _standalone_ensure_order_index_worksheet(gc):
-    """백그라운드 스레드용. MainWindow._gspread_client 와 공유하지 않는 클라이언트를 넘깁니다."""
+def _standalone_open_order_index_ws(gc):
+    """백그라운드 스레드용. worksheets() 메타데이터 한 번으로 워크시트를 찾고,
+    없으면 생성합니다. (기존의 get_worksheet 중복 호출로 인한 추가 API 왕복 제거.
+    빈 시트 초기화·레거시 헤더 처리는 값을 한 번 읽은 뒤
+    _standalone_normalize_order_index_values 에서 재읽기 없이 수행합니다.)"""
     spreadsheet = gc.open_by_key(SPREADSHEET_ID)
     worksheets = spreadsheet.worksheets()
     if len(worksheets) < ORDER_INDEX_WORKSHEET_INDEX:
@@ -159,17 +149,39 @@ def _standalone_ensure_order_index_worksheet(gc):
             f"있어야 합니다. (현재 탭 {len(worksheets)}개)"
         )
     if len(worksheets) == ORDER_INDEX_WORKSHEET_INDEX:
-        spreadsheet.add_worksheet(
+        # add_worksheet 는 생성된 워크시트를 반환하므로 별도 get_worksheet 불필요.
+        ws = spreadsheet.add_worksheet(
             title=ORDER_INDEX_SHEET_TITLE,
             rows=100,
             cols=10,
             index=ORDER_INDEX_WORKSHEET_INDEX,
         )
         print(f"✓ 스프레드시트에 「{ORDER_INDEX_SHEET_TITLE}」 탭을 만들었습니다.")
-    ws = spreadsheet.get_worksheet(ORDER_INDEX_WORKSHEET_INDEX)
-    _standalone_init_order_index_ws_if_blank(ws)
-    _ensure_order_index_worksheet_header_row(ws)
-    return ws
+        return ws
+    return worksheets[ORDER_INDEX_WORKSHEET_INDEX]
+
+
+def _standalone_normalize_order_index_values(ws, values):
+    """단 한 번 읽은 get_all_values 결과로 빈 시트 초기화·레거시 헤더 삽입을
+    처리하고, 시트를 다시 읽지 않고 최신 values 를 반환합니다."""
+    if not values:
+        today = date.today().strftime("%Y-%m-%d")
+        ws.update(
+            [ORDER_INDEX_SHEET_HEADERS, [today, 1, 1, 1]],
+            range_name="A1:D2",
+        )
+        print(
+            f"✓ 「{ORDER_INDEX_SHEET_TITLE}」 시트에 헤더와 오늘({today}) 인덱스 1·1·1을 초기 입력했습니다."
+        )
+        return [list(ORDER_INDEX_SHEET_HEADERS), [today, "1", "1", "1"]]
+    if not _order_index_sheet_row_looks_like_header(values[0]):
+        ws.insert_row(ORDER_INDEX_SHEET_HEADERS, index=1)
+        print(
+            f"✓ 「{ORDER_INDEX_SHEET_TITLE}」 시트 1행에 "
+            "날짜·네이버·쿠팡·지마켓 열 제목을 추가했습니다. (기존 데이터는 한 행 아래로 밀렸습니다.)"
+        )
+        return [list(ORDER_INDEX_SHEET_HEADERS)] + values
+    return values
 
 
 def _standalone_read_today_order_indices_from_values(values):
@@ -190,9 +202,10 @@ def _standalone_read_today_order_indices_from_values(values):
     return None
 
 
-def _standalone_write_order_indices_ws(ws, n, c, g):
+def _standalone_write_order_indices_ws(ws, n, c, g, values=None):
     today = date.today().strftime("%Y-%m-%d")
-    values = ws.get_all_values()
+    if values is None:
+        values = ws.get_all_values()
     if not values:
         ws.update(
             [ORDER_INDEX_SHEET_HEADERS, [today, n, c, g]],
@@ -228,12 +241,13 @@ def run_startup_order_index_sheet_sync_worker():
         return {"ok": False, "error": str(e)}
     try:
         gc = get_authorized_gspread_client()
-        ws = _standalone_ensure_order_index_worksheet(gc)
-        values = ws.get_all_values()
+        ws = _standalone_open_order_index_ws(gc)
+        values = ws.get_all_values()  # 시트 전체 읽기는 시작 동기화에서 단 한 번만 수행
+        values = _standalone_normalize_order_index_values(ws, values)
         row = _standalone_read_today_order_indices_from_values(values)
         if row is not None:
             return {"ok": True, "kind": "data", "row": row}
-        _standalone_write_order_indices_ws(ws, 1, 1, 1)
+        _standalone_write_order_indices_ws(ws, 1, 1, 1, values=values)
         return {
             "ok": True,
             "kind": "created",
@@ -1736,121 +1750,82 @@ class MainWindow(QMainWindow):
         self._startup_card_entrance_anim = anim
         anim.start()
 
+    def _set_startup_syncing_indicator(self):
+        """시작 동기화 진행 중임을 막지 않는 가벼운 라벨 표시로만 알립니다."""
+        if hasattr(self.ui, "label_index_sheet_sync"):
+            self.ui.label_index_sheet_sync.setText("Google 시트와 인덱스 동기화 중…")
+
     def _kickoff_startup_order_index_sync(self):
+        # 논블로킹 시작: 더 이상 전체 화면 오버레이로 사용자를 막지 않습니다.
+        # 사용자는 즉시 작업할 수 있고, 주문 인덱스 동기화는 백그라운드에서 진행되어
+        # 완료되면 _on_startup_order_index_sync_finished 에서 UI에 반영됩니다.
+        # (오버레이/진행바 위젯은 _setup_startup_loading_overlay 에서 빌드되지만
+        #  여기서 표시하지 않습니다 — 되돌릴 때 show 만 다시 켜면 됩니다.)
         self._startup_sync_progress_done = False
-        self._layout_startup_overlay_full()
-        self._startup_overlay.raise_()
-        # print("[시트동기화 디버그] 로딩 UI 표시 직전")
-        self._startup_sync_debug_t0 = time.perf_counter()
-        self._startup_overlay.show()
-        # t_after_show = time.perf_counter()
-        # print(
-        #     f"[시트동기화 디버그] 로딩 UI 표시 직후 "
-        #     f"(레이아웃·show): {(t_after_show - self._startup_sync_debug_t0) * 1000:.1f} ms"
-        # )
-        self._start_startup_overlay_entrance_anim()
+        self._set_startup_syncing_indicator()
         self._startup_sync_thread = OrderIndexStartupSyncThread(self)
         self._startup_sync_thread.result_ready.connect(self._on_startup_order_index_sync_finished)
         self._startup_sync_thread.finished.connect(self._cleanup_startup_sync_thread)
-        self._startup_sync_debug_t_thread_start = time.perf_counter()
-        if getattr(self, "_startup_progress_bar", None) is not None:
-            self._startup_progress_bar.setValue(0)
-        if getattr(self, "_startup_progress_timer", None) is not None:
-            self._startup_progress_timer.start()
         self._startup_sync_thread.start()
 
     def _cleanup_startup_sync_thread(self):
         self._startup_sync_thread = None
 
     def _on_startup_order_index_sync_finished(self, payload: dict):
-        # t_slot_enter = time.perf_counter()
-        # t0 = getattr(self, "_startup_sync_debug_t0", None)
-        # t_thr = getattr(self, "_startup_sync_debug_t_thread_start", None)
-        # if t0 is not None:
-        #     print(
-        #         f"[시트동기화 디버그] 결과 수신(슬롯 진입) "
-        #         f"— UI표시직전~여기까지: {(t_slot_enter - t0) * 1000:.1f} ms"
-        #     )
-        # if t_thr is not None:
-        #     print(
-        #         f"[시트동기화 디버그] 백그라운드 시트 작업 "
-        #         f"(thread.start~결과): {(t_slot_enter - t_thr) * 1000:.1f} ms"
-        #     )
-
+        # 논블로킹 시작: 결과는 백그라운드 완료 후 라벨·UI에만 조용히 반영합니다.
         self._startup_sync_progress_done = True
-        if getattr(self, "_startup_progress_timer", None) is not None:
-            self._startup_progress_timer.stop()
-        pb = getattr(self, "_startup_progress_bar", None)
-        if pb is not None:
-            pb.setValue(100)
+        self._startup_order_index_sync_done = True
+        if not self._index_sheet_poll_timer.isActive():
+            self._index_sheet_poll_timer.start(ORDER_INDEX_SHEET_POLL_MS)
 
-        try:
-            self._startup_order_index_sync_done = True
-            if not self._index_sheet_poll_timer.isActive():
-                self._index_sheet_poll_timer.start(ORDER_INDEX_SHEET_POLL_MS)
+        if not payload.get("ok"):
+            err = payload.get("error", "")
+            print(f"! 시작 시 DB동기화 실패: {err}")
+            if _is_likely_google_sheets_oauth_error(RuntimeError(str(err))):
+                self._prompt_google_reauth_for_oauth_error(
+                    title="Google 로그인 만료",
+                    err_text=str(err),
+                )
+            self._update_index_sheet_sync_label()
+            return
 
-            if not payload.get("ok"):
-                err = payload.get("error", "")
-                print(f"! 시작 시 DB동기화 실패: {err}")
-                if _is_likely_google_sheets_oauth_error(RuntimeError(str(err))):
-                    self._prompt_google_reauth_for_oauth_error(
-                        title="Google 로그인 만료",
-                        err_text=str(err),
-                    )
-                self._update_index_sheet_sync_label()
-                return
-
-            kind = payload.get("kind")
-            if kind == "created":
-                self._last_refresh_created_today_row = True
-                self._apply_order_indices_to_ui(1, 1, 1)
-                try:
-                    self._persist_index_values_to_json()
-                except Exception as e:
-                    print(f"! 인덱스 JSON 저장 실패(시트 신규 행): {e}")
-                self._index_sheet_push_pending = False
-                self._index_sheet_last_sync_display = datetime.now()
-                self._update_index_sheet_sync_label()
-                return
-
-            if kind != "data":
-                self._update_index_sheet_sync_label()
-                return
-
-            row = payload["row"]
-            na, co, gm = row["naver"], row["coupang"], row["gmarket"]
-            self._last_refresh_created_today_row = False
-            if (
-                self.current_idx_naver == na
-                and self.current_idx_coupang == co
-                and self.current_idx_gmarket == gm
-            ):
-                self._index_sheet_push_pending = False
-                self._index_sheet_last_sync_display = datetime.now()
-                self._update_index_sheet_sync_label()
-                return
-            self._apply_order_indices_to_ui(na, co, gm)
+        kind = payload.get("kind")
+        if kind == "created":
+            self._last_refresh_created_today_row = True
+            self._apply_order_indices_to_ui(1, 1, 1)
             try:
                 self._persist_index_values_to_json()
             except Exception as e:
-                print(f"! 인덱스 JSON 저장 실패(시트에서 읽은 뒤): {e}")
+                print(f"! 인덱스 JSON 저장 실패(시트 신규 행): {e}")
             self._index_sheet_push_pending = False
             self._index_sheet_last_sync_display = datetime.now()
             self._update_index_sheet_sync_label()
-        finally:
-            # t0f = getattr(self, "_startup_sync_debug_t0", None)
-            # if t0f is not None:
-            #     total_ms = (time.perf_counter() - t0f) * 1000
-            #     ok = payload.get("ok")
-            #     kind = payload.get("kind")
-            #     print(
-            #         f"[시트동기화 디버그] UI표시직전~슬롯·UI반영 전체 완료: "
-            #         f"{total_ms:.1f} ms | ok={ok} kind={kind}"
-            #     )
-            QTimer.singleShot(
-                STARTUP_SYNC_PROGRESS_HIDE_DELAY_MS,
-                self._hide_startup_loading_overlay_deferred,
-            )
+            return
+
+        if kind != "data":
+            self._update_index_sheet_sync_label()
+            return
+
+        row = payload["row"]
+        na, co, gm = row["naver"], row["coupang"], row["gmarket"]
+        self._last_refresh_created_today_row = False
+        if (
+            self.current_idx_naver == na
+            and self.current_idx_coupang == co
+            and self.current_idx_gmarket == gm
+        ):
+            self._index_sheet_push_pending = False
+            self._index_sheet_last_sync_display = datetime.now()
+            self._update_index_sheet_sync_label()
+            return
+        self._apply_order_indices_to_ui(na, co, gm)
+        try:
+            self._persist_index_values_to_json()
+        except Exception as e:
+            print(f"! 인덱스 JSON 저장 실패(시트에서 읽은 뒤): {e}")
+        self._index_sheet_push_pending = False
+        self._index_sheet_last_sync_display = datetime.now()
+        self._update_index_sheet_sync_label()
 
     def _on_first_show_splitter(self):
         self._apply_order_ship_splitter_sizes()
