@@ -123,18 +123,6 @@ def _order_index_sheet_row_looks_like_header(row):
     return cell in ("날짜", "date", "Date")
 
 
-def _ensure_order_index_worksheet_header_row(ws):
-    """레거시 시트(1행이 바로 날짜 데이터)면 맨 위에 헤더 행을 삽입합니다."""
-    values = ws.get_all_values()
-    if not values or _order_index_sheet_row_looks_like_header(values[0]):
-        return
-    ws.insert_row(ORDER_INDEX_SHEET_HEADERS, index=1)
-    print(
-        f"✓ 「{ORDER_INDEX_SHEET_TITLE}」 시트 1행에 "
-        "날짜·네이버·쿠팡·지마켓 열 제목을 추가했습니다. (기존 데이터는 한 행 아래로 밀렸습니다.)"
-    )
-
-
 def _standalone_open_order_index_ws(gc):
     """백그라운드 스레드용. worksheets() 메타데이터 한 번으로 워크시트를 찾고,
     없으면 생성합니다. (기존의 get_worksheet 중복 호출로 인한 추가 API 왕복 제거.
@@ -830,6 +818,9 @@ class MainWindow(QMainWindow):
         self._startup_sync_thread = None
         # 폴링(읽기)·인덱스 쓰기 백그라운드 작업 단일 실행 추적 (None이면 유휴)
         self._index_sheet_op_thread = None
+        # 진행 중인 백그라운드 읽기의 결과 처리 방식 (대화형 여부 / 완료 후 콜백)
+        self._index_sheet_read_interactive = False
+        self._index_sheet_read_on_applied = None
         self._product_mapping_thread = None
         self._db_sheet_sync_thread = None
         self._db_sync_naver_path_override = None
@@ -1094,122 +1085,11 @@ class MainWindow(QMainWindow):
         if push_sheet:
             self._schedule_order_index_sheet_push()
 
-    @staticmethod
-    def _parse_order_index_cell(value, default=1):
-        """스프레드시트·입력 칸에서 정수 인덱스로 변환합니다."""
-        if value is None:
-            return default
-        s = str(value).strip()
-        if not s:
-            return default
-        try:
-            n = int(s.replace(",", ""))
-            return n if n >= 1 else default
-        except ValueError:
-            return default
-
     def _block_index_line_edit_signals(self, block):
         for name in ("lineEdit_idx_naver", "lineEdit_idx_coupang", "lineEdit_idx_gmarket"):
             w = getattr(self.ui, name, None)
             if w:
                 w.blockSignals(block)
-
-    def _init_order_index_worksheet_if_blank(self, ws):
-        """인덱스 시트가 비어 있으면 헤더·오늘 날짜·1,1,1 행을 씁니다."""
-        if ws.get_all_values():
-            return
-        today = date.today().strftime("%Y-%m-%d")
-        ws.update(
-            [ORDER_INDEX_SHEET_HEADERS, [today, 1, 1, 1]],
-            range_name="A1:D2",
-        )
-        print(
-            f"✓ 「{ORDER_INDEX_SHEET_TITLE}」 시트에 헤더와 오늘({today}) 인덱스 1·1·1을 초기 입력했습니다."
-        )
-
-    def _get_order_index_worksheet(self):
-        if gspread is None:
-            raise ImportError("gspread 패키지가 필요합니다. (pip install gspread)")
-        gc = self._get_gspread_client()
-        spreadsheet = gc.open_by_key(SPREADSHEET_ID)
-        worksheets = spreadsheet.worksheets()
-
-        # 3번째 탭(index 2)까지 앞에 시트가 부족하면 자동 생성 불가(네이버·쿠팡 탭 먼저 필요)
-        if len(worksheets) < ORDER_INDEX_WORKSHEET_INDEX:
-            raise ValueError(
-                f"스프레드시트에「{ORDER_INDEX_SHEET_TITLE}」({ORDER_INDEX_WORKSHEET_INDEX + 1}번째 탭)을 "
-                f"둘 공간이 없습니다. 앞쪽 탭이 {ORDER_INDEX_WORKSHEET_INDEX}개(예: 네이버·쿠팡 DB) "
-                f"있어야 합니다. (현재 탭 {len(worksheets)}개)"
-            )
-
-        if len(worksheets) == ORDER_INDEX_WORKSHEET_INDEX:
-            spreadsheet.add_worksheet(
-                title=ORDER_INDEX_SHEET_TITLE,
-                rows=100,
-                cols=10,
-                index=ORDER_INDEX_WORKSHEET_INDEX,
-            )
-            print(f"✓ 스프레드시트에 「{ORDER_INDEX_SHEET_TITLE}」 탭을 만들었습니다.")
-
-        ws = spreadsheet.get_worksheet(ORDER_INDEX_WORKSHEET_INDEX)
-        self._init_order_index_worksheet_if_blank(ws)
-        _ensure_order_index_worksheet_header_row(ws)
-        return ws
-
-    def _sheet_row_looks_like_order_index_header(self, row):
-        if not row:
-            return False
-        cell = (row[0] or "").strip()
-        return cell in ("날짜", "date", "Date")
-
-    def _read_today_order_indices_from_sheet(self):
-        """OAuth·시트 OK이고 오늘 행이 있을 때만 dict, 없으면 None."""
-        ws = self._get_order_index_worksheet()
-        values = ws.get_all_values()
-        if not values:
-            return None
-        today = date.today().strftime("%Y-%m-%d")
-        header_like = self._sheet_row_looks_like_order_index_header(values[0])
-        data_rows = values[1:] if header_like else values
-        for row in data_rows:
-            if not row:
-                continue
-            if (row[0] or "").strip() != today:
-                continue
-            naver = self._parse_order_index_cell(row[1] if len(row) > 1 else None)
-            coupang = self._parse_order_index_cell(row[2] if len(row) > 2 else None)
-            gmarket = self._parse_order_index_cell(row[3] if len(row) > 3 else None)
-            return {"naver": naver, "coupang": coupang, "gmarket": gmarket}
-        return None
-
-    def _write_order_indices_to_sheet(self):
-        ws = self._get_order_index_worksheet()
-        today = date.today().strftime("%Y-%m-%d")
-        n, c, g = self.current_idx_naver, self.current_idx_coupang, self.current_idx_gmarket
-        values = ws.get_all_values()
-        if not values:
-            ws.update(
-                [ORDER_INDEX_SHEET_HEADERS, [today, n, c, g]],
-                range_name="A1:D2",
-            )
-            return
-
-        header_like = self._sheet_row_looks_like_order_index_header(values[0])
-        if header_like:
-            search_ranges = list(enumerate(values[1:], start=2))
-        else:
-            search_ranges = list(enumerate(values, start=1))
-
-        row_1based = None
-        for ridx, row in search_ranges:
-            if row and (row[0] or "").strip() == today:
-                row_1based = ridx
-                break
-
-        if row_1based is not None:
-            ws.update([[n, c, g]], range_name=f"B{row_1based}:D{row_1based}")
-        else:
-            ws.append_row([today, n, c, g])
 
     def _apply_order_indices_to_ui(self, naver, coupang, gmarket):
         self.current_idx_naver = naver
@@ -1283,99 +1163,39 @@ class MainWindow(QMainWindow):
                 "스프레드시트와 인덱스를 맞추려면 Google 로그인 후 자동으로 반영됩니다."
             )
 
-    def _create_today_order_index_row_with_ones(self, interactive=False):
-        """시트에 오늘 행이 없을 때 네이버·쿠팡·지마켓을 각 1로 새 행을 만듭니다."""
-        self._last_refresh_created_today_row = True
-        self._apply_order_indices_to_ui(1, 1, 1)
-        try:
-            self._persist_index_values_to_json()
-        except Exception as e:
-            print(f"! 인덱스 JSON 저장 실패(시트 신규 행): {e}")
+    def _begin_order_index_read(self, *, interactive=False, on_applied=None, defer_if_busy=False):
+        """스프레드시트 인덱스 읽기를 백그라운드 스레드로 시작합니다.
 
+        - interactive: True면 결과를 대화형(완료/실패 다이얼로그)으로 처리.
+        - on_applied: 결과 반영 후 호출되는 콜백(파일 처리 이어가기 등). 실패·건너뜀 시에도 호출.
+        - defer_if_busy: 다른 시트 작업이 진행 중일 때 True면 잠시 후 재시도, False면 건너뜀.
+        """
         if gspread is None:
-            self._index_sheet_push_pending = True
-            self._update_index_sheet_sync_label()
             if interactive:
-                QMessageBox.warning(
-                    self,
-                    "인덱스 동기화",
-                    "gspread 패키지가 없어 스프레드시트에 행을 만들 수 없습니다.",
+                self._apply_order_index_read_interactive(
+                    {"ok": False, "error": "gspread 패키지가 필요합니다. (pip install gspread)"}
                 )
-            return False
-
-        try:
-            self._write_order_indices_to_sheet()
-            self._index_sheet_push_pending = False
-            self._index_sheet_last_sync_display = datetime.now()
-        except Exception as e:
-            self._index_sheet_push_pending = True
-            print(f"! 스프레드시트에 오늘 인덱스 행 생성 실패: {e}")
-            if interactive:
-                hint = self._oauth_error_dialog_hint()
-                QMessageBox.warning(
-                    self,
-                    "인덱스 동기화",
-                    f"오늘 날짜 행을 스프레드시트에 만들지 못했습니다.\n\n{e}\n\n{hint}",
-                )
-            self._update_index_sheet_sync_label()
-            return False
-
-        self._update_index_sheet_sync_label()
-        return True
-
-    def refresh_order_indices_from_sheet(self, interactive=False):
-        """스프레드시트에서 오늘 날짜 행을 읽어 UI·JSON에 반영합니다."""
-        self._index_sheet_push_timer.stop()
-        self._last_refresh_created_today_row = False
-        try:
-            row = self._read_today_order_indices_from_sheet()
-        except Exception as e:
-            if interactive:
-                hint = self._oauth_error_dialog_hint()
-                QMessageBox.warning(
-                    self,
-                    "인덱스 동기화",
-                    f"스프레드시트에서 인덱스를 읽지 못했습니다.\n\n{e}\n\n{hint}",
-                )
-            print(f"! 시트에서 인덱스 읽기 실패: {e}")
-            self._update_index_sheet_sync_label()
-            return False
-
-        if row is None:
-            return self._create_today_order_index_row_with_ones(interactive=interactive)
-
-        na, co, gm = row["naver"], row["coupang"], row["gmarket"]
-        if (
-            self.current_idx_naver == na
-            and self.current_idx_coupang == co
-            and self.current_idx_gmarket == gm
-        ):
-            self._index_sheet_push_pending = False
-            self._index_sheet_last_sync_display = datetime.now()
-            self._update_index_sheet_sync_label()
-            return True
-
-        self._apply_order_indices_to_ui(na, co, gm)
-        try:
-            self._persist_index_values_to_json()
-        except Exception as e:
-            print(f"! 인덱스 JSON 저장 실패(시트에서 읽은 뒤): {e}")
-        self._index_sheet_push_pending = False
-        self._index_sheet_last_sync_display = datetime.now()
-        self._update_index_sheet_sync_label()
-        return True
-
-    def _on_order_index_sheet_poll(self):
-        if not self._startup_order_index_sync_done:
+            if on_applied:
+                on_applied()
             return
+
         if self._index_sheet_op_thread is not None:
-            return  # 진행 중인 시트 작업(읽기·쓰기)이 있으면 이번 폴링은 건너뜀
-        if self._index_sheet_push_timer.isActive() or self._index_sheet_push_pending:
-            return  # 반영 대기 중인 로컬 변경이 있으면 시트 값으로 덮어쓰지 않음
-        if self._index_idx_field_has_focus():
+            if defer_if_busy:
+                QTimer.singleShot(
+                    300,
+                    lambda: self._begin_order_index_read(
+                        interactive=interactive,
+                        on_applied=on_applied,
+                        defer_if_busy=True,
+                    ),
+                )
+            elif on_applied:
+                on_applied()
             return
-        if gspread is None:
-            return
+
+        self._index_sheet_push_timer.stop()
+        self._index_sheet_read_interactive = interactive
+        self._index_sheet_read_on_applied = on_applied
         thread = OrderIndexReadSyncThread(self)
         self._index_sheet_op_thread = thread
         thread.result_ready.connect(self._on_order_index_read_finished)
@@ -1383,11 +1203,23 @@ class MainWindow(QMainWindow):
         thread.finished.connect(thread.deleteLater)
         thread.start()
 
-    def _on_push_button_index_sheet_refresh_clicked(self):
-        applied = self.refresh_order_indices_from_sheet(interactive=True)
-        if not applied:
+    def _apply_order_index_read_interactive(self, payload: dict):
+        """수동 새로고침 등 대화형 읽기 결과 처리(다이얼로그 포함)."""
+        self._hide_busy_processing_overlay()
+        if not payload.get("ok"):
+            err = payload.get("error", "")
+            print(f"! 시트에서 인덱스 읽기 실패: {err}")
+            hint = self._oauth_error_dialog_hint()
+            QMessageBox.warning(
+                self,
+                "인덱스 동기화",
+                f"스프레드시트에서 인덱스를 읽지 못했습니다.\n\n{err}\n\n{hint}",
+            )
+            self._update_index_sheet_sync_label()
             return
-        if self._last_refresh_created_today_row:
+        kind = payload.get("kind")
+        self._apply_order_index_sync_payload(payload, prompt_reauth=True)
+        if kind == "created":
             QMessageBox.information(
                 self,
                 "인덱스 동기화",
@@ -1400,6 +1232,24 @@ class MainWindow(QMainWindow):
                 "인덱스 동기화",
                 "스프레드시트에서 인덱스를 불러왔습니다.",
             )
+
+    def _on_order_index_sheet_poll(self):
+        if not self._startup_order_index_sync_done:
+            return
+        if self._index_sheet_op_thread is not None:
+            return  # 진행 중인 시트 작업(읽기·쓰기)이 있으면 이번 폴링은 건너뜀
+        if self._index_sheet_push_timer.isActive() or self._index_sheet_push_pending:
+            return  # 반영 대기 중인 로컬 변경이 있으면 시트 값으로 덮어쓰지 않음
+        if self._index_idx_field_has_focus():
+            return
+        self._begin_order_index_read(interactive=False, on_applied=None, defer_if_busy=False)
+
+    def _on_push_button_index_sheet_refresh_clicked(self):
+        self._show_busy_processing_overlay(
+            "인덱스 동기화 중…",
+            "스프레드시트에서 주문 인덱스를 불러오고 있습니다.",
+        )
+        self._begin_order_index_read(interactive=True, on_applied=None, defer_if_busy=True)
 
     def update_naver_index(self):
         """네이버 인덱스 값을 업데이트하고 저장합니다."""
@@ -1908,16 +1758,27 @@ class MainWindow(QMainWindow):
         return False
 
     def _on_order_index_read_finished(self, payload: dict):
-        # 폴링(비대화형) 읽기 결과. 적용 직전 로컬 변경/포커스가 생겼으면 덮어쓰지 않음.
-        if payload.get("ok"):
-            if (
-                self._index_sheet_push_timer.isActive()
-                or self._index_sheet_push_pending
-                or self._index_idx_field_has_focus()
-            ):
-                self._update_index_sheet_sync_label()
-                return
-        self._apply_order_index_sync_payload(payload, prompt_reauth=False)
+        """백그라운드 읽기 결과 처리(폴링·파일로드=비대화형, 수동 새로고침=대화형)."""
+        interactive = self._index_sheet_read_interactive
+        on_applied = self._index_sheet_read_on_applied
+        self._index_sheet_read_interactive = False
+        self._index_sheet_read_on_applied = None
+        try:
+            if interactive:
+                self._apply_order_index_read_interactive(payload)
+            else:
+                # 비대화형: 적용 직전 로컬 변경/포커스가 생겼으면 덮어쓰지 않음
+                if payload.get("ok") and (
+                    self._index_sheet_push_timer.isActive()
+                    or self._index_sheet_push_pending
+                    or self._index_idx_field_has_focus()
+                ):
+                    self._update_index_sheet_sync_label()
+                else:
+                    self._apply_order_index_sync_payload(payload, prompt_reauth=False)
+        finally:
+            if on_applied:
+                on_applied()
 
     def _on_first_show_splitter(self):
         self._apply_order_ship_splitter_sizes()
@@ -3352,55 +3213,12 @@ class MainWindow(QMainWindow):
                 )
                 QApplication.processEvents()
 
-                order_processing_async = False
-                try:
-                    self.refresh_order_indices_from_sheet(interactive=False)
-
-                    # 스토어 타입에 따라 로고 표시
-                    if self.store_type == "naver":
-                        logo_path = "image/naver-logo.png"
-                        logo_size = QSize(120, 40)  # 네이버 로고 크기
-                    elif self.store_type == "coupang":
-                        logo_path = "image/coupang-logo.png"
-                        logo_size = QSize(120, 40)  # 쿠팡 로고 크기
-                    elif self.store_type == "gmarket":
-                        logo_path = "image/gmarket-logo.png"
-                        logo_size = QSize(120, 40)  # 지마켓 로고 크기
-
-                    # 로고 이미지 로드 및 표시
-                    if os.path.exists(logo_path):
-                        pixmap = QPixmap(logo_path)
-                        scaled_pixmap = pixmap.scaled(
-                            logo_size, Qt.KeepAspectRatio, Qt.SmoothTransformation
-                        )
-                        self.ui.label_logo.setPixmap(scaled_pixmap)
-                        self.ui.label_logo.setAlignment(Qt.AlignCenter)
-                    else:
-                        print(f"! 로고 파일을 찾을 수 없습니다: {logo_path}")
-
-                    # 스토어 타입에 따라 다른 처리 메서드 호출
-                    try:
-                        if self.store_type == "naver":
-                            print("✓ 네이버 스토어 파일 처리 시작")
-                            order_processing_async = True
-                            self._run_order_file_processing_with_async_mapping("naver")
-                        elif self.store_type == "coupang":
-                            print("✓ 쿠팡 스토어 파일 처리 시작")
-                            order_processing_async = True
-                            self._run_order_file_processing_with_async_mapping("coupang")
-                        elif self.store_type == "gmarket":
-                            print("✓ 지마켓 스토어 파일 처리 시작")
-                            self.process_gmarket_excel_file()
-                            self.is_order_file_valid = True
-                    except Exception as e:
-                        self.is_order_file_valid = False
-                        print(f"❌ 파일 처리 중 오류 발생: {str(e)}")
-                        QMessageBox.warning(
-                            self, "오류", f"파일 처리 중 오류가 발생했습니다: {str(e)}"
-                        )
-                finally:
-                    if not order_processing_async:
-                        self._hide_busy_processing_overlay()
+                # 인덱스 동기화를 백그라운드로 수행한 뒤(UI 비차단) 파일 처리로 이어감.
+                self._begin_order_index_read(
+                    interactive=False,
+                    on_applied=self._continue_order_file_processing_after_index,
+                    defer_if_busy=True,
+                )
             else:
                 self.is_order_file_valid = False
                 QMessageBox.warning(
@@ -3416,8 +3234,60 @@ class MainWindow(QMainWindow):
                 print("❌ 파일 선택이 취소되었습니다.")
         else:
             self.is_order_file_valid = False
-            print("\n[알림] 파일 선택이 취소되었습니다.")     
-    
+            print("\n[알림] 파일 선택이 취소되었습니다.")
+
+    def _continue_order_file_processing_after_index(self):
+        """백그라운드 인덱스 동기화 완료 후 로고 표시 + 파일 처리로 이어갑니다."""
+        order_processing_async = False
+        try:
+            # 스토어 타입에 따라 로고 표시
+            logo_path = None
+            logo_size = None
+            if self.store_type == "naver":
+                logo_path = "image/naver-logo.png"
+                logo_size = QSize(120, 40)  # 네이버 로고 크기
+            elif self.store_type == "coupang":
+                logo_path = "image/coupang-logo.png"
+                logo_size = QSize(120, 40)  # 쿠팡 로고 크기
+            elif self.store_type == "gmarket":
+                logo_path = "image/gmarket-logo.png"
+                logo_size = QSize(120, 40)  # 지마켓 로고 크기
+
+            # 로고 이미지 로드 및 표시
+            if logo_path and os.path.exists(logo_path):
+                pixmap = QPixmap(logo_path)
+                scaled_pixmap = pixmap.scaled(
+                    logo_size, Qt.KeepAspectRatio, Qt.SmoothTransformation
+                )
+                self.ui.label_logo.setPixmap(scaled_pixmap)
+                self.ui.label_logo.setAlignment(Qt.AlignCenter)
+            elif logo_path:
+                print(f"! 로고 파일을 찾을 수 없습니다: {logo_path}")
+
+            # 스토어 타입에 따라 다른 처리 메서드 호출
+            try:
+                if self.store_type == "naver":
+                    print("✓ 네이버 스토어 파일 처리 시작")
+                    order_processing_async = True
+                    self._run_order_file_processing_with_async_mapping("naver")
+                elif self.store_type == "coupang":
+                    print("✓ 쿠팡 스토어 파일 처리 시작")
+                    order_processing_async = True
+                    self._run_order_file_processing_with_async_mapping("coupang")
+                elif self.store_type == "gmarket":
+                    print("✓ 지마켓 스토어 파일 처리 시작")
+                    self.process_gmarket_excel_file()
+                    self.is_order_file_valid = True
+            except Exception as e:
+                self.is_order_file_valid = False
+                print(f"❌ 파일 처리 중 오류 발생: {str(e)}")
+                QMessageBox.warning(
+                    self, "오류", f"파일 처리 중 오류가 발생했습니다: {str(e)}"
+                )
+        finally:
+            if not order_processing_async:
+                self._hide_busy_processing_overlay()
+
     def process_naver_excel_file(self):
         """네이버 스토어 엑셀 파일에서 주문번호를 처리합니다."""
         try:
