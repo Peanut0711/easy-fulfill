@@ -804,6 +804,7 @@ class MainWindow(QMainWindow):
         self.current_idx_naver = 1
         self.current_idx_coupang = 1
         self.current_idx_gmarket = 1
+        self.current_idx_11st = 1
 
         self._index_sheet_push_pending = False
         self._index_sheet_last_sync_display = None
@@ -1004,28 +1005,38 @@ class MainWindow(QMainWindow):
                         self.current_idx_coupang = index_data[today]['coupang']
                         if hasattr(self.ui, 'lineEdit_idx_coupang'):
                             self.ui.lineEdit_idx_coupang.setText(str(self.current_idx_coupang))
-                
+                    # 11번가 인덱스
+                    if '11st' in index_data[today]:
+                        self.current_idx_11st = index_data[today]['11st']
+                        if hasattr(self.ui, 'lineEdit_idx_11st'):
+                            self.ui.lineEdit_idx_11st.setText(str(self.current_idx_11st))
+
                 print(f"✓ 인덱스 값 로드 완료 (날짜: {today})")
                 print(f"  - 네이버: {self.current_idx_naver}")
                 print(f"  - 지마켓: {self.current_idx_gmarket}")
                 print(f"  - 쿠팡: {self.current_idx_coupang}")
+                print(f"  - 11번가: {self.current_idx_11st}")
             else:
-                print("! 인덱스 파일이 없습니다. 기본값(1)을 사용합니다.")                        
+                print("! 인덱스 파일이 없습니다. 기본값(1)을 사용합니다.")
                 if hasattr(self.ui, 'lineEdit_idx_naver'):
                     self.ui.lineEdit_idx_naver.setText('1')
                 if hasattr(self.ui, 'lineEdit_idx_gmarket'):
                     self.ui.lineEdit_idx_gmarket.setText('1')
                 if hasattr(self.ui, 'lineEdit_idx_coupang'):
                     self.ui.lineEdit_idx_coupang.setText('1')
+                if hasattr(self.ui, 'lineEdit_idx_11st'):
+                    self.ui.lineEdit_idx_11st.setText('1')
         except Exception as e:
             print(f"! 인덱스 값 로드 중 오류 발생: {str(e)}")
-            print("! 기본값(1)을 사용합니다.")                
+            print("! 기본값(1)을 사용합니다.")
             if hasattr(self.ui, 'lineEdit_idx_naver'):
                 self.ui.lineEdit_idx_naver.setText('1')
             if hasattr(self.ui, 'lineEdit_idx_gmarket'):
                 self.ui.lineEdit_idx_gmarket.setText('1')
             if hasattr(self.ui, 'lineEdit_idx_coupang'):
                 self.ui.lineEdit_idx_coupang.setText('1')
+            if hasattr(self.ui, 'lineEdit_idx_11st'):
+                self.ui.lineEdit_idx_11st.setText('1')
         finally:
             self._block_index_line_edit_signals(False)
 
@@ -1048,6 +1059,7 @@ class MainWindow(QMainWindow):
             prev.get("naver") == self.current_idx_naver
             and prev.get("gmarket") == self.current_idx_gmarket
             and prev.get("coupang") == self.current_idx_coupang
+            and prev.get("11st") == self.current_idx_11st
         ):
             return
 
@@ -1057,6 +1069,7 @@ class MainWindow(QMainWindow):
         index_data[today]['naver'] = self.current_idx_naver
         index_data[today]['gmarket'] = self.current_idx_gmarket
         index_data[today]['coupang'] = self.current_idx_coupang
+        index_data[today]['11st'] = self.current_idx_11st
 
         with open(self.index_file_path, 'w', encoding='utf-8') as f:
             json.dump(index_data, f, ensure_ascii=False, indent=2)
@@ -1065,6 +1078,7 @@ class MainWindow(QMainWindow):
         print(f"  - 네이버: {self.current_idx_naver}")
         print(f"  - 지마켓: {self.current_idx_gmarket}")
         print(f"  - 쿠팡: {self.current_idx_coupang}")
+        print(f"  - 11번가: {self.current_idx_11st}")
 
     def save_index_values(self, push_sheet=True):
         """현재 인덱스 값을 저장합니다. 로컬 JSON 후 스프레드시트 반영은 디바운스됩니다."""
@@ -1086,7 +1100,7 @@ class MainWindow(QMainWindow):
             self._schedule_order_index_sheet_push()
 
     def _block_index_line_edit_signals(self, block):
-        for name in ("lineEdit_idx_naver", "lineEdit_idx_coupang", "lineEdit_idx_gmarket"):
+        for name in ("lineEdit_idx_naver", "lineEdit_idx_coupang", "lineEdit_idx_gmarket", "lineEdit_idx_11st"):
             w = getattr(self.ui, name, None)
             if w:
                 w.blockSignals(block)
@@ -1286,6 +1300,18 @@ class MainWindow(QMainWindow):
             finally:
                 w.blockSignals(False)
         self.save_index_values()
+
+    def update_11st_index(self):
+        """11번가 인덱스 값을 업데이트하고 저장합니다(로컬 JSON만, 스프레드시트 푸시 없음)."""
+        self.current_idx_11st += 1
+        if hasattr(self.ui, 'lineEdit_idx_11st'):
+            w = self.ui.lineEdit_idx_11st
+            w.blockSignals(True)
+            try:
+                w.setText(str(self.current_idx_11st))
+            finally:
+                w.blockSignals(False)
+        self.save_index_values(push_sheet=False)
 
     def load_ui(self):
         """UI 파일을 로드합니다."""
@@ -1751,7 +1777,7 @@ class MainWindow(QMainWindow):
         self._index_sheet_op_thread = None
 
     def _index_idx_field_has_focus(self):
-        for name in ("lineEdit_idx_naver", "lineEdit_idx_coupang", "lineEdit_idx_gmarket"):
+        for name in ("lineEdit_idx_naver", "lineEdit_idx_coupang", "lineEdit_idx_gmarket", "lineEdit_idx_11st"):
             w = getattr(self.ui, name, None)
             if w is not None and w.hasFocus():
                 return True
@@ -2022,7 +2048,9 @@ class MainWindow(QMainWindow):
             self.ui.lineEdit_idx_coupang.textChanged.connect(self.on_coupang_index_changed)
         if hasattr(self.ui, 'lineEdit_idx_gmarket'):
             self.ui.lineEdit_idx_gmarket.textChanged.connect(self.on_gmarket_index_changed)
-        
+        if hasattr(self.ui, 'lineEdit_idx_11st'):
+            self.ui.lineEdit_idx_11st.textChanged.connect(self.on_11st_index_changed)
+
         if hasattr(self.ui, 'checkBox_invoice_load_auto_generate'):
             self.ui.checkBox_invoice_load_auto_generate.stateChanged.connect(
                 self.save_app_settings
@@ -3098,6 +3126,16 @@ class MainWindow(QMainWindow):
         except Exception as e:
             print(f"! 지마켓 인덱스 변경 중 오류 발생: {str(e)}")
 
+    def on_11st_index_changed(self, text):
+        """11번가 인덱스가 수동으로 변경되었을 때 호출됩니다(로컬 저장만)."""
+        try:
+            if text.strip() and text.strip().isdigit():
+                self.current_idx_11st = int(text.strip())
+                self.save_index_values(push_sheet=False)
+                print(f"✓ 11번가 인덱스 수동 변경: {self.current_idx_11st}")
+        except Exception as e:
+            print(f"! 11번가 인덱스 변경 중 오류 발생: {str(e)}")
+
     def is_valid_filename(self, filename):
         """파일명이 올바른 형식인지 검사합니다."""
         print(f"\n[파일명 검증 시작] 파일명: {filename}")
@@ -3125,13 +3163,21 @@ class MainWindow(QMainWindow):
         # 지마켓 스토어 파일 형식 검사
         gmarket_pattern = r'^발송관리(?: \((\d+)\))?\.xlsx$'
         gmarket_match = re.match(gmarket_pattern, filename)
-        
+
         print("\n[지마켓 스토어 패턴 검사]")
         print(f"패턴: {gmarket_pattern}")
         print(f"매칭 결과: {gmarket_match}")
         if gmarket_match:
             print(f"매칭된 그룹: {gmarket_match.groups()}")
-        
+
+        # 11번가 스토어 파일 형식 검사 (예: 73043880_logistics.xls, 73043880_logistics (1).xls)
+        st11_pattern = r'^\d+_logistics(?: \(\d+\))?\.xls$'
+        st11_match = re.match(st11_pattern, filename)
+
+        print("\n[11번가 스토어 패턴 검사]")
+        print(f"패턴: {st11_pattern}")
+        print(f"매칭 결과: {st11_match}")
+
         if naver_match:
             # 날짜 유효성 검사
             date_str = naver_match.group(2)
@@ -3163,11 +3209,15 @@ class MainWindow(QMainWindow):
         elif gmarket_match:
             print("✓ 지마켓 스토어 파일명 검증 성공")
             return True, "gmarket"
+        elif st11_match:
+            print("✓ 11번가 스토어 파일명 검증 성공")
+            return True, "11st"
         else:
             print("❌ 파일명 형식이 올바르지 않습니다.")
             print("   - 네이버 스토어 형식: 스마트스토어_전체주문발주발송관리_YYYYMMDD로 시작하는 .xlsx 파일")
             print("   - 쿠팡 스토어 형식: DeliveryList(YYYY-MM-DD)로 시작하는 .xlsx 파일")
             print("   - 지마켓 스토어 형식: 발송관리.xlsx 또는 발송관리 (숫자).xlsx")
+            print("   - 11번가 스토어 형식: 숫자_logistics.xls 또는 숫자_logistics (숫자).xls")
             return False, None
             
     def open_file_with_default_app(self, file_path):
@@ -3252,6 +3302,9 @@ class MainWindow(QMainWindow):
             elif self.store_type == "gmarket":
                 logo_path = "image/gmarket-logo.png"
                 logo_size = QSize(120, 40)  # 지마켓 로고 크기
+            elif self.store_type == "11st":
+                logo_path = "image/11st-logo.png"
+                logo_size = QSize(120, 40)  # 11번가 로고 크기
 
             # 로고 이미지 로드 및 표시
             if logo_path and os.path.exists(logo_path):
@@ -3277,6 +3330,10 @@ class MainWindow(QMainWindow):
                 elif self.store_type == "gmarket":
                     print("✓ 지마켓 스토어 파일 처리 시작")
                     self.process_gmarket_excel_file()
+                    self.is_order_file_valid = True
+                elif self.store_type == "11st":
+                    print("✓ 11번가 스토어 파일 처리 시작")
+                    self.process_11st_excel_file()
                     self.is_order_file_valid = True
             except Exception as e:
                 self.is_order_file_valid = False
@@ -4174,6 +4231,199 @@ class MainWindow(QMainWindow):
                     f"엑셀 파일 처리 중 오류가 발생했습니다.\n\n{error_msg}",
                 )
 
+    def process_11st_excel_file(self):
+        """11번가 스토어의 주문 정보 .xls 파일을 처리합니다.
+
+        11번가는 스프레드시트 탭이 없어 상품코드 매핑·링크를 사용하지 않고,
+        xls에서 추출 가능한 정보만 마크다운으로 만든 뒤 송장 양식만 출력합니다.
+        (상품코드 자리는 지마켓과 동일하게 'PASS'로 채웁니다.)
+        """
+        try:
+            print(f"\n[11번가 스토어 엑셀 파일 처리 시작] 파일: {self.selected_file_path}")
+
+            # 파일 정보 출력
+            file_size = os.path.getsize(self.selected_file_path)
+            print(f"파일 크기: {file_size:,} 바이트")
+
+            # 파일 헤더 확인
+            try:
+                with open(self.selected_file_path, 'rb') as f:
+                    header = f.read(8)
+                    print(f"파일 헤더 (16진수): {header.hex()}")
+                    if header.startswith(b'PK\x03\x04'):
+                        print("✓ 파일이 ZIP 형식(.xlsx)으로 확인됨")
+                    elif header.startswith(b'\xD0\xCF\x11\xE0'):
+                        print("✓ 파일이 OLE2 형식(.xls)으로 확인됨")
+                    else:
+                        print("! 알 수 없는 파일 형식")
+            except Exception as e:
+                print(f"! 파일 헤더 확인 실패: {str(e)}")
+
+            # 엑셀 파일 읽기 (.xls, 헤더가 3행에 위치 → header=2)
+            df = pd.read_excel(self.selected_file_path, header=2)
+            print(f"\n[열 정보]")
+            print(f"감지된 열 목록: {', '.join(str(col) for col in df.columns)}")
+
+            # 필요한 열 찾기 (헤더명 정확 매칭)
+            required_columns = {
+                '주문번호': None,
+                '수취인': None,
+                '상품명': None,
+                '옵션': None,
+                '수량': None,
+                '주문금액': None,
+                '휴대폰번호': None,
+                '전화번호': None,
+                '우편번호': None,
+                '주소': None,
+                '배송메시지': None,
+            }
+
+            for col in df.columns:
+                col_str = str(col).strip()
+                for key in required_columns.keys():
+                    if col_str == key:  # 정확히 일치하는 경우에만 매칭
+                        required_columns[key] = col
+                        print(f"✓ '{key}' 열을 찾았습니다: {col}")
+
+            # 필수 열 확인 (주문금액·배송메시지는 선택사항으로 처리)
+            optional_keys = ['주문금액', '배송메시지']
+            missing_columns = [
+                key for key, value in required_columns.items()
+                if value is None and key not in optional_keys
+            ]
+            if missing_columns:
+                print(f"❌ 다음 열을 찾을 수 없습니다: {', '.join(missing_columns)}")
+                QMessageBox.warning(self, "오류", f"다음 열을 찾을 수 없습니다:\n{', '.join(missing_columns)}")
+                return
+
+            # 주문 정보 정리
+            self.orders = {}
+
+            # 주문번호별로 주문 정보 정리
+            for _, row in df.iterrows():
+                order_number = str(row[required_columns['주문번호']])
+                if pd.isna(order_number) or order_number.strip() == '' or order_number.strip().lower() == 'nan':
+                    continue
+
+                if order_number not in self.orders:
+                    # 주문금액 가져오기 (L열)
+                    sale_amount = 0
+                    if required_columns['주문금액'] is not None:
+                        try:
+                            sale_value = row[required_columns['주문금액']]
+                            if not pd.isna(sale_value):
+                                if isinstance(sale_value, str):
+                                    sale_value = sale_value.replace(',', '').strip()
+                                sale_amount = float(sale_value)
+                        except (ValueError, TypeError) as e:
+                            print(f"⚠️ 주문금액 변환 실패: {sale_value}, 오류: {e}")
+                            sale_amount = 0
+
+                    def _cell(key):
+                        col = required_columns[key]
+                        if col is None:
+                            return ''
+                        val = row[col]
+                        return str(val) if not pd.isna(val) else ''
+
+                    self.orders[order_number] = {
+                        '수취인명': _cell('수취인'),
+                        '주소': _cell('주소'),
+                        '휴대폰번호': _cell('휴대폰번호'),
+                        '전화번호': _cell('전화번호'),
+                        '우편번호': _cell('우편번호'),
+                        '배송메시지': _cell('배송메시지'),
+                        '상품목록': [],
+                        '주문금액': sale_amount,
+                    }
+
+                # 상품 정보 추가
+                product_name = str(row[required_columns['상품명']])
+                raw_option = row[required_columns['옵션']]
+                if pd.isna(raw_option):
+                    option = '없음'
+                else:
+                    option = str(raw_option).strip()
+                    if option.lower() in ('nan', ''):
+                        option = '없음'
+                quantity = int(row[required_columns['수량']]) if not pd.isna(row[required_columns['수량']]) else 1
+
+                self.orders[order_number]['상품목록'].append({
+                    '상품명': product_name,
+                    '옵션': option,
+                    '수량': quantity,
+                })
+
+            # 같은 주문자(수취인명)로 주문 통합
+            consolidated_orders = {}
+            for order_number, info in self.orders.items():
+                customer_name = info['수취인명']
+
+                if customer_name not in consolidated_orders:
+                    consolidated_orders[customer_name] = {
+                        '수취인명': customer_name,
+                        '주문번호목록': [order_number],
+                        '상품목록': info['상품목록'].copy(),
+                        '총주문금액': info.get('주문금액', 0),
+                    }
+                else:
+                    consolidated_orders[customer_name]['주문번호목록'].append(order_number)
+                    consolidated_orders[customer_name]['상품목록'].extend(info['상품목록'])
+                    consolidated_orders[customer_name]['총주문금액'] += info.get('주문금액', 0)
+
+            # 마크다운 형식으로 주문 정보 생성
+            markdown_text = ""
+
+            # 인덱스 값 다시 로드
+            if hasattr(self.ui, 'lineEdit_idx_11st'):
+                saved_index = self.ui.lineEdit_idx_11st.text().strip()
+                if saved_index and saved_index.isdigit():
+                    self.current_idx_11st = int(saved_index)
+                else:
+                    self.current_idx_11st = 1
+                    self.ui.lineEdit_idx_11st.setText(str(self.current_idx_11st))
+
+            for customer_name, info in consolidated_orders.items():
+                # 주문금액 합산 (만원 단위 표기, 지마켓과 동일한 내림 규칙)
+                total_amount = info.get('총주문금액', 0)
+                amount_in_100 = total_amount // 100  # 100원 단위로 내림
+                amount_in_manwon = amount_in_100 / 100  # 만원 단위로 변환
+                amount_rounded = math.floor(amount_in_manwon * 10) / 10
+                formatted_amount = f"{amount_rounded}만"
+
+                markdown_text += f"[ ] {self.current_idx_11st}.{customer_name} - {formatted_amount}\n"
+                self.update_11st_index()
+                if hasattr(self.ui, 'lineEdit_idx_11st'):
+                    self.ui.lineEdit_idx_11st.setText(str(self.current_idx_11st))
+
+                # 상품 목록 표시 (상품코드 자리는 'PASS')
+                for product in info['상품목록']:
+                    product_name = product['상품명']
+                    quantity = product['수량']
+                    option = product['옵션']
+                    product_code = 'PASS'
+                    markdown_text += f"▶ [{product_code}]**[ {quantity} 개 ]** - {product_name} ( 옵션 : {option} )\n"
+
+                markdown_text += "\n"
+
+            # plainTextEdit에 마크다운 텍스트 표시
+            self.ui.plainTextEdit.setPlainText(markdown_text)
+
+            # 클립보드에 자동 복사
+            clipboard = QApplication.clipboard()
+            clipboard.setText(markdown_text)
+            self.statusBar().showMessage("주문 정보가 클립보드에 복사되었습니다.", 2000)
+
+        except Exception as e:
+            error_msg = str(e)
+            print(f"❌ 엑셀 파일 처리 중 오류 발생: {error_msg}")
+            QMessageBox.critical(
+                self,
+                "오류",
+                f"엑셀 파일 처리 중 오류가 발생했습니다.\n\n{error_msg}",
+            )
+
     def generate_work_order(self):
         """작업지시서 생성 버튼 클릭 시 실행되는 함수입니다."""
         if not self.selected_file_path:
@@ -4449,8 +4699,68 @@ class MainWindow(QMainWindow):
                         '상품모델': '전자제품',
                         '배송메세지': delivery_msg,
                         '비고': ''
-                    })          
-                
+                    })
+            elif self.store_type == "11st":
+                # 11번가 스토어 처리
+                print("\n[11번가 스토어 데이터 구조 확인]")
+
+                # 주문 통합 처리 (수취인명 + 휴대폰번호 + 주문번호 기준)
+                consolidated_orders = {}
+
+                for order_number, info in self.orders.items():
+                    print(f"[주문 처리 시작] 주문번호: {order_number}")
+
+                    key = (info['수취인명'], info['휴대폰번호'], order_number)
+
+                    if key not in consolidated_orders:
+                        # 우편번호 처리
+                        zipcode = str(info.get('우편번호', '')).strip()
+                        if zipcode.isdigit():
+                            zipcode = zipcode.zfill(5)
+
+                        consolidated_orders[key] = {
+                            '주문번호': order_number,
+                            '수취인명': info['수취인명'],
+                            '휴대폰번호': info['휴대폰번호'],
+                            '전화번호': info['전화번호'],
+                            '주소': info['주소'],
+                            '배송메시지': info.get('배송메시지', ''),
+                            '우편번호': zipcode,
+                            '상품목록': info['상품목록'].copy()
+                        }
+                    else:
+                        consolidated_orders[key]['상품목록'].extend(info['상품목록'])
+                        if str(info.get('배송메시지', '')).strip():
+                            consolidated_orders[key]['배송메시지'] = info['배송메시지']
+
+                # 통합된 주문 정보로 송장 데이터 생성
+                for info in consolidated_orders.values():
+                    delivery_msg = info.get('배송메시지', '')
+                    if pd.isna(delivery_msg) or str(delivery_msg).lower() == 'nan':
+                        delivery_msg = ''
+
+                    # 상품 정보를 하나의 문자열로 결합
+                    product_info = []
+                    for product in info['상품목록']:
+                        product_str = f"{product['상품명']} (옵션: {product['옵션']}) - {product['수량']}개"
+                        product_info.append(product_str)
+
+                    combined_product_info = '\n'.join(product_info)
+
+                    invoice_data.append({
+                        '주문번호': info['주문번호'],
+                        '고객주문처명': '',
+                        '수취인명': info['수취인명'],
+                        '우편번호': info['우편번호'],
+                        '수취인 주소': info['주소'],
+                        '수취인 전화번호': info['전화번호'],
+                        '수취인 이동통신': info['휴대폰번호'],
+                        '상품명': combined_product_info,
+                        '상품모델': '전자제품',
+                        '배송메세지': delivery_msg,
+                        '비고': ''
+                    })
+
             # 데이터프레임 생성
             df_invoice = pd.DataFrame(invoice_data)
             
