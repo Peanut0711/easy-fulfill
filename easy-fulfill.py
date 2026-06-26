@@ -85,6 +85,7 @@ CONFIG_SHEET_TITLE = "설정"
 CONFIG_SHEET_HEADERS = ["키", "값"]
 CONFIG_KEY_KPOST_REGKEY = "kpost_regkey"
 CONFIG_KEY_SLACK_WEBHOOK = "slack_webhook_url"
+CONFIG_KEY_DIGEST_DATE = "digest_last_date"  # 일일 다이제스트 발송 날짜(전원 중복 방지)
 # 시작 시 DB동기화 로딩 바: 약 2초+여유 안에 99%까지 선형 증가, 완료 시 즉시 100%
 STARTUP_SYNC_PROGRESS_CAP_MS = 2200
 STARTUP_SYNC_PROGRESS_TICK_MS = 40
@@ -670,6 +671,47 @@ def run_tracking_config_write_worker(updates):
         return {"ok": False, "error": str(e)}
 
 
+def run_digest_send_worker(webhook_url, text, today_str):
+    """하루 1회 다이제스트 전송. 공유 「설정」 탭의 digest_last_date 로 4PC 중복 방지.
+    오늘 이미 보냈으면 전송하지 않는다. 반환 {ok, sent} 또는 {ok False, error}."""
+    if gspread is None:
+        return {"ok": False, "error": "gspread 패키지가 필요합니다.", "sent": False}
+    try:
+        from google_sheets_oauth import get_authorized_gspread_client
+    except ImportError as e:
+        return {"ok": False, "error": str(e), "sent": False}
+    try:
+        import slack_notify
+    except ImportError as e:
+        return {"ok": False, "error": str(e), "sent": False}
+    try:
+        gc = get_authorized_gspread_client()
+        ws = _standalone_open_config_ws(gc)
+        values = ws.get_all_values()
+        key_to_row = {}
+        last = ""
+        for ridx, row in enumerate(values[1:], start=2):
+            k = (row[0] if row else "").strip()
+            if k and k not in key_to_row:
+                key_to_row[k] = ridx
+                if k == CONFIG_KEY_DIGEST_DATE:
+                    last = (row[1] if len(row) > 1 else "").strip()
+        if last == today_str:
+            return {"ok": True, "sent": False}  # 오늘 이미 발송됨(다른 PC 포함)
+        res = slack_notify.send_slack(webhook_url, text)
+        if not res.get("ok"):
+            return {"ok": False, "error": res.get("error", ""), "sent": False}
+        # 발송 성공 → 오늘 날짜 기록(전원 중복 방지)
+        if CONFIG_KEY_DIGEST_DATE in key_to_row:
+            ws.update([[today_str]], range_name=f"B{key_to_row[CONFIG_KEY_DIGEST_DATE]}",
+                      value_input_option="RAW")
+        else:
+            ws.append_row([CONFIG_KEY_DIGEST_DATE, today_str], value_input_option="RAW")
+        return {"ok": True, "sent": True}
+    except Exception as e:
+        return {"ok": False, "error": str(e), "sent": False}
+
+
 class CircularBusySpinner(QWidget):
     """Google 시트·처리 대기용 무한 회전 링 스피너."""
 
@@ -900,6 +942,21 @@ class SlackSendThread(QThread):
             self.result_ready.emit({"ok": False, "error": f"slack_notify 로드 실패: {e}"})
             return
         self.result_ready.emit(slack_notify.send_slack(self._url, self._text))
+
+
+class DigestSendThread(QThread):
+    """하루 1회 위험 다이제스트를 공유 날짜 중복방지로 전송합니다."""
+
+    result_ready = Signal(dict)
+
+    def __init__(self, webhook_url, text, today, parent=None):
+        super().__init__(parent)
+        self._url = webhook_url
+        self._text = text
+        self._today = today
+
+    def run(self):
+        self.result_ready.emit(run_digest_send_worker(self._url, self._text, self._today))
 
 
 class TrackingKeyValidateThread(QThread):
@@ -1361,6 +1418,7 @@ class MainWindow(QMainWindow):
         self._tracking_list_values = []  # 시트에서 읽어온 원본(헤더 포함)
         self._tracking_refresh_one_thread = None
         self._slack_send_thread = None
+        self._digest_thread = None
         self._slack_notify_after_reload = False
         # 우체국 등기 웹조회 URL 템플릿
         self._kpost_trace_web_url = (
@@ -1687,6 +1745,23 @@ class MainWindow(QMainWindow):
         (6, "배송상태"), (7, "완료"), (8, "마지막위치"),
         (11, "최근이벤트"), (9, "최근조회"), (10, "비고"),
     ]
+    # 허브(물류센터) 판별 키워드 — '도착 후 정체'가 가장 위험
+    _RISK_HUB_KEYWORDS = ("물류", "허브", "터미널")
+    # 정상으로 보아 위험 판정에서 제외하는 상태
+    _RISK_EXCLUDE_STATUS = ("배달준비",)
+
+    def _classify_risk(self, status, where, is_stale, done):
+        """위험 분류. 반환: None(정상) / '허브정체' / '수거누락' / '이동정체'."""
+        if done or not is_stale:
+            return None
+        status = (status or "").strip()
+        if status in self._RISK_EXCLUDE_STATUS:
+            return None
+        if status == "운송장출력":
+            return "수거누락"  # 다음날까지 출고 안 됨 → 수거 누락 의심
+        if any(h in (where or "") for h in self._RISK_HUB_KEYWORDS):
+            return "허브정체"  # 물류센터/허브에서 정지 → 분실·사고 의심(최우선)
+        return "이동정체"
 
     def _load_tracking_list(self):
         """공유 시트에서 송장추적 목록을 백그라운드로 읽어옵니다."""
@@ -1710,7 +1785,7 @@ class MainWindow(QMainWindow):
         self._populate_tracking_table()
         if self._slack_notify_after_reload:
             self._slack_notify_after_reload = False
-            self._maybe_notify_stale_to_slack()
+            self._maybe_send_daily_digest()
 
     def _cleanup_tracking_list_thread(self):
         self._tracking_list_thread = None
@@ -1738,13 +1813,14 @@ class MainWindow(QMainWindow):
         else:  # 미완료
             rows = [r for r in data_rows if _cell(r, 7).strip().upper() != "Y"]
 
-        # 정체 판정 기준(시간). 미완료 + 마지막 이벤트(없으면 등록) 후 N시간 무이동.
+        # 위험 판정 기준(시간). 미완료 + 마지막 이벤트(없으면 등록) 후 N시간 무이동.
         stale_hours = 12
         if hasattr(self.ui, "spinBox_stale_hours"):
             stale_hours = self.ui.spinBox_stale_hours.value()
         now_dt = datetime.now()
-        stale_bg = QColor("#ffd6d6")
-        stale_count = 0
+        bg_hub = QColor("#ffb3b3")      # 허브 정체 = 빨강(위험)
+        bg_warn = QColor("#ffe0b3")     # 수거누락·이동정체 = 주황(주의)
+        counts = {"허브정체": 0, "수거누락": 0, "이동정체": 0}
 
         cols = self._TRACKING_TABLE_COLUMNS
         table.setSortingEnabled(False)
@@ -1756,15 +1832,16 @@ class MainWindow(QMainWindow):
             done = _cell(row, 7).strip().upper() == "Y"
             ref = self._parse_event_dt(_cell(row, 11)) or self._parse_event_dt(_cell(row, 1))
             is_stale = (
-                not done and ref is not None
-                and (now_dt - ref).total_seconds() > stale_hours * 3600
+                ref is not None and (now_dt - ref).total_seconds() > stale_hours * 3600
             )
-            if is_stale:
-                stale_count += 1
+            risk = self._classify_risk(_cell(row, 6), _cell(row, 8), is_stale, done)
+            if risk:
+                counts[risk] += 1
+            bg = bg_hub if risk == "허브정체" else (bg_warn if risk else None)
             for c, (src_idx, _label) in enumerate(cols):
                 item = QTableWidgetItem(_cell(row, src_idx))
-                if is_stale:
-                    item.setBackground(stale_bg)
+                if bg is not None:
+                    item.setBackground(bg)
                 table.setItem(r, c, item)
         table.setSortingEnabled(True)
         table.resizeColumnsToContents()
@@ -1772,9 +1849,12 @@ class MainWindow(QMainWindow):
         if header is not None:
             header.setStretchLastSection(True)
         if hasattr(self.ui, "label_tracking_count"):
+            total_risk = sum(counts.values())
             txt = f"표시 {len(rows)}건 / 전체 {total}건"
-            if stale_count:
-                txt += f"  ·  ⚠️ 정체 {stale_count}건({stale_hours}h+)"
+            if total_risk:
+                txt += (f"  ·  ⚠️ 위험 {total_risk}건"
+                        f" (허브 {counts['허브정체']} · 수거누락 {counts['수거누락']}"
+                        f" · 이동 {counts['이동정체']})")
                 self.ui.label_tracking_count.setStyleSheet("color:#c0392b; font-weight:bold;")
             else:
                 self.ui.label_tracking_count.setStyleSheet("")
@@ -1921,9 +2001,9 @@ class MainWindow(QMainWindow):
     def _cleanup_slack_send_thread(self):
         self._slack_send_thread = None
 
-    def _collect_stale_rows(self):
-        """현재 목록에서 정체(미완료 + 기준시간 무이동) 행을 모읍니다.
-        반환: (list[dict], stale_hours). dict: regino,name,status,where,event_time,from_event,elapsed_h."""
+    def _collect_risk_rows(self):
+        """현재 목록에서 위험 건(상태별)을 모읍니다.
+        반환: (list[dict], hours). dict: regino,name,status,where,event_time,elapsed_h,category."""
         values = self._tracking_list_values
         data = values[1:] if len(values) > 1 else []
         hours = 12
@@ -1936,11 +2016,14 @@ class MainWindow(QMainWindow):
 
         out = []
         for row in data:
-            if _cell(row, 7).strip().upper() == "Y":
-                continue
+            done = _cell(row, 7).strip().upper() == "Y"
             ev = self._parse_event_dt(_cell(row, 11))
             ref = ev or self._parse_event_dt(_cell(row, 1))
-            if ref is None or (now_dt - ref).total_seconds() <= hours * 3600:
+            is_stale = (
+                ref is not None and (now_dt - ref).total_seconds() > hours * 3600
+            )
+            risk = self._classify_risk(_cell(row, 6), _cell(row, 8), is_stale, done)
+            if not risk:
                 continue
             out.append({
                 "regino": _cell(row, 0),
@@ -1948,37 +2031,67 @@ class MainWindow(QMainWindow):
                 "status": _cell(row, 6),
                 "where": _cell(row, 8),
                 "event_time": _cell(row, 11) if ev else "",
-                "from_event": ev is not None,
                 "elapsed_h": (now_dt - ref).total_seconds() / 3600.0,
+                "category": risk,
             })
+        # 위험도 순서: 허브정체 → 수거누락 → 이동정체
+        order = {"허브정체": 0, "수거누락": 1, "이동정체": 2}
+        out.sort(key=lambda it: (order.get(it["category"], 9), -it["elapsed_h"]))
         return out, hours
 
-    def _maybe_notify_stale_to_slack(self):
-        """전체 새로고침 직후, 자동 알림이 켜져 있고 정체 건이 있으면 슬랙으로 푸시."""
+    def _build_risk_digest_text(self, risks, hours):
+        t = datetime.now().strftime("%Y-%m-%d %H:%M")
+        label = {"허브정체": "🔴 허브 정체(분실·사고 의심)",
+                 "수거누락": "🟠 수거 누락 의심",
+                 "이동정체": "🟠 이동 정체"}
+        lines = [f"⚠️ 배송 위험 {len(risks)}건 (기준 {hours}시간 무이동 · {t})"]
+        cur = None
+        shown = 0
+        for it in risks:
+            if shown >= 25:
+                lines.append(f"… 외 {len(risks) - shown}건")
+                break
+            if it["category"] != cur:
+                cur = it["category"]
+                lines.append(f"[{label.get(cur, cur)}]")
+            elapsed = f"{it['elapsed_h']:.0f}시간째"
+            where = it["where"] or "위치미상"
+            last = f", 마지막 {it['event_time']}" if it["event_time"] else ""
+            lines.append(
+                f"• {it['regino']} {it['name']} — {it['status']} @ {where} ({elapsed} 무이동{last})"
+            )
+            shown += 1
+        return "\n".join(lines)
+
+    def _maybe_send_daily_digest(self):
+        """전체 새로고침 직후, 일일 알림이 켜져 있고 위험 건이 있으면 하루 1통 다이제스트.
+        4PC 중복은 공유 「설정」 탭의 발송 날짜로 방지(오늘 이미 보냈으면 전송 안 함)."""
         if not bool(self.get_app_setting("slack_auto_notify", False)):
             return
-        if not str(self.get_app_setting("slack_webhook_url", "") or "").strip():
+        webhook = str(self.get_app_setting("slack_webhook_url", "") or "").strip()
+        if not webhook or self._digest_thread is not None:
             return
-        stale, hours = self._collect_stale_rows()
-        if not stale:
+        risks, hours = self._collect_risk_rows()
+        if not risks:
             return
-        t = datetime.now().strftime("%Y-%m-%d %H:%M")
-        lines = [f"⚠️ 배송 정체 {len(stale)}건 (기준 {hours}시간 무이동 · {t})"]
-        for it in stale[:20]:
-            elapsed = f"{it['elapsed_h']:.0f}시간째"
-            if it["from_event"]:
-                where = it["where"] or "위치미상"
-                lines.append(
-                    f"• {it['regino']} {it['name']} — {it['status']} @ {where} "
-                    f"(마지막 {it['event_time']}, {elapsed} 무이동)"
-                )
-            else:
-                lines.append(
-                    f"• {it['regino']} {it['name']} — 추적정보 없음 ({elapsed} 경과)"
-                )
-        if len(stale) > 20:
-            lines.append(f"… 외 {len(stale) - 20}건")
-        self._send_slack_async("\n".join(lines))
+        text = self._build_risk_digest_text(risks, hours)
+        today = datetime.now().strftime("%Y-%m-%d")
+        thread = DigestSendThread(webhook, text, today, self)
+        self._digest_thread = thread
+        thread.result_ready.connect(self._on_digest_sent)
+        thread.finished.connect(self._cleanup_digest_thread)
+        thread.finished.connect(thread.deleteLater)
+        thread.start()
+
+    def _on_digest_sent(self, payload: dict):
+        if payload.get("sent"):
+            print("✓ 일일 위험 다이제스트 슬랙 발송")
+        elif not payload.get("ok"):
+            print(f"! 다이제스트 발송 실패: {payload.get('error', '')}")
+        # sent False & ok True = 오늘 이미 발송됨(정상)
+
+    def _cleanup_digest_thread(self):
+        self._digest_thread = None
 
     def get_app_setting(self, key, default=None):
         """database/app_settings.json 에서 단일 설정값을 읽습니다."""

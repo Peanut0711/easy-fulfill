@@ -1385,10 +1385,10 @@
           <item>
            <widget class="QCheckBox" name="checkBox_slack_auto">
             <property name="text">
-             <string>정체 시 자동 알림</string>
+             <string>위험 일일 알림(하루 1통)</string>
             </property>
             <property name="toolTip">
-             <string>전체 새로고침 후 정체 건이 있으면 슬랙 채널로 자동 알림을 보냅니다.</string>
+             <string>전체 새로고침 시 위험 건이 있으면 하루 1통만 슬랙으로 다이제스트를 보냅니다(4PC 중복 방지). 허브 정체·수거 누락·이동 정체를 분류해 알립니다.</string>
             </property>
            </widget>
           </item>
