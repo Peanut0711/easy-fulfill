@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QFileDialog, QMessageB
                               QInputDialog, QLineEdit, QTableWidgetItem, QLabel, 
                               QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QWidget,
                               QProgressBar, QFrame, QGraphicsOpacityEffect, QListWidget,
-                              QAbstractItemView, QGroupBox, QCheckBox)
+                              QAbstractItemView, QGroupBox, QCheckBox, QSpinBox)
 from PySide6.QtUiTools import QUiLoader
 from PySide6.QtCore import (
     QFile,
@@ -86,6 +86,7 @@ CONFIG_SHEET_TITLE = "설정"
 CONFIG_SHEET_HEADERS = ["키", "값"]
 CONFIG_KEY_KPOST_REGKEY = "kpost_regkey"
 CONFIG_KEY_SLACK_WEBHOOK = "slack_webhook_url"
+CONFIG_KEY_STALE_HOURS = "stale_hours"  # 정체 판정 기준 시간(전원 공유)
 CONFIG_KEY_DIGEST_DATE = "digest_last_date"  # 일일 다이제스트 발송 날짜(전원 중복 방지)
 CONFIG_KEY_DIGEST_SIG = "digest_last_sig"  # 직전 발송 위험목록 서명(동일 내용 재발송 방지)
 # 당일 우체국 수거 시각(시). 오늘 등록+운송장출력만 한 건은 이 시각 전엔 조회해도
@@ -666,6 +667,7 @@ def run_tracking_config_read_worker():
             "ok": True,
             "regkey": cfg.get(CONFIG_KEY_KPOST_REGKEY, ""),
             "slack_webhook": cfg.get(CONFIG_KEY_SLACK_WEBHOOK, ""),
+            "stale_hours": cfg.get(CONFIG_KEY_STALE_HOURS, ""),
         }
     except Exception as e:
         return {"ok": False, "error": str(e)}
@@ -1477,6 +1479,7 @@ class MainWindow(QMainWindow):
         self._dlg_slack_status = None
         self._dlg_slack_auto = None
         self._dlg_key_btn = None
+        self._dlg_stale_hours = None
         self._key_status_text = "확인 중…"
         self._slack_status_text = "미설정"
         # 우체국 등기 웹조회 URL 템플릿
@@ -1612,23 +1615,28 @@ class MainWindow(QMainWindow):
         cb.setChecked(checked)
         cb.blockSignals(False)
 
-        # 정체 기준 시간(기본 12h)
-        if hasattr(self.ui, "spinBox_stale_hours"):
-            try:
-                hours = int(self.get_app_setting("stale_hours", 12) or 12)
-            except (TypeError, ValueError):
-                hours = 12
-            sp = self.ui.spinBox_stale_hours
-            sp.blockSignals(True)
-            sp.setValue(hours)
-            sp.blockSignals(False)
-
-        # 슬랙 상태 텍스트 갱신(자동 알림 체크박스는 설정 팝업에서 로드)
+        # 슬랙 상태 텍스트 갱신(자동 알림·정체기준은 설정 팝업에서 로드)
         self._refresh_slack_status()
 
+    def _stale_hours(self):
+        """정체 판정 기준 시간(공유 설정에서 동기화된 로컬 값). 기본 12."""
+        try:
+            return int(self.get_app_setting("stale_hours", 12) or 12)
+        except (TypeError, ValueError):
+            return 12
+
     def _on_stale_hours_changed(self, value):
-        self.set_app_setting("stale_hours", int(value))
+        """설정 팝업의 정체기준 변경 → 로컬 저장 + 공유 「설정」 탭 반영 + 표 갱신."""
+        v = int(value)
+        self.set_app_setting("stale_hours", v)
         self._populate_tracking_table()
+        if gspread is not None and self._tracking_config_write_thread is None:
+            thread = TrackingConfigWriteThread({CONFIG_KEY_STALE_HOURS: str(v)}, self)
+            self._tracking_config_write_thread = thread
+            thread.result_ready.connect(self._on_tracking_config_write_finished)
+            thread.finished.connect(self._cleanup_tracking_config_write_thread)
+            thread.finished.connect(thread.deleteLater)
+            thread.start()
 
     def save_app_settings(self):
         """앱 설정을 database/app_settings.json 에 저장합니다."""
@@ -1738,6 +1746,22 @@ class MainWindow(QMainWindow):
             sl.addLayout(srow)
             outer.addWidget(gb_slack)
 
+            gb_risk = QGroupBox("위험 판정 기준")
+            rl = QHBoxLayout(gb_risk)
+            rl.addWidget(QLabel("정체기준(시간):"))
+            self._dlg_stale_hours = QSpinBox()
+            self._dlg_stale_hours.setMinimum(1)
+            self._dlg_stale_hours.setMaximum(168)
+            self._dlg_stale_hours.setValue(self._stale_hours())
+            self._dlg_stale_hours.setToolTip(
+                "미완료 송장이 이 시간 이상 우체국 이벤트가 없으면 '정체'로 표시합니다. "
+                "변경 시 공유 시트에 저장되어 전원에게 적용됩니다."
+            )
+            self._dlg_stale_hours.valueChanged.connect(self._on_stale_hours_changed)
+            rl.addWidget(self._dlg_stale_hours)
+            rl.addStretch(1)
+            outer.addWidget(gb_risk)
+
             btn_close = QPushButton("닫기")
             btn_close.clicked.connect(dlg.accept)
             outer.addWidget(btn_close, alignment=Qt.AlignmentFlag.AlignRight)
@@ -1748,6 +1772,10 @@ class MainWindow(QMainWindow):
             self._dlg_slack_auto.blockSignals(True)
             self._dlg_slack_auto.setChecked(bool(self.get_app_setting("slack_auto_notify", False)))
             self._dlg_slack_auto.blockSignals(False)
+        if self._dlg_stale_hours is not None:
+            self._dlg_stale_hours.blockSignals(True)
+            self._dlg_stale_hours.setValue(self._stale_hours())
+            self._dlg_stale_hours.blockSignals(False)
         self._tracking_settings_dialog.show()
         self._tracking_settings_dialog.raise_()
         self._tracking_settings_dialog.activateWindow()
@@ -1869,9 +1897,20 @@ class MainWindow(QMainWindow):
             slack = str(payload.get("slack_webhook", "") or "").strip()
             if slack:
                 self.set_app_setting("slack_webhook_url", slack)
-        # 공유 키 수신 후 유효성 상태 텍스트 갱신
+            sh = str(payload.get("stale_hours", "") or "").strip()
+            if sh:
+                try:
+                    self.set_app_setting("stale_hours", int(sh))
+                except (TypeError, ValueError):
+                    pass
+        # 공유 설정 수신 후 상태 텍스트·정체기준·표 갱신
         self._refresh_key_status()
         self._refresh_slack_status()
+        if self._dlg_stale_hours is not None:
+            self._dlg_stale_hours.blockSignals(True)
+            self._dlg_stale_hours.setValue(self._stale_hours())
+            self._dlg_stale_hours.blockSignals(False)
+        self._populate_tracking_table()
 
     def _cleanup_tracking_config_read_thread(self):
         self._tracking_config_read_thread = None
@@ -1960,9 +1999,7 @@ class MainWindow(QMainWindow):
             rows = [r for r in data_rows if _cell(r, 7).strip().upper() != "Y"]
 
         # 위험 판정 기준(시간). 미완료 + 마지막 이벤트(없으면 등록) 후 N시간 무이동.
-        stale_hours = 12
-        if hasattr(self.ui, "spinBox_stale_hours"):
-            stale_hours = self.ui.spinBox_stale_hours.value()
+        stale_hours = self._stale_hours()
         now_dt = datetime.now()
         bg_hub = QColor("#ffb3b3")      # 허브 정체 = 빨강(위험)
         bg_warn = QColor("#ffe0b3")     # 수거누락·이동정체 = 주황(주의)
@@ -2151,9 +2188,7 @@ class MainWindow(QMainWindow):
         반환: (list[dict], hours). dict: regino,name,status,where,event_time,elapsed_h,category."""
         values = self._tracking_list_values
         data = values[1:] if len(values) > 1 else []
-        hours = 12
-        if hasattr(self.ui, "spinBox_stale_hours"):
-            hours = self.ui.spinBox_stale_hours.value()
+        hours = self._stale_hours()
         now_dt = datetime.now()
 
         def _cell(row, idx):
@@ -3515,9 +3550,7 @@ class MainWindow(QMainWindow):
             self.ui.comboBox_tracking_filter.currentIndexChanged.connect(
                 self._populate_tracking_table
             )
-        if hasattr(self.ui, "spinBox_stale_hours"):
-            self.ui.spinBox_stale_hours.valueChanged.connect(self._on_stale_hours_changed)
-        # 우체국 인증키·슬랙 설정 버튼/체크박스는 설정 팝업에서 연결됨
+        # 우체국 인증키·슬랙·정체기준 설정 위젯은 설정 팝업에서 연결됨
 
         if hasattr(self.ui, "pushButton_google_reauth"):
             self.ui.pushButton_google_reauth.clicked.connect(self._on_google_reauth_clicked)
