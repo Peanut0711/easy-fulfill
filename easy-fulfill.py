@@ -49,6 +49,7 @@ from io import BytesIO
 import warnings
 import logging
 import json
+import hashlib
 import traceback
 import xml.etree.ElementTree as ET
 
@@ -86,6 +87,7 @@ CONFIG_SHEET_HEADERS = ["키", "값"]
 CONFIG_KEY_KPOST_REGKEY = "kpost_regkey"
 CONFIG_KEY_SLACK_WEBHOOK = "slack_webhook_url"
 CONFIG_KEY_DIGEST_DATE = "digest_last_date"  # 일일 다이제스트 발송 날짜(전원 중복 방지)
+CONFIG_KEY_DIGEST_SIG = "digest_last_sig"  # 직전 발송 위험목록 서명(동일 내용 재발송 방지)
 # 당일 우체국 수거 시각(시). 오늘 등록+운송장출력만 한 건은 이 시각 전엔 조회해도
 # 새 정보가 없으므로 새로고침 대상에서 제외한다(어제 이전 건은 제외 안 함=수거누락 후보).
 KPOST_PICKUP_HOUR = 18
@@ -703,9 +705,11 @@ def run_tracking_config_write_worker(updates):
         return {"ok": False, "error": str(e)}
 
 
-def run_digest_send_worker(webhook_url, text, today_str):
-    """하루 1회 다이제스트 전송. 공유 「설정」 탭의 digest_last_date 로 중복 방지.
-    오늘 이미 보냈으면 전송하지 않는다. 반환 {ok, sent} 또는 {ok False, error}."""
+def run_digest_send_worker(webhook_url, text, today_str, sig):
+    """다이제스트 전송. 공유 「설정」 탭으로 중복 방지(모든 PC 공통):
+    - 오늘 이미 보냈으면 전송 안 함(digest_last_date)
+    - 직전 발송과 위험 내용이 동일하면 전송 안 함(digest_last_sig) → '아까 본 건' 방지
+    반환 {ok, sent, reason} 또는 {ok False, error}."""
     if gspread is None:
         return {"ok": False, "error": "gspread 패키지가 필요합니다.", "sent": False}
     try:
@@ -721,25 +725,37 @@ def run_digest_send_worker(webhook_url, text, today_str):
         ws = _standalone_open_config_ws(gc)
         values = ws.get_all_values()
         key_to_row = {}
-        last = ""
+        last_date = ""
+        last_sig = ""
         for ridx, row in enumerate(values[1:], start=2):
             k = (row[0] if row else "").strip()
             if k and k not in key_to_row:
                 key_to_row[k] = ridx
                 if k == CONFIG_KEY_DIGEST_DATE:
-                    last = (row[1] if len(row) > 1 else "").strip()
-        if last == today_str:
-            return {"ok": True, "sent": False}  # 오늘 이미 발송됨(다른 PC 포함)
+                    last_date = (row[1] if len(row) > 1 else "").strip()
+                elif k == CONFIG_KEY_DIGEST_SIG:
+                    last_sig = (row[1] if len(row) > 1 else "").strip()
+        if last_date == today_str:
+            return {"ok": True, "sent": False, "reason": "today"}
+        if sig and sig == last_sig:
+            return {"ok": True, "sent": False, "reason": "unchanged"}
         res = slack_notify.send_slack(webhook_url, text)
         if not res.get("ok"):
             return {"ok": False, "error": res.get("error", ""), "sent": False}
-        # 발송 성공 → 오늘 날짜 기록(전원 중복 방지)
-        if CONFIG_KEY_DIGEST_DATE in key_to_row:
-            ws.update([[today_str]], range_name=f"B{key_to_row[CONFIG_KEY_DIGEST_DATE]}",
-                      value_input_option="RAW")
-        else:
-            ws.append_row([CONFIG_KEY_DIGEST_DATE, today_str], value_input_option="RAW")
-        return {"ok": True, "sent": True}
+        # 발송 성공 → 오늘 날짜·서명 기록(전원 공통 중복 방지)
+        updates = {CONFIG_KEY_DIGEST_DATE: today_str, CONFIG_KEY_DIGEST_SIG: sig}
+        new_rows = []
+        batch = []
+        for k, v in updates.items():
+            if k in key_to_row:
+                batch.append({"range": f"B{key_to_row[k]}", "values": [[v]]})
+            else:
+                new_rows.append([k, v])
+        if new_rows:
+            ws.append_rows(new_rows, value_input_option="RAW")
+        if batch:
+            ws.batch_update(batch, value_input_option="RAW")
+        return {"ok": True, "sent": True, "reason": "changed"}
     except Exception as e:
         return {"ok": False, "error": str(e), "sent": False}
 
@@ -977,18 +993,21 @@ class SlackSendThread(QThread):
 
 
 class DigestSendThread(QThread):
-    """하루 1회 위험 다이제스트를 공유 날짜 중복방지로 전송합니다."""
+    """위험 다이제스트를 공유 날짜·서명 중복방지로 전송합니다."""
 
     result_ready = Signal(dict)
 
-    def __init__(self, webhook_url, text, today, parent=None):
+    def __init__(self, webhook_url, text, today, sig, parent=None):
         super().__init__(parent)
         self._url = webhook_url
         self._text = text
         self._today = today
+        self._sig = sig
 
     def run(self):
-        self.result_ready.emit(run_digest_send_worker(self._url, self._text, self._today))
+        self.result_ready.emit(
+            run_digest_send_worker(self._url, self._text, self._today, self._sig)
+        )
 
 
 class TrackingKeyValidateThread(QThread):
@@ -2071,6 +2090,15 @@ class MainWindow(QMainWindow):
         out.sort(key=lambda it: (order.get(it["category"], 9), -it["elapsed_h"]))
         return out, hours
 
+    @staticmethod
+    def _risk_signature(risks):
+        """위험 목록의 내용 서명(등기번호+상태+위치+이벤트시각). 동일하면 재발송 안 함."""
+        keys = sorted(
+            f"{it['regino']}|{it['status']}|{it['where']}|{it['event_time']}"
+            for it in risks
+        )
+        return hashlib.md5("\n".join(keys).encode("utf-8")).hexdigest()
+
     def _build_risk_digest_text(self, risks, hours):
         t = datetime.now().strftime("%Y-%m-%d %H:%M")
         label = {"허브정체": "🔴 허브 정체(분실·사고 의심)",
@@ -2107,8 +2135,9 @@ class MainWindow(QMainWindow):
         if not risks:
             return
         text = self._build_risk_digest_text(risks, hours)
+        sig = self._risk_signature(risks)
         today = datetime.now().strftime("%Y-%m-%d")
-        thread = DigestSendThread(webhook, text, today, self)
+        thread = DigestSendThread(webhook, text, today, sig, self)
         self._digest_thread = thread
         thread.result_ready.connect(self._on_digest_sent)
         thread.finished.connect(self._cleanup_digest_thread)
@@ -2118,9 +2147,14 @@ class MainWindow(QMainWindow):
     def _on_digest_sent(self, payload: dict):
         if payload.get("sent"):
             print("✓ 일일 위험 다이제스트 슬랙 발송")
-        elif not payload.get("ok"):
+        elif payload.get("ok"):
+            reason = payload.get("reason", "")
+            if reason == "unchanged":
+                print("· 다이제스트 생략: 직전 발송과 내용 동일")
+            else:
+                print("· 다이제스트 생략: 오늘 이미 발송됨")
+        else:
             print(f"! 다이제스트 발송 실패: {payload.get('error', '')}")
-        # sent False & ok True = 오늘 이미 발송됨(정상)
 
     def _cleanup_digest_thread(self):
         self._digest_thread = None
