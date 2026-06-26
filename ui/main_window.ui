@@ -1332,6 +1332,9 @@
            </item>
            <item>
             <widget class="QLineEdit" name="lineEdit_sweettracker_key">
+             <property name="echoMode">
+              <enum>QLineEdit::EchoMode::Password</enum>
+             </property>
              <property name="placeholderText">
               <string>발급받은 스마트택배 API 키를 입력하세요</string>
              </property>
