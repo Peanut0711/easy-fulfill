@@ -1365,6 +1365,56 @@
          </widget>
         </item>
         <item>
+         <layout class="QHBoxLayout" name="horizontalLayout_slack_row">
+          <property name="spacing">
+           <number>8</number>
+          </property>
+          <item>
+           <widget class="QLabel" name="label_slack_status">
+            <property name="sizePolicy">
+             <sizepolicy hsizetype="Expanding" vsizetype="Preferred">
+              <horstretch>1</horstretch>
+              <verstretch>0</verstretch>
+             </sizepolicy>
+            </property>
+            <property name="text">
+             <string>슬랙 알림: 미설정</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QCheckBox" name="checkBox_slack_auto">
+            <property name="text">
+             <string>정체 시 자동 알림</string>
+            </property>
+            <property name="toolTip">
+             <string>전체 새로고침 후 정체 건이 있으면 슬랙 채널로 자동 알림을 보냅니다.</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QPushButton" name="pushButton_slack_config">
+            <property name="text">
+             <string>슬랙 설정</string>
+            </property>
+            <property name="toolTip">
+             <string>슬랙 Incoming Webhook URL을 등록합니다(공유 시트에 저장 · 전원 적용).</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QPushButton" name="pushButton_slack_test">
+            <property name="text">
+             <string>테스트</string>
+            </property>
+            <property name="toolTip">
+             <string>설정한 슬랙 채널로 테스트 메시지를 보냅니다.</string>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </item>
+        <item>
          <layout class="QHBoxLayout" name="horizontalLayout_tracking_actions">
           <property name="spacing">
            <number>10</number>

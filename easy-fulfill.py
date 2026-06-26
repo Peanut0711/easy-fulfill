@@ -84,6 +84,7 @@ TRACKING_SHEET_PUSH_DEBOUNCE_MS = 1200
 CONFIG_SHEET_TITLE = "설정"
 CONFIG_SHEET_HEADERS = ["키", "값"]
 CONFIG_KEY_KPOST_REGKEY = "kpost_regkey"
+CONFIG_KEY_SLACK_WEBHOOK = "slack_webhook_url"
 # 시작 시 DB동기화 로딩 바: 약 2초+여유 안에 99%까지 선형 증가, 완료 시 즉시 100%
 STARTUP_SYNC_PROGRESS_CAP_MS = 2200
 STARTUP_SYNC_PROGRESS_TICK_MS = 40
@@ -626,13 +627,17 @@ def run_tracking_config_read_worker():
         gc = get_authorized_gspread_client()
         ws = _standalone_open_config_ws(gc)
         cfg = _read_config_values_map(ws)
-        return {"ok": True, "regkey": cfg.get(CONFIG_KEY_KPOST_REGKEY, "")}
+        return {
+            "ok": True,
+            "regkey": cfg.get(CONFIG_KEY_KPOST_REGKEY, ""),
+            "slack_webhook": cfg.get(CONFIG_KEY_SLACK_WEBHOOK, ""),
+        }
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
 
-def run_tracking_config_write_worker(regkey):
-    """공유 「설정」 탭에 회사 공통 우체국 regkey 를 upsert 합니다."""
+def run_tracking_config_write_worker(updates):
+    """공유 「설정」 탭에 {설정키: 값} 들을 upsert 합니다."""
     if gspread is None:
         return {"ok": False, "error": "gspread 패키지가 필요합니다. (pip install gspread)"}
     try:
@@ -648,9 +653,7 @@ def run_tracking_config_write_worker(regkey):
             k = (row[0] if row else "").strip()
             if k and k not in key_to_row:
                 key_to_row[k] = ridx
-        pairs = []
-        if regkey is not None:
-            pairs.append((CONFIG_KEY_KPOST_REGKEY, str(regkey)))
+        pairs = [(k, str(v)) for k, v in (updates or {}).items() if v is not None]
         new_rows = []
         batch_updates = []
         for k, v in pairs:
@@ -868,16 +871,35 @@ class TrackingConfigReadThread(QThread):
 
 
 class TrackingConfigWriteThread(QThread):
-    """공유 「설정」 탭에 회사 공통 regkey 를 백그라운드로 저장합니다."""
+    """공유 「설정」 탭에 {설정키: 값} 들을 백그라운드로 저장합니다."""
 
     result_ready = Signal(dict)
 
-    def __init__(self, regkey, parent=None):
+    def __init__(self, updates, parent=None):
         super().__init__(parent)
-        self._regkey = regkey
+        self._updates = updates
 
     def run(self):
-        self.result_ready.emit(run_tracking_config_write_worker(self._regkey))
+        self.result_ready.emit(run_tracking_config_write_worker(self._updates))
+
+
+class SlackSendThread(QThread):
+    """슬랙 웹훅으로 메시지를 백그라운드로 전송합니다."""
+
+    result_ready = Signal(dict)
+
+    def __init__(self, webhook_url, text, parent=None):
+        super().__init__(parent)
+        self._url = webhook_url
+        self._text = text
+
+    def run(self):
+        try:
+            import slack_notify
+        except ImportError as e:
+            self.result_ready.emit({"ok": False, "error": f"slack_notify 로드 실패: {e}"})
+            return
+        self.result_ready.emit(slack_notify.send_slack(self._url, self._text))
 
 
 class TrackingKeyValidateThread(QThread):
@@ -1338,6 +1360,8 @@ class MainWindow(QMainWindow):
         self._tracking_list_thread = None
         self._tracking_list_values = []  # 시트에서 읽어온 원본(헤더 포함)
         self._tracking_refresh_one_thread = None
+        self._slack_send_thread = None
+        self._slack_notify_after_reload = False
         # 우체국 등기 웹조회 URL 템플릿
         self._kpost_trace_web_url = (
             "https://service.epost.go.kr/trace.RetrieveDomRigiTraceList.comm"
@@ -1482,6 +1506,14 @@ class MainWindow(QMainWindow):
             sp.setValue(hours)
             sp.blockSignals(False)
 
+        # 슬랙 자동 알림 체크박스 + 상태 텍스트
+        if hasattr(self.ui, "checkBox_slack_auto"):
+            cba = self.ui.checkBox_slack_auto
+            cba.blockSignals(True)
+            cba.setChecked(bool(self.get_app_setting("slack_auto_notify", False)))
+            cba.blockSignals(False)
+        self._refresh_slack_status()
+
     def _on_stale_hours_changed(self, value):
         self.set_app_setting("stale_hours", int(value))
         self._populate_tracking_table()
@@ -1597,7 +1629,7 @@ class MainWindow(QMainWindow):
         self.set_app_setting("kpost_regkey", key)
         if gspread is None or self._tracking_config_write_thread is not None:
             return
-        thread = TrackingConfigWriteThread(key, self)
+        thread = TrackingConfigWriteThread({CONFIG_KEY_KPOST_REGKEY: key}, self)
         self._tracking_config_write_thread = thread
         thread.result_ready.connect(self._on_tracking_config_write_finished)
         thread.finished.connect(self._cleanup_tracking_config_write_thread)
@@ -1630,8 +1662,12 @@ class MainWindow(QMainWindow):
             if regkey:
                 # 공유 시트의 회사 공통 키를 로컬에 반영(우편번호 검색도 함께 사용)
                 self.set_app_setting("kpost_regkey", regkey)
+            slack = str(payload.get("slack_webhook", "") or "").strip()
+            if slack:
+                self.set_app_setting("slack_webhook_url", slack)
         # 공유 키 수신 후 유효성 상태 텍스트 갱신
         self._refresh_key_status()
+        self._refresh_slack_status()
 
     def _cleanup_tracking_config_read_thread(self):
         self._tracking_config_read_thread = None
@@ -1672,6 +1708,9 @@ class MainWindow(QMainWindow):
             return
         self._tracking_list_values = payload.get("values", []) or []
         self._populate_tracking_table()
+        if self._slack_notify_after_reload:
+            self._slack_notify_after_reload = False
+            self._maybe_notify_stale_to_slack()
 
     def _cleanup_tracking_list_thread(self):
         self._tracking_list_thread = None
@@ -1814,6 +1853,112 @@ class MainWindow(QMainWindow):
         btn = getattr(self.ui, "pushButton_tracking_refresh_one", None)
         if btn is not None:
             btn.setEnabled(True)
+
+    # ── 슬랙 알림 ────────────────────────────────────────────────────────
+    def _refresh_slack_status(self):
+        if not hasattr(self.ui, "label_slack_status"):
+            return
+        url = str(self.get_app_setting("slack_webhook_url", "") or "").strip()
+        self.ui.label_slack_status.setText("슬랙 알림: 설정됨 ✓" if url else "슬랙 알림: 미설정")
+
+    def _on_slack_config_clicked(self):
+        cur = str(self.get_app_setting("slack_webhook_url", "") or "")
+        url, ok = QInputDialog.getText(
+            self, "슬랙 웹훅 설정",
+            "슬랙 Incoming Webhook URL을 붙여넣으세요.\n"
+            "(https://hooks.slack.com/services/...  · 공유 시트에 저장되어 전원 적용)",
+            QLineEdit.EchoMode.Normal, cur,
+        )
+        if not ok:
+            return
+        url = url.strip()
+        self.set_app_setting("slack_webhook_url", url)
+        # 공유 「설정」 탭에도 반영(전원 자동 적용)
+        if gspread is not None and url and self._tracking_config_write_thread is None:
+            thread = TrackingConfigWriteThread({CONFIG_KEY_SLACK_WEBHOOK: url}, self)
+            self._tracking_config_write_thread = thread
+            thread.result_ready.connect(self._on_tracking_config_write_finished)
+            thread.finished.connect(self._cleanup_tracking_config_write_thread)
+            thread.finished.connect(thread.deleteLater)
+            thread.start()
+        self._refresh_slack_status()
+
+    def _on_slack_auto_toggled(self, state):
+        self.set_app_setting("slack_auto_notify", bool(state))
+
+    def _on_slack_test_clicked(self):
+        url = str(self.get_app_setting("slack_webhook_url", "") or "").strip()
+        if not url:
+            QMessageBox.information(self, "슬랙 테스트", "먼저 「슬랙 설정」에서 웹훅 URL을 등록해 주세요.")
+            return
+        t = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self._send_slack_async(f"✅ Easy Fulfill 배송모니터링 테스트 메시지입니다. ({t})", is_test=True)
+
+    def _send_slack_async(self, text, is_test=False):
+        url = str(self.get_app_setting("slack_webhook_url", "") or "").strip()
+        if not url or self._slack_send_thread is not None:
+            return
+        thread = SlackSendThread(url, text, self)
+        self._slack_send_thread = thread
+        thread.result_ready.connect(lambda p: self._on_slack_sent(p, is_test))
+        thread.finished.connect(self._cleanup_slack_send_thread)
+        thread.finished.connect(thread.deleteLater)
+        thread.start()
+
+    def _on_slack_sent(self, payload: dict, is_test: bool):
+        if payload.get("ok"):
+            if is_test:
+                QMessageBox.information(self, "슬랙 테스트", "전송 성공! 슬랙 채널을 확인해 주세요.")
+            else:
+                print("✓ 슬랙 알림 전송")
+        else:
+            err = payload.get("error", "")
+            if is_test:
+                QMessageBox.warning(self, "슬랙 테스트", f"전송 실패:\n\n{err}")
+            else:
+                print(f"! 슬랙 알림 전송 실패: {err}")
+
+    def _cleanup_slack_send_thread(self):
+        self._slack_send_thread = None
+
+    def _collect_stale_rows(self):
+        """현재 목록에서 정체(미완료 + 기준시간 무이동) 행을 모읍니다.
+        반환: (list[(등기번호, 수취인, 상태)], stale_hours)."""
+        values = self._tracking_list_values
+        data = values[1:] if len(values) > 1 else []
+        hours = 12
+        if hasattr(self.ui, "spinBox_stale_hours"):
+            hours = self.ui.spinBox_stale_hours.value()
+        now_dt = datetime.now()
+
+        def _cell(row, idx):
+            return row[idx] if idx < len(row) else ""
+
+        out = []
+        for row in data:
+            if _cell(row, 7).strip().upper() == "Y":
+                continue
+            ref = self._parse_event_dt(_cell(row, 11)) or self._parse_event_dt(_cell(row, 1))
+            if ref is not None and (now_dt - ref).total_seconds() > hours * 3600:
+                out.append((_cell(row, 0), _cell(row, 4), _cell(row, 6)))
+        return out, hours
+
+    def _maybe_notify_stale_to_slack(self):
+        """전체 새로고침 직후, 자동 알림이 켜져 있고 정체 건이 있으면 슬랙으로 푸시."""
+        if not bool(self.get_app_setting("slack_auto_notify", False)):
+            return
+        if not str(self.get_app_setting("slack_webhook_url", "") or "").strip():
+            return
+        stale, hours = self._collect_stale_rows()
+        if not stale:
+            return
+        t = datetime.now().strftime("%Y-%m-%d %H:%M")
+        lines = [f"⚠️ 배송 정체 {len(stale)}건 (기준 {hours}시간 무이동 · {t})"]
+        for tno, name, st in stale[:20]:
+            lines.append(f"• {tno} {name} — {st or '추적정보 없음'}")
+        if len(stale) > 20:
+            lines.append(f"… 외 {len(stale) - 20}건")
+        self._send_slack_async("\n".join(lines))
 
     def get_app_setting(self, key, default=None):
         """database/app_settings.json 에서 단일 설정값을 읽습니다."""
@@ -2751,7 +2896,8 @@ class MainWindow(QMainWindow):
                 if payload.get("aborted"):
                     msg += " · 우체국 부하로 일부 중단(ERR-131)"
                 self._set_tracking_summary(msg)
-            # 갱신된 상태를 표에 반영
+            # 갱신된 상태를 표에 반영하고, 반영 후 정체 건 슬랙 알림 검토
+            self._slack_notify_after_reload = True
             self._load_tracking_list()
         else:
             err = payload.get("error", "")
@@ -3073,6 +3219,12 @@ class MainWindow(QMainWindow):
             )
         if hasattr(self.ui, "spinBox_stale_hours"):
             self.ui.spinBox_stale_hours.valueChanged.connect(self._on_stale_hours_changed)
+        if hasattr(self.ui, "pushButton_slack_config"):
+            self.ui.pushButton_slack_config.clicked.connect(self._on_slack_config_clicked)
+        if hasattr(self.ui, "pushButton_slack_test"):
+            self.ui.pushButton_slack_test.clicked.connect(self._on_slack_test_clicked)
+        if hasattr(self.ui, "checkBox_slack_auto"):
+            self.ui.checkBox_slack_auto.stateChanged.connect(self._on_slack_auto_toggled)
 
         if hasattr(self.ui, "pushButton_google_reauth"):
             self.ui.pushButton_google_reauth.clicked.connect(self._on_google_reauth_clicked)
