@@ -1307,7 +1307,7 @@
         <item>
          <widget class="QLabel" name="label_tracking_intro">
           <property name="text">
-           <string>우체국 송장을 스마트택배 API로 조회해 공유 시트(「송장추적」 탭)의 배송 상태를 갱신합니다. 송장 불러오기·일괄발송 시 등기번호가 자동으로 누적됩니다.</string>
+           <string>우체국 OpenAPI(종추적조회)로 공유 시트(「송장추적」 탭)의 배송 상태를 갱신합니다. 송장 불러오기·일괄발송 시 등기번호가 자동으로 누적됩니다. (우편번호 검색과 동일한 우체국 인증키 사용)</string>
           </property>
           <property name="wordWrap">
            <bool>true</bool>
@@ -1317,7 +1317,7 @@
         <item>
          <widget class="QGroupBox" name="groupBox_tracking_api">
           <property name="title">
-           <string>스마트택배 API</string>
+           <string>우체국 OpenAPI 인증키</string>
           </property>
           <layout class="QHBoxLayout" name="horizontalLayout_tracking_api">
            <property name="spacing">
@@ -1332,7 +1332,7 @@
               </sizepolicy>
              </property>
              <property name="text">
-              <string>API 키: 확인 중…</string>
+              <string>인증키: 확인 중…</string>
              </property>
              <property name="wordWrap">
               <bool>true</bool>
@@ -1357,7 +1357,7 @@
               <string>키 변경</string>
              </property>
              <property name="toolTip">
-              <string>관리자용: 공유 API 키를 변경합니다. 변경 시 직원 전원에게 적용됩니다.</string>
+              <string>관리자용: 공유 우체국 인증키(regkey)를 변경합니다. 변경 시 직원 전원에게 적용됩니다.</string>
              </property>
             </widget>
            </item>
@@ -1387,7 +1387,7 @@
              <string>배송추적 새로고침</string>
             </property>
             <property name="toolTip">
-             <string>공유 시트의 미완료 송장을 스마트택배로 조회해 배송 상태를 갱신합니다.</string>
+             <string>공유 시트의 미완료 송장을 우체국 종추적조회로 조회해 배송 상태를 갱신합니다.</string>
             </property>
            </widget>
           </item>
@@ -1400,7 +1400,7 @@
              </sizepolicy>
             </property>
             <property name="text">
-             <string>배송추적: API 키 설정 후 새로고침을 눌러 주세요.</string>
+             <string>배송추적: 인증키 설정 후 새로고침을 눌러 주세요.</string>
             </property>
             <property name="wordWrap">
              <bool>true</bool>

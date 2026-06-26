@@ -77,13 +77,12 @@ TRACKING_SHEET_HEADERS = [
     "택배사코드", "배송상태", "완료여부", "마지막위치", "최근조회시각", "비고",
 ]
 TRACKING_SHEET_PUSH_DEBOUNCE_MS = 1200
-SWEETTRACKER_KPOST_T_CODE = "04"  # 우체국택배 (companylist로 최종 확정 필요)
-# 공유 설정 탭: 회사 공통 키(스마트택배 등)를 한 곳에 두고 직원 전원이 읽어 쓴다.
+# 공유 설정 탭: 회사 공통 우체국 OpenAPI 인증키(regkey)를 한 곳에 두고 직원 전원이 읽어 쓴다.
 # (퍼블릭 레포에 키를 넣지 않기 위함 — 키는 코드가 아니라 비공개 시트에 저장)
+# 우편번호 검색과 동일한 우체국 regkey를 종추적조회에도 사용한다(kpost_regkey).
 CONFIG_SHEET_TITLE = "설정"
 CONFIG_SHEET_HEADERS = ["키", "값"]
-CONFIG_KEY_SWEETTRACKER_KEY = "sweettracker_t_key"
-CONFIG_KEY_SWEETTRACKER_CODE = "sweettracker_t_code"
+CONFIG_KEY_KPOST_REGKEY = "kpost_regkey"
 # 시작 시 DB동기화 로딩 바: 약 2초+여유 안에 99%까지 선형 증가, 완료 시 즉시 100%
 STARTUP_SYNC_PROGRESS_CAP_MS = 2200
 STARTUP_SYNC_PROGRESS_TICK_MS = 40
@@ -384,7 +383,7 @@ def run_tracking_upsert_worker(records):
             else:
                 new_rows.append([
                     key, now, r["스토어"], r["주문번호"], r["수취인명"],
-                    SWEETTRACKER_KPOST_T_CODE, "", "", "", "", "",
+                    "우체국", "", "", "", "", "",
                 ])
                 key_to_row[key] = (None, None)  # 같은 배치 내 재등록 방지
                 registered += 1
@@ -397,10 +396,10 @@ def run_tracking_upsert_worker(records):
         return {"ok": False, "error": str(e)}
 
 
-def run_tracking_refresh_worker(t_key, t_code, progress_cb=None):
-    """「송장추적」 시트의 미완료 행만 골라 스마트택배로 조회하고 상태를 갱신합니다.
+def run_tracking_refresh_worker(regkey, progress_cb=None):
+    """「송장추적」 시트의 미완료 행만 골라 우체국 종추적조회로 상태를 갱신합니다.
     progress_cb(done, total)이 주어지면 진행 상황을 보고합니다.
-    반환 dict: ok, total, complete, progress, failed, checked — 또는 ok False, error.
+    반환 dict: ok, total, complete, progress, failed, checked, aborted — 또는 ok False, error.
     """
     if gspread is None:
         return {"ok": False, "error": "gspread 패키지가 필요합니다. (pip install gspread)"}
@@ -409,29 +408,26 @@ def run_tracking_refresh_worker(t_key, t_code, progress_cb=None):
     except ImportError as e:
         return {"ok": False, "error": str(e)}
     try:
-        import smart_tracker
+        import kpost_tracker
     except ImportError as e:
-        return {"ok": False, "error": f"smart_tracker 모듈을 불러올 수 없습니다: {e}"}
+        return {"ok": False, "error": f"kpost_tracker 모듈을 불러올 수 없습니다: {e}"}
     try:
         gc = get_authorized_gspread_client()
-        # 로컬에 키가 없으면 공유 「설정」 탭에서 회사 공통 키를 가져온다.
-        if not t_key:
+        # 로컬에 키가 없으면 공유 「설정」 탭에서 회사 공통 regkey 를 가져온다.
+        if not regkey:
             try:
                 cfg = _read_config_values_map(_standalone_open_config_ws(gc))
-                t_key = cfg.get(CONFIG_KEY_SWEETTRACKER_KEY, "") or t_key
-                t_code = t_code or cfg.get(CONFIG_KEY_SWEETTRACKER_CODE, "")
+                regkey = cfg.get(CONFIG_KEY_KPOST_REGKEY, "") or regkey
             except Exception:
                 pass
-        if not t_key:
-            return {"ok": False, "error": "스마트택배 API 키가 없습니다. 「배송추적」 탭에서 키를 입력하거나 관리자에게 문의하세요."}
-        if not t_code:
-            t_code = SWEETTRACKER_KPOST_T_CODE
+        if not regkey:
+            return {"ok": False, "error": "우체국 OpenAPI 인증키(regkey)가 없습니다. 「배송추적」 탭에서 키를 등록하거나 관리자에게 문의하세요."}
         ws = _standalone_open_tracking_ws(gc)
         values = ws.get_all_values()
         if len(values) <= 1:
             return {"ok": True, "total": 0, "complete": 0, "progress": 0,
-                    "failed": 0, "checked": 0}
-        # 미완료(완료여부 H != "Y") 행만 수집: (1-based row, 등기번호, 택배사코드)
+                    "failed": 0, "checked": 0, "aborted": False}
+        # 미완료(완료여부 H != "Y") 행만 수집: (1-based row, 등기번호)
         active = []
         for ridx, row in enumerate(values[1:], start=2):
             tno = (row[0] if len(row) > 0 else "").strip()
@@ -440,26 +436,44 @@ def run_tracking_refresh_worker(t_key, t_code, progress_cb=None):
             done = (row[7] if len(row) > 7 else "").strip().upper()
             if done == "Y":
                 continue
-            code = (row[5] if len(row) > 5 else "").strip() or t_code
-            active.append((ridx, tno, code))
+            active.append((ridx, tno))
         if not active:
             return {"ok": True, "total": 0, "complete": 0, "progress": 0,
-                    "failed": 0, "checked": 0}
+                    "failed": 0, "checked": 0, "aborted": False}
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         complete = progress = failed = 0
         batch_updates = []
         total_active = len(active)
-        for done_i, (ridx, tno, code) in enumerate(active, start=1):
+        aborted = False
+        checked = 0
+        for done_i, (ridx, tno) in enumerate(active, start=1):
             if progress_cb is not None:
                 try:
                     progress_cb(done_i, total_active)
                 except Exception:
                     pass
-            payload = smart_tracker.fetch_tracking_info(t_key, code, tno)
-            s = smart_tracker.summarize_tracking(payload)
+            s = kpost_tracker.summarize_tracking(regkey, tno)
+            checked += 1
+            code = (s.get("error_code") or "").upper()
             if not s.get("ok"):
+                # ERR-131(시스템 부하 차단): 더 호출하면 차단되므로 중단
+                if code == "ERR-131":
+                    aborted = True
+                    batch_updates.append({
+                        "range": f"J{ridx}:K{ridx}",
+                        "values": [[now, "우체국 시스템 부하로 조회 중단(ERR-131)"]],
+                    })
+                    break
+                # ERR-001(조회결과 없음): 아직 추적정보 없음 → 실패가 아님
+                if code == "ERR-001":
+                    progress += 1
+                    batch_updates.append({
+                        "range": f"G{ridx}:K{ridx}",
+                        "values": [["추적정보 없음", "N", "", now, ""]],
+                    })
+                    time.sleep(0.25)
+                    continue
                 failed += 1
-                # 비고(K)와 조회시각(J)만 갱신, 상태/완료는 보존
                 batch_updates.append({
                     "range": f"J{ridx}:K{ridx}",
                     "values": [[now, s.get("error", "조회 실패")]],
@@ -481,11 +495,12 @@ def run_tracking_refresh_worker(t_key, t_code, progress_cb=None):
             ws.batch_update(batch_updates, value_input_option="RAW")
         return {
             "ok": True,
-            "total": len(active),
+            "total": total_active,
             "complete": complete,
             "progress": progress,
             "failed": failed,
-            "checked": len(active),
+            "checked": checked,
+            "aborted": aborted,
         }
     except Exception as e:
         return {"ok": False, "error": str(e)}
@@ -535,8 +550,8 @@ def _read_config_values_map(ws):
 
 
 def run_tracking_config_read_worker():
-    """공유 「설정」 탭에서 회사 공통 키를 읽습니다.
-    반환 dict: ok, t_key, t_code — 또는 ok False, error.
+    """공유 「설정」 탭에서 회사 공통 우체국 regkey 를 읽습니다.
+    반환 dict: ok, regkey — 또는 ok False, error.
     """
     if gspread is None:
         return {"ok": False, "error": "gspread 패키지가 필요합니다. (pip install gspread)"}
@@ -548,17 +563,13 @@ def run_tracking_config_read_worker():
         gc = get_authorized_gspread_client()
         ws = _standalone_open_config_ws(gc)
         cfg = _read_config_values_map(ws)
-        return {
-            "ok": True,
-            "t_key": cfg.get(CONFIG_KEY_SWEETTRACKER_KEY, ""),
-            "t_code": cfg.get(CONFIG_KEY_SWEETTRACKER_CODE, ""),
-        }
+        return {"ok": True, "regkey": cfg.get(CONFIG_KEY_KPOST_REGKEY, "")}
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
 
-def run_tracking_config_write_worker(t_key, t_code):
-    """공유 「설정」 탭에 회사 공통 키를 upsert(없으면 추가, 있으면 갱신)합니다."""
+def run_tracking_config_write_worker(regkey):
+    """공유 「설정」 탭에 회사 공통 우체국 regkey 를 upsert 합니다."""
     if gspread is None:
         return {"ok": False, "error": "gspread 패키지가 필요합니다. (pip install gspread)"}
     try:
@@ -575,10 +586,8 @@ def run_tracking_config_write_worker(t_key, t_code):
             if k and k not in key_to_row:
                 key_to_row[k] = ridx
         pairs = []
-        if t_key is not None:
-            pairs.append((CONFIG_KEY_SWEETTRACKER_KEY, str(t_key)))
-        if t_code:
-            pairs.append((CONFIG_KEY_SWEETTRACKER_CODE, str(t_code)))
+        if regkey is not None:
+            pairs.append((CONFIG_KEY_KPOST_REGKEY, str(regkey)))
         new_rows = []
         batch_updates = []
         for k, v in pairs:
@@ -748,19 +757,18 @@ class TrackingUpsertThread(QThread):
 
 
 class TrackingRefreshThread(QThread):
-    """「송장추적」 시트 미완료 행을 스마트택배로 조회·갱신(백그라운드)."""
+    """「송장추적」 시트 미완료 행을 우체국 종추적조회로 조회·갱신(백그라운드)."""
 
     result_ready = Signal(dict)
     progress = Signal(int, int)  # (done, total)
 
-    def __init__(self, t_key, t_code, parent=None):
+    def __init__(self, regkey, parent=None):
         super().__init__(parent)
-        self._t_key = t_key
-        self._t_code = t_code
+        self._regkey = regkey
 
     def run(self):
         self.result_ready.emit(
-            run_tracking_refresh_worker(self._t_key, self._t_code, progress_cb=self.progress.emit)
+            run_tracking_refresh_worker(self._regkey, progress_cb=self.progress.emit)
         )
 
 
@@ -774,7 +782,7 @@ class TrackingListThread(QThread):
 
 
 class TrackingConfigReadThread(QThread):
-    """공유 「설정」 탭에서 회사 공통 키를 백그라운드로 읽습니다."""
+    """공유 「설정」 탭에서 회사 공통 regkey 를 백그라운드로 읽습니다."""
 
     result_ready = Signal(dict)
 
@@ -783,36 +791,35 @@ class TrackingConfigReadThread(QThread):
 
 
 class TrackingConfigWriteThread(QThread):
-    """공유 「설정」 탭에 회사 공통 키를 백그라운드로 저장합니다."""
+    """공유 「설정」 탭에 회사 공통 regkey 를 백그라운드로 저장합니다."""
 
     result_ready = Signal(dict)
 
-    def __init__(self, t_key, t_code, parent=None):
+    def __init__(self, regkey, parent=None):
         super().__init__(parent)
-        self._t_key = t_key
-        self._t_code = t_code
+        self._regkey = regkey
 
     def run(self):
-        self.result_ready.emit(run_tracking_config_write_worker(self._t_key, self._t_code))
+        self.result_ready.emit(run_tracking_config_write_worker(self._regkey))
 
 
 class TrackingKeyValidateThread(QThread):
-    """입력한 API 키가 유효한지(companylist 응답) 백그라운드로 검증합니다."""
+    """입력한 우체국 regkey 가 유효한지 백그라운드로 검증합니다."""
 
     result_ready = Signal(dict)
 
-    def __init__(self, t_key, parent=None):
+    def __init__(self, regkey, parent=None):
         super().__init__(parent)
-        self._t_key = t_key
+        self._regkey = regkey
 
     def run(self):
         try:
-            import smart_tracker
+            import kpost_tracker
         except ImportError as e:
-            self.result_ready.emit({"ok": False, "valid": False, "t_code": "",
-                                    "error": f"smart_tracker 로드 실패: {e}"})
+            self.result_ready.emit({"ok": False, "valid": False,
+                                    "error": f"kpost_tracker 로드 실패: {e}"})
             return
-        self.result_ready.emit(smart_tracker.validate_key(self._t_key))
+        self.result_ready.emit(kpost_tracker.validate_key(self._regkey))
 
 
 class DbSheetSyncThread(QThread):
@@ -1410,39 +1417,40 @@ class MainWindow(QMainWindow):
             self.ui.label_tracking_key_status.setText(text)
 
     def _refresh_key_status(self):
-        """저장된 키의 유효성을 백그라운드로 확인해 상태 텍스트만 갱신합니다."""
-        key = str(self.get_app_setting("sweettracker_t_key", "") or "").strip()
+        """저장된 우체국 인증키의 유효성을 백그라운드로 확인해 상태 텍스트만 갱신합니다."""
+        key = self._get_kpost_regkey()
         if not key:
-            self._set_key_status_text("API 키: 미설정 — 「키 변경」으로 등록하세요.")
+            self._set_key_status_text("인증키: 미설정 — 「키 변경」으로 등록하세요.")
             return
         if gspread is None:
-            self._set_key_status_text("API 키: 설정됨 (오프라인 — 유효성 미확인)")
+            self._set_key_status_text("인증키: 설정됨 (오프라인 — 유효성 미확인)")
             return
         if self._tracking_key_validate_thread is not None:
             return
-        self._set_key_status_text("API 키: 확인 중…")
+        self._set_key_status_text("인증키: 확인 중…")
         self._start_key_validation(key, mode="status")
 
     def _on_tracking_key_edit_clicked(self):
-        """관리자용: 작은 입력 다이얼로그로 새 키를 받아 검증 후 저장합니다.
+        """관리자용: 작은 입력 다이얼로그로 새 우체국 인증키를 받아 검증 후 저장합니다.
         일반 유저는 평소 키를 보거나 바꿀 필요가 없으므로 입력칸을 노출하지 않습니다."""
         if gspread is None:
-            QMessageBox.warning(self, "API 키 변경", "gspread 패키지가 필요합니다. (pip install gspread)")
+            QMessageBox.warning(self, "인증키 변경", "gspread 패키지가 필요합니다. (pip install gspread)")
             return
         if self._tracking_key_validate_thread is not None:
             return
         new_key, ok = QInputDialog.getText(
-            self, "API 키 변경",
-            "새 스마트택배 API 키를 입력하세요.\n(검증 후 직원 전원에게 적용됩니다)",
+            self, "우체국 OpenAPI 인증키 변경",
+            "새 우체국 OpenAPI 인증키(regkey, 30자리)를 입력하세요.\n"
+            "(검증 후 직원 전원에게 적용됩니다 · 우편번호 검색에도 함께 사용)",
             QLineEdit.EchoMode.Password, "",
         )
         if not ok:
             return
         new_key = new_key.strip()
         if not new_key:
-            QMessageBox.warning(self, "API 키 변경", "키가 비어 있습니다.")
+            QMessageBox.warning(self, "인증키 변경", "키가 비어 있습니다.")
             return
-        self._set_key_status_text("API 키: 검증 중…")
+        self._set_key_status_text("인증키: 검증 중…")
         self._start_key_validation(new_key, mode="save")
 
     def _start_key_validation(self, key, mode):
@@ -1468,39 +1476,30 @@ class MainWindow(QMainWindow):
         mode = getattr(self, "_key_validate_mode", "status")
         key = getattr(self, "_key_validate_pending_key", "")
         valid = bool(payload.get("ok") and payload.get("valid"))
-        code = str(payload.get("t_code", "") or "").strip()
         if mode == "save":
             if not valid:
                 err = payload.get("error", "유효하지 않은 키")
                 QMessageBox.warning(
-                    self, "API 키 검증 실패",
-                    f"이 키로 택배사 목록을 가져오지 못했습니다.\n\n{err}\n\n"
+                    self, "인증키 검증 실패",
+                    f"이 인증키로 우체국 종추적조회에 실패했습니다.\n\n{err}\n\n"
                     "키를 다시 확인해 주세요. (저장하지 않았습니다)",
                 )
-                self._set_key_status_text("API 키: 검증 실패 — 저장하지 않음")
+                self._set_key_status_text("인증키: 검증 실패 — 저장하지 않음")
                 return
-            self._commit_sweettracker_key(key, code)
-            self._set_key_status_text("API 키: 유효함 ✓ (저장됨 · 전원 적용)")
+            self._commit_kpost_regkey(key)
+            self._set_key_status_text("인증키: 유효함 ✓ (저장됨 · 전원 적용)")
         else:  # status
             if valid:
-                if code:
-                    self.set_app_setting("sweettracker_t_code", code)
-                self._set_key_status_text("API 키: 유효함 ✓")
+                self._set_key_status_text("인증키: 유효함 ✓")
             else:
-                self._set_key_status_text("API 키: 확인 실패 — 「키 변경」으로 다시 등록")
+                self._set_key_status_text("인증키: 확인 실패 — 「키 변경」으로 다시 등록")
 
-    def _commit_sweettracker_key(self, key, code):
-        """검증된 키를 로컬과 공유 「설정」 탭에 저장합니다."""
-        self.set_app_setting("sweettracker_t_key", key)
-        if code:
-            self.set_app_setting("sweettracker_t_code", code)
+    def _commit_kpost_regkey(self, key):
+        """검증된 우체국 regkey 를 로컬과 공유 「설정」 탭에 저장합니다."""
+        self.set_app_setting("kpost_regkey", key)
         if gspread is None or self._tracking_config_write_thread is not None:
             return
-        code_to_write = code or str(
-            self.get_app_setting("sweettracker_t_code", SWEETTRACKER_KPOST_T_CODE)
-            or SWEETTRACKER_KPOST_T_CODE
-        )
-        thread = TrackingConfigWriteThread(key, code_to_write, self)
+        thread = TrackingConfigWriteThread(key, self)
         self._tracking_config_write_thread = thread
         thread.result_ready.connect(self._on_tracking_config_write_finished)
         thread.finished.connect(self._cleanup_tracking_config_write_thread)
@@ -1509,7 +1508,7 @@ class MainWindow(QMainWindow):
 
     def _on_tracking_config_write_finished(self, payload: dict):
         if payload.get("ok"):
-            self._set_tracking_summary("API 키를 공유 시트에 저장했습니다. (직원 전원 자동 적용)")
+            self._set_tracking_summary("인증키를 공유 시트에 저장했습니다. (직원 전원 자동 적용)")
         else:
             print(f"! 공유 설정 저장 실패: {payload.get('error', '')}")
 
@@ -1529,12 +1528,10 @@ class MainWindow(QMainWindow):
 
     def _on_tracking_config_read_finished(self, payload: dict):
         if payload.get("ok"):
-            t_key = str(payload.get("t_key", "") or "").strip()
-            t_code = str(payload.get("t_code", "") or "").strip()
-            if t_code:
-                self.set_app_setting("sweettracker_t_code", t_code)
-            if t_key:
-                self.set_app_setting("sweettracker_t_key", t_key)
+            regkey = str(payload.get("regkey", "") or "").strip()
+            if regkey:
+                # 공유 시트의 회사 공통 키를 로컬에 반영(우편번호 검색도 함께 사용)
+                self.set_app_setting("kpost_regkey", regkey)
         # 공유 키 수신 후 유효성 상태 텍스트 갱신
         self._refresh_key_status()
 
@@ -2519,20 +2516,18 @@ class MainWindow(QMainWindow):
             self.ui.label_tracking_summary.setText(text)
 
     def on_refresh_tracking_clicked(self):
-        """미완료 송장만 스마트택배로 조회해 공유 시트의 배송상태를 갱신합니다."""
+        """미완료 송장만 우체국 종추적조회로 조회해 공유 시트의 배송상태를 갱신합니다."""
         if gspread is None:
             QMessageBox.warning(self, "배송추적", "gspread 패키지가 필요합니다. (pip install gspread)")
             return
         if self._tracking_refresh_thread is not None:
             return  # 이미 조회 중
-        # 로컬 키가 없어도 진행: 워커가 공유 「설정」 탭에서 회사 공통 키를 자동 조회한다.
-        t_key = str(self.get_app_setting("sweettracker_t_key", "") or "").strip()
-        t_code = str(self.get_app_setting("sweettracker_t_code", SWEETTRACKER_KPOST_T_CODE)
-                     or SWEETTRACKER_KPOST_T_CODE).strip()
+        # 로컬 키가 없어도 진행: 워커가 공유 「설정」 탭에서 회사 공통 regkey 를 자동 조회한다.
+        regkey = self._get_kpost_regkey()
         if hasattr(self.ui, "pushButton_refresh_tracking"):
             self.ui.pushButton_refresh_tracking.setEnabled(False)
         self._set_tracking_summary("배송추적 조회 중…")
-        thread = TrackingRefreshThread(t_key, t_code, self)
+        thread = TrackingRefreshThread(regkey, self)
         self._tracking_refresh_thread = thread
         thread.progress.connect(self._on_tracking_refresh_progress)
         thread.result_ready.connect(self._on_tracking_refresh_finished)
@@ -2550,11 +2545,14 @@ class MainWindow(QMainWindow):
                 self._set_tracking_summary("추적할 미완료 송장이 없습니다.")
             else:
                 t = datetime.now().strftime("%H:%M:%S")
-                self._set_tracking_summary(
+                msg = (
                     f"총 {total} / 완료 {payload.get('complete', 0)} / "
                     f"진행 {payload.get('progress', 0)} / 실패 {payload.get('failed', 0)} "
                     f"(갱신 {t})"
                 )
+                if payload.get("aborted"):
+                    msg += " · 우체국 부하로 일부 중단(ERR-131)"
+                self._set_tracking_summary(msg)
             # 갱신된 상태를 표에 반영
             self._load_tracking_list()
         else:
