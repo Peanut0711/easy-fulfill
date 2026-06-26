@@ -759,6 +759,25 @@ class TrackingConfigWriteThread(QThread):
         self.result_ready.emit(run_tracking_config_write_worker(self._t_key, self._t_code))
 
 
+class TrackingKeyValidateThread(QThread):
+    """입력한 API 키가 유효한지(companylist 응답) 백그라운드로 검증합니다."""
+
+    result_ready = Signal(dict)
+
+    def __init__(self, t_key, parent=None):
+        super().__init__(parent)
+        self._t_key = t_key
+
+    def run(self):
+        try:
+            import smart_tracker
+        except ImportError as e:
+            self.result_ready.emit({"ok": False, "valid": False, "t_code": "",
+                                    "error": f"smart_tracker 로드 실패: {e}"})
+            return
+        self.result_ready.emit(smart_tracker.validate_key(self._t_key))
+
+
 class DbSheetSyncThread(QThread):
     """database 폴더 내보내기 → 스프레드시트 신규 행 append (백그라운드)."""
 
@@ -1190,6 +1209,9 @@ class MainWindow(QMainWindow):
         # 공유 「설정」 탭 키 읽기/쓰기 단일 실행 추적
         self._tracking_config_read_thread = None
         self._tracking_config_write_thread = None
+        # API 키 변경(읽기전용 잠금해제·검증) 상태
+        self._tracking_key_validate_thread = None
+        self._tracking_key_backup = None
 
         self.load_ui()
         self.setup_connections()
@@ -1350,20 +1372,100 @@ class MainWindow(QMainWindow):
         except Exception as e:
             print(f"! 앱 설정 저장 중 오류: {e}")
 
-    def _on_sweettracker_key_edited(self):
-        """스마트택배 API 키 입력을 로컬에 저장하고, 공유 「설정」 탭에도 반영합니다.
-        공유 시트에 저장하면 직원 전원이 자동으로 같은 키를 사용하게 됩니다."""
-        if not hasattr(self.ui, "lineEdit_sweettracker_key"):
+    def _set_key_field_editable(self, editable):
+        """API 키 입력칸을 편집 가능/읽기전용으로 전환하고 버튼 라벨을 맞춥니다."""
+        le = getattr(self.ui, "lineEdit_sweettracker_key", None)
+        btn = getattr(self.ui, "pushButton_tracking_key_edit", None)
+        if le is not None:
+            le.setReadOnly(not editable)
+        if btn is not None:
+            btn.setText("저장" if editable else "키 변경")
+
+    def _on_tracking_key_edit_clicked(self):
+        """「키 변경」(보기→편집, 확인) / 「저장」(편집→검증 후 저장) 토글."""
+        le = getattr(self.ui, "lineEdit_sweettracker_key", None)
+        if le is None:
             return
-        key = self.ui.lineEdit_sweettracker_key.text().strip()
+        if le.isReadOnly():
+            # 보기 모드 → 편집 모드(우발적 변경 방지용 확인)
+            reply = QMessageBox.question(
+                self, "API 키 변경",
+                "공유 API 키를 변경하면 직원 전원에게 적용됩니다.\n계속하시겠습니까?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+            self._tracking_key_backup = le.text()
+            self._set_key_field_editable(True)
+            le.setFocus()
+            le.selectAll()
+            self._set_tracking_summary("새 API 키를 입력하고 「저장」을 누르세요.")
+            return
+        # 편집 모드 → 저장(검증 선행)
+        new_key = le.text().strip()
+        if not new_key:
+            QMessageBox.warning(self, "API 키 변경", "키가 비어 있습니다. 입력 후 다시 저장해 주세요.")
+            return
+        if new_key == str(self._tracking_key_backup or "").strip():
+            self._set_key_field_editable(False)
+            self._set_tracking_summary("변경 사항이 없습니다.")
+            return
+        if gspread is None:
+            QMessageBox.warning(self, "API 키 변경", "gspread 패키지가 필요합니다. (pip install gspread)")
+            return
+        if self._tracking_key_validate_thread is not None:
+            return
+        btn = getattr(self.ui, "pushButton_tracking_key_edit", None)
+        if btn is not None:
+            btn.setEnabled(False)
+        self._set_tracking_summary("API 키 검증 중…")
+        thread = TrackingKeyValidateThread(new_key, self)
+        self._tracking_key_validate_thread = thread
+        thread.result_ready.connect(self._on_key_validate_finished)
+        thread.finished.connect(self._cleanup_key_validate_thread)
+        thread.finished.connect(thread.deleteLater)
+        thread.start()
+
+    def _cleanup_key_validate_thread(self):
+        self._tracking_key_validate_thread = None
+        btn = getattr(self.ui, "pushButton_tracking_key_edit", None)
+        if btn is not None:
+            btn.setEnabled(True)
+
+    def _on_key_validate_finished(self, payload: dict):
+        le = getattr(self.ui, "lineEdit_sweettracker_key", None)
+        if le is None:
+            return
+        new_key = le.text().strip()
+        if not payload.get("ok") or not payload.get("valid"):
+            err = payload.get("error", "유효하지 않은 키")
+            QMessageBox.warning(
+                self, "API 키 검증 실패",
+                f"이 키로 택배사 목록을 가져오지 못했습니다.\n\n{err}\n\n"
+                "키를 다시 확인해 주세요. (저장하지 않았습니다)",
+            )
+            self._set_tracking_summary("키 검증 실패 — 저장하지 않았습니다.")
+            return  # 편집 모드 유지(사용자가 수정하도록)
+        # 검증 성공 → 로컬+공유 시트 저장 후 잠금
+        code = str(payload.get("t_code", "") or "").strip()
+        self._commit_sweettracker_key(new_key, code)
+        self._tracking_key_backup = new_key
+        self._set_key_field_editable(False)
+        self._set_tracking_summary("API 키 검증·저장 완료 (직원 전원 자동 적용).")
+
+    def _commit_sweettracker_key(self, key, code):
+        """검증된 키를 로컬과 공유 「설정」 탭에 저장합니다."""
         self.set_app_setting("sweettracker_t_key", key)
-        if not key:
-            return
+        if code:
+            self.set_app_setting("sweettracker_t_code", code)
         if gspread is None or self._tracking_config_write_thread is not None:
             return
-        code = str(self.get_app_setting("sweettracker_t_code", SWEETTRACKER_KPOST_T_CODE)
-                   or SWEETTRACKER_KPOST_T_CODE)
-        thread = TrackingConfigWriteThread(key, code, self)
+        code_to_write = code or str(
+            self.get_app_setting("sweettracker_t_code", SWEETTRACKER_KPOST_T_CODE)
+            or SWEETTRACKER_KPOST_T_CODE
+        )
+        thread = TrackingConfigWriteThread(key, code_to_write, self)
         self._tracking_config_write_thread = thread
         thread.result_ready.connect(self._on_tracking_config_write_finished)
         thread.finished.connect(self._cleanup_tracking_config_write_thread)
@@ -1401,7 +1503,8 @@ class MainWindow(QMainWindow):
             self.set_app_setting("sweettracker_t_key", t_key)
             if hasattr(self.ui, "lineEdit_sweettracker_key"):
                 w = self.ui.lineEdit_sweettracker_key
-                if w.text().strip() != t_key:
+                # 사용자가 편집 중(잠금해제 상태)이면 입력을 덮어쓰지 않음
+                if w.isReadOnly() and w.text().strip() != t_key:
                     w.blockSignals(True)
                     w.setText(t_key)
                     w.blockSignals(False)
@@ -2620,9 +2723,9 @@ class MainWindow(QMainWindow):
 
         if hasattr(self.ui, "pushButton_refresh_tracking"):
             self.ui.pushButton_refresh_tracking.clicked.connect(self.on_refresh_tracking_clicked)
-        if hasattr(self.ui, "lineEdit_sweettracker_key"):
-            self.ui.lineEdit_sweettracker_key.editingFinished.connect(
-                self._on_sweettracker_key_edited
+        if hasattr(self.ui, "pushButton_tracking_key_edit"):
+            self.ui.pushButton_tracking_key_edit.clicked.connect(
+                self._on_tracking_key_edit_clicked
             )
 
         if hasattr(self.ui, "pushButton_google_reauth"):

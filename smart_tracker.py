@@ -57,6 +57,27 @@ def find_kpost_t_code(t_key):
     return DEFAULT_KPOST_T_CODE
 
 
+def validate_key(t_key):
+    """API 키 유효성 검증. companylist 가 정상 응답하고 택배사 목록이 있으면 유효.
+    반환: {"ok","valid","t_code"(우체국),"error"}."""
+    key = str(t_key or "").strip()
+    if not key:
+        return {"ok": True, "valid": False, "t_code": "", "error": "키가 비어 있습니다."}
+    res = fetch_company_list(key)
+    if not res.get("ok"):
+        return {"ok": False, "valid": False, "t_code": "", "error": res.get("error", "조회 실패")}
+    companies = res.get("companies", [])
+    if not companies:
+        return {"ok": True, "valid": False, "t_code": "",
+                "error": "택배사 목록이 비어 있습니다(키가 무효일 수 있습니다)."}
+    code = ""
+    for c in companies:
+        if "우체국" in str(c.get("Name", "")):
+            code = str(c.get("Code", ""))
+            break
+    return {"ok": True, "valid": True, "t_code": code or DEFAULT_KPOST_T_CODE, "error": ""}
+
+
 def fetch_tracking_info(t_key, t_code, t_invoice):
     """단일 등기번호 배송 상태 조회. 원본 응답 dict 를 반환(에러 시 status=False 포함)."""
     _require_requests()
