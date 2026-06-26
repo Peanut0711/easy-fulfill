@@ -1405,9 +1405,9 @@ class MainWindow(QMainWindow):
         badge.setAlignment(Qt.AlignCenter)
         bf = QFont()
         bf.setFamilies(
-            ["Bahnschrift", "맑은 고딕", "Malgun Gothic", "Segoe UI Semibold", "sans-serif"]
+            ["맑은 고딕", "Malgun Gothic", "Segoe UI Semibold", "Bahnschrift", "sans-serif"]
         )
-        bf.setPixelSize(16)
+        bf.setPointSize(12)
         bf.setWeight(QFont.Weight.DemiBold)
         bf.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 2.2)
         badge.setFont(bf)
@@ -1417,9 +1417,9 @@ class MainWindow(QMainWindow):
         title.setAlignment(Qt.AlignCenter)
         title_font = QFont()
         title_font.setFamilies(
-            ["Bahnschrift", "맑은 고딕", "Malgun Gothic", "Segoe UI Variable Display", "sans-serif"]
+            ["맑은 고딕", "Malgun Gothic", "Segoe UI", "Bahnschrift", "Segoe UI Variable Display", "sans-serif"]
         )
-        title_font.setPixelSize(24)
+        title_font.setPointSize(18)
         title_font.setWeight(QFont.Weight.DemiBold)
         title_font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 1.0)
         title.setFont(title_font)
@@ -1428,7 +1428,7 @@ class MainWindow(QMainWindow):
         sub = QLabel("Google 시트와 주문 인덱스를 동기화합니다.")
         sub.setAlignment(Qt.AlignCenter)
         sub_font = QFont(title_font)
-        sub_font.setPixelSize(14)
+        sub_font.setPointSize(11)
         sub_font.setWeight(QFont.Weight.Normal)
         sub_font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 0.25)
         sub.setFont(sub_font)
@@ -1471,7 +1471,7 @@ class MainWindow(QMainWindow):
         hint = QLabel("환경에 따라 수 초 걸릴 수 있습니다.")
         hint.setAlignment(Qt.AlignCenter)
         hf = QFont(sub_font)
-        hf.setPixelSize(12)
+        hf.setPointSize(9)
         hint.setFont(hf)
         hint.setStyleSheet("color: #8896a3; margin-top: 4px;")
         hint.setWordWrap(True)
@@ -1533,9 +1533,9 @@ class MainWindow(QMainWindow):
         self._busy_overlay_title.setAlignment(Qt.AlignCenter)
         tf = QFont()
         tf.setFamilies(
-            ["Bahnschrift", "맑은 고딕", "Malgun Gothic", "Segoe UI Variable Display", "sans-serif"]
+            ["맑은 고딕", "Malgun Gothic", "Segoe UI", "Bahnschrift", "Segoe UI Variable Display", "sans-serif"]
         )
-        tf.setPixelSize(18)
+        tf.setPointSize(13)
         tf.setWeight(QFont.Weight.DemiBold)
         self._busy_overlay_title.setFont(tf)
         self._busy_overlay_title.setStyleSheet("color: #1a202c;")
@@ -1543,7 +1543,7 @@ class MainWindow(QMainWindow):
         self._busy_overlay_sub = QLabel("")
         self._busy_overlay_sub.setAlignment(Qt.AlignCenter)
         sf = QFont(tf)
-        sf.setPixelSize(13)
+        sf.setPointSize(10)
         sf.setWeight(QFont.Weight.Normal)
         self._busy_overlay_sub.setFont(sf)
         self._busy_overlay_sub.setStyleSheet("color: #5c6b7a;")
@@ -5789,6 +5789,11 @@ class MainWindow(QMainWindow):
 
 def main():
     print("프로그램 시작")
+    # 고DPI(125%/150% 등 배율) 환경에서 글자/위젯이 잘리거나 창 밖으로 넘치는 문제 방지.
+    # QApplication 생성 전에 라운딩 정책을 지정해야 적용됨.
+    QApplication.setHighDpiScaleFactorRoundingPolicy(
+        Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
+    )
     app = QApplication(sys.argv)
     window = MainWindow()
     window.show()
