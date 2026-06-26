@@ -1686,6 +1686,16 @@ class MainWindow(QMainWindow):
         if self._dlg_slack_status is not None:
             self._dlg_slack_status.setText(f"슬랙 알림: {self._slack_status_text}")
 
+    def _on_tracking_help_clicked(self):
+        """[?] 버튼 — 배송추적 사용 안내를 팝업으로 보여줍니다(평소엔 숨김)."""
+        QMessageBox.information(
+            self, "배송추적 사용 안내",
+            "우체국 OpenAPI(종추적조회)로 공유 시트(「송장추적」 탭)의 배송 상태를 갱신합니다.\n"
+            "송장 불러오기·일괄발송 시 등기번호가 자동으로 누적됩니다.\n"
+            "(우편번호 검색과 동일한 우체국 인증키 사용)\n\n"
+            "※ 표에서 행을 더블클릭하면 해당 등기번호의 우체국 배송조회(상세) 웹페이지가 열립니다.",
+        )
+
     def _open_tracking_settings_dialog(self):
         """우체국 인증키·슬랙 설정 팝업을 엽니다(작은 버튼에서 호출)."""
         if self._tracking_settings_dialog is None:
@@ -3485,6 +3495,8 @@ class MainWindow(QMainWindow):
 
         if hasattr(self.ui, "pushButton_refresh_tracking"):
             self.ui.pushButton_refresh_tracking.clicked.connect(self.on_refresh_tracking_clicked)
+        if hasattr(self.ui, "pushButton_tracking_help"):
+            self.ui.pushButton_tracking_help.clicked.connect(self._on_tracking_help_clicked)
         if hasattr(self.ui, "pushButton_tracking_settings"):
             self.ui.pushButton_tracking_settings.clicked.connect(
                 self._open_tracking_settings_dialog
