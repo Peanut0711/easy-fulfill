@@ -4241,12 +4241,21 @@ class MainWindow(QMainWindow):
             }
         """)
         
+        # 일정 시간 후 상태바 메시지를 비우는 단발 타이머
+        # (아이콘 호버 시 표시되는 StatusTip이 마우스를 떼도 계속 남아 있는 문제 해결)
+        self._status_clear_timer = QTimer(self)
+        self._status_clear_timer.setSingleShot(True)
+        self._status_clear_timer.timeout.connect(lambda: self.status_label.setText(""))
+        STATUS_AUTO_CLEAR_MS = 3000  # 3초 후 자동으로 사라짐
+
         def update_status_label(message):
             """상태바 메시지 업데이트 시 레이블도 함께 업데이트"""
             if message:  # 메시지가 있을 때만 업데이트
                 self.status_label.setText(message)
                 statusbar.clearMessage()  # 기본 메시지 클리어
-        
+                # 일정 시간 후 자동으로 메시지 제거
+                self._status_clear_timer.start(STATUS_AUTO_CLEAR_MS)
+
         # 상태바 메시지 변경 시그널 연결
         statusbar.messageChanged.connect(update_status_label)
         statusbar.showMessage("준비")  # 초기 메시지 설정
