@@ -75,6 +75,7 @@ TRACKING_SHEET_TITLE = "송장추적"
 TRACKING_SHEET_HEADERS = [
     "등기번호", "등록일시", "스토어", "주문번호", "수취인명",
     "택배사코드", "배송상태", "완료여부", "마지막위치", "최근조회시각", "비고",
+    "최근이벤트시각",
 ]
 TRACKING_SHEET_PUSH_DEBOUNCE_MS = 1200
 # 공유 설정 탭: 회사 공통 우체국 OpenAPI 인증키(regkey)를 한 곳에 두고 직원 전원이 읽어 쓴다.
@@ -383,7 +384,7 @@ def run_tracking_upsert_worker(records):
             else:
                 new_rows.append([
                     key, now, r["스토어"], r["주문번호"], r["수취인명"],
-                    "우체국", "", "", "", "", "",
+                    "우체국", "", "", "", "", "", "",
                 ])
                 key_to_row[key] = (None, None)  # 같은 배치 내 재등록 방지
                 registered += 1
@@ -485,10 +486,11 @@ def run_tracking_refresh_worker(regkey, progress_cb=None):
                 complete += 1
             else:
                 progress += 1
-            # G:K = 배송상태, 완료여부, 마지막위치, 최근조회시각, 비고
+            # G:L = 배송상태, 완료여부, 마지막위치, 최근조회시각, 비고, 최근이벤트시각
             batch_updates.append({
-                "range": f"G{ridx}:K{ridx}",
-                "values": [[s.get("status", ""), done_yn, s.get("where", ""), now, ""]],
+                "range": f"G{ridx}:L{ridx}",
+                "values": [[s.get("status", ""), done_yn, s.get("where", ""),
+                            now, "", s.get("time", "")]],
             })
             time.sleep(0.25)
         if batch_updates:
@@ -557,8 +559,9 @@ def run_tracking_refresh_one_worker(regkey, regino):
             return {"ok": True, "regino": regino, "status": "(조회 실패)",
                     "complete": False, "note": s.get("error", "")}
         done_yn = "Y" if s.get("complete") else "N"
-        ws.batch_update([{"range": f"G{ridx}:K{ridx}",
-                          "values": [[s.get("status", ""), done_yn, s.get("where", ""), now, ""]]}],
+        ws.batch_update([{"range": f"G{ridx}:L{ridx}",
+                          "values": [[s.get("status", ""), done_yn, s.get("where", ""),
+                                      now, "", s.get("time", "")]]}],
                         value_input_option="RAW")
         return {"ok": True, "regino": regino, "status": s.get("status", ""),
                 "complete": s.get("complete", False)}
@@ -1630,7 +1633,8 @@ class MainWindow(QMainWindow):
     # 표시 컬럼: (시트 컬럼 인덱스, 헤더 라벨)
     _TRACKING_TABLE_COLUMNS = [
         (0, "등기번호"), (4, "수취인명"), (2, "스토어"), (3, "주문번호"),
-        (6, "배송상태"), (7, "완료"), (8, "마지막위치"), (9, "최근조회"), (10, "비고"),
+        (6, "배송상태"), (7, "완료"), (8, "마지막위치"),
+        (11, "최근이벤트"), (9, "최근조회"), (10, "비고"),
     ]
 
     def _load_tracking_list(self):
