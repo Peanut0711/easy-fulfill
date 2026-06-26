@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QFileDialog, QMessageB
                               QInputDialog, QLineEdit, QTableWidgetItem, QLabel, 
                               QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QWidget,
                               QProgressBar, QFrame, QGraphicsOpacityEffect, QListWidget,
-                              QAbstractItemView)
+                              QAbstractItemView, QGroupBox, QCheckBox)
 from PySide6.QtUiTools import QUiLoader
 from PySide6.QtCore import (
     QFile,
@@ -1471,6 +1471,14 @@ class MainWindow(QMainWindow):
         self._slack_send_thread = None
         self._digest_thread = None
         self._slack_notify_after_reload = False
+        # API·알림 설정 팝업(작업자에겐 숨기고 작은 버튼으로만 노출)
+        self._tracking_settings_dialog = None
+        self._dlg_key_status = None
+        self._dlg_slack_status = None
+        self._dlg_slack_auto = None
+        self._dlg_key_btn = None
+        self._key_status_text = "확인 중…"
+        self._slack_status_text = "미설정"
         # 우체국 등기 웹조회 URL 템플릿
         self._kpost_trace_web_url = (
             "https://service.epost.go.kr/trace.RetrieveDomRigiTraceList.comm"
@@ -1615,12 +1623,7 @@ class MainWindow(QMainWindow):
             sp.setValue(hours)
             sp.blockSignals(False)
 
-        # 슬랙 자동 알림 체크박스 + 상태 텍스트
-        if hasattr(self.ui, "checkBox_slack_auto"):
-            cba = self.ui.checkBox_slack_auto
-            cba.blockSignals(True)
-            cba.setChecked(bool(self.get_app_setting("slack_auto_notify", False)))
-            cba.blockSignals(False)
+        # 슬랙 상태 텍스트 갱신(자동 알림 체크박스는 설정 팝업에서 로드)
         self._refresh_slack_status()
 
     def _on_stale_hours_changed(self, value):
@@ -1652,8 +1655,92 @@ class MainWindow(QMainWindow):
             print(f"! 앱 설정 저장 중 오류: {e}")
 
     def _set_key_status_text(self, text):
-        if hasattr(self.ui, "label_tracking_key_status"):
-            self.ui.label_tracking_key_status.setText(text)
+        t = (text or "").strip()
+        for p in ("인증키: ", "인증키:"):
+            if t.startswith(p):
+                t = t[len(p):].strip()
+                break
+        self._key_status_text = t
+        self._update_status_displays()
+
+    def _key_status_short(self):
+        t = self._key_status_text
+        if "유효함" in t:
+            return "유효함 ✓"
+        if "미설정" in t:
+            return "미설정"
+        if "확인 중" in t or "검증 중" in t:
+            return "확인 중…"
+        if "실패" in t:
+            return "확인 실패"
+        return t
+
+    def _update_status_displays(self):
+        """밖(작은 한 줄)·팝업 라벨을 함께 갱신."""
+        if hasattr(self.ui, "label_tracking_status_compact"):
+            self.ui.label_tracking_status_compact.setText(
+                f"우체국 API: {self._key_status_short()}  ·  슬랙: {self._slack_status_text}"
+            )
+        if self._dlg_key_status is not None:
+            self._dlg_key_status.setText(f"인증키: {self._key_status_text}")
+        if self._dlg_slack_status is not None:
+            self._dlg_slack_status.setText(f"슬랙 알림: {self._slack_status_text}")
+
+    def _open_tracking_settings_dialog(self):
+        """우체국 인증키·슬랙 설정 팝업을 엽니다(작은 버튼에서 호출)."""
+        if self._tracking_settings_dialog is None:
+            dlg = QDialog(self)
+            dlg.setWindowTitle("우체국 API · 슬랙 알림 설정")
+            dlg.setMinimumWidth(440)
+            outer = QVBoxLayout(dlg)
+
+            gb_key = QGroupBox("우체국 OpenAPI 인증키")
+            kl = QHBoxLayout(gb_key)
+            self._dlg_key_status = QLabel(f"인증키: {self._key_status_text}")
+            self._dlg_key_status.setWordWrap(True)
+            btn_key = QPushButton("키 변경")
+            btn_key.setToolTip("관리자용: 공유 우체국 인증키(regkey)를 변경합니다. 전원 적용.")
+            btn_key.clicked.connect(self._on_tracking_key_edit_clicked)
+            self._dlg_key_btn = btn_key
+            kl.addWidget(self._dlg_key_status, 1)
+            kl.addWidget(btn_key)
+            outer.addWidget(gb_key)
+
+            gb_slack = QGroupBox("슬랙 알림")
+            sl = QVBoxLayout(gb_slack)
+            self._dlg_slack_status = QLabel(f"슬랙 알림: {self._slack_status_text}")
+            sl.addWidget(self._dlg_slack_status)
+            srow = QHBoxLayout()
+            self._dlg_slack_auto = QCheckBox("위험 일일 알림(하루 1통)")
+            self._dlg_slack_auto.setChecked(bool(self.get_app_setting("slack_auto_notify", False)))
+            self._dlg_slack_auto.setToolTip(
+                "전체 새로고침 시 위험 건이 있으면 하루 1통만 슬랙으로 보냅니다(중복 방지)."
+            )
+            self._dlg_slack_auto.stateChanged.connect(self._on_slack_auto_toggled)
+            btn_cfg = QPushButton("슬랙 설정")
+            btn_cfg.clicked.connect(self._on_slack_config_clicked)
+            btn_test = QPushButton("테스트")
+            btn_test.clicked.connect(self._on_slack_test_clicked)
+            srow.addWidget(self._dlg_slack_auto)
+            srow.addStretch(1)
+            srow.addWidget(btn_cfg)
+            srow.addWidget(btn_test)
+            sl.addLayout(srow)
+            outer.addWidget(gb_slack)
+
+            btn_close = QPushButton("닫기")
+            btn_close.clicked.connect(dlg.accept)
+            outer.addWidget(btn_close, alignment=Qt.AlignmentFlag.AlignRight)
+            self._tracking_settings_dialog = dlg
+
+        self._update_status_displays()
+        if self._dlg_slack_auto is not None:
+            self._dlg_slack_auto.blockSignals(True)
+            self._dlg_slack_auto.setChecked(bool(self.get_app_setting("slack_auto_notify", False)))
+            self._dlg_slack_auto.blockSignals(False)
+        self._tracking_settings_dialog.show()
+        self._tracking_settings_dialog.raise_()
+        self._tracking_settings_dialog.activateWindow()
 
     def _refresh_key_status(self):
         """저장된 우체국 인증키의 유효성을 백그라운드로 확인해 상태 텍스트만 갱신합니다."""
@@ -1695,9 +1782,8 @@ class MainWindow(QMainWindow):
     def _start_key_validation(self, key, mode):
         self._key_validate_mode = mode
         self._key_validate_pending_key = key
-        btn = getattr(self.ui, "pushButton_tracking_key_edit", None)
-        if btn is not None:
-            btn.setEnabled(False)
+        if self._dlg_key_btn is not None:
+            self._dlg_key_btn.setEnabled(False)
         thread = TrackingKeyValidateThread(key, self)
         self._tracking_key_validate_thread = thread
         thread.result_ready.connect(self._on_key_validate_finished)
@@ -1707,9 +1793,8 @@ class MainWindow(QMainWindow):
 
     def _cleanup_key_validate_thread(self):
         self._tracking_key_validate_thread = None
-        btn = getattr(self.ui, "pushButton_tracking_key_edit", None)
-        if btn is not None:
-            btn.setEnabled(True)
+        if self._dlg_key_btn is not None:
+            self._dlg_key_btn.setEnabled(True)
 
     def _on_key_validate_finished(self, payload: dict):
         mode = getattr(self, "_key_validate_mode", "status")
@@ -1987,10 +2072,9 @@ class MainWindow(QMainWindow):
 
     # ── 슬랙 알림 ────────────────────────────────────────────────────────
     def _refresh_slack_status(self):
-        if not hasattr(self.ui, "label_slack_status"):
-            return
         url = str(self.get_app_setting("slack_webhook_url", "") or "").strip()
-        self.ui.label_slack_status.setText("슬랙 알림: 설정됨 ✓" if url else "슬랙 알림: 미설정")
+        self._slack_status_text = "설정됨 ✓" if url else "미설정"
+        self._update_status_displays()
 
     def _on_slack_config_clicked(self):
         cur = str(self.get_app_setting("slack_webhook_url", "") or "")
@@ -3401,9 +3485,9 @@ class MainWindow(QMainWindow):
 
         if hasattr(self.ui, "pushButton_refresh_tracking"):
             self.ui.pushButton_refresh_tracking.clicked.connect(self.on_refresh_tracking_clicked)
-        if hasattr(self.ui, "pushButton_tracking_key_edit"):
-            self.ui.pushButton_tracking_key_edit.clicked.connect(
-                self._on_tracking_key_edit_clicked
+        if hasattr(self.ui, "pushButton_tracking_settings"):
+            self.ui.pushButton_tracking_settings.clicked.connect(
+                self._open_tracking_settings_dialog
             )
         if hasattr(self.ui, "pushButton_tracking_list_reload"):
             self.ui.pushButton_tracking_list_reload.clicked.connect(self._load_tracking_list)
@@ -3421,12 +3505,7 @@ class MainWindow(QMainWindow):
             )
         if hasattr(self.ui, "spinBox_stale_hours"):
             self.ui.spinBox_stale_hours.valueChanged.connect(self._on_stale_hours_changed)
-        if hasattr(self.ui, "pushButton_slack_config"):
-            self.ui.pushButton_slack_config.clicked.connect(self._on_slack_config_clicked)
-        if hasattr(self.ui, "pushButton_slack_test"):
-            self.ui.pushButton_slack_test.clicked.connect(self._on_slack_test_clicked)
-        if hasattr(self.ui, "checkBox_slack_auto"):
-            self.ui.checkBox_slack_auto.stateChanged.connect(self._on_slack_auto_toggled)
+        # 우체국 인증키·슬랙 설정 버튼/체크박스는 설정 팝업에서 연결됨
 
         if hasattr(self.ui, "pushButton_google_reauth"):
             self.ui.pushButton_google_reauth.clicked.connect(self._on_google_reauth_clicked)

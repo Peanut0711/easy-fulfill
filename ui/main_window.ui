@@ -1316,62 +1316,12 @@
          </widget>
         </item>
         <item>
-         <widget class="QGroupBox" name="groupBox_tracking_api">
-          <property name="title">
-           <string>우체국 OpenAPI 인증키</string>
-          </property>
-          <layout class="QHBoxLayout" name="horizontalLayout_tracking_api">
-           <property name="spacing">
-            <number>8</number>
-           </property>
-           <item>
-            <widget class="QLabel" name="label_tracking_key_status">
-             <property name="sizePolicy">
-              <sizepolicy hsizetype="Expanding" vsizetype="Preferred">
-               <horstretch>1</horstretch>
-               <verstretch>0</verstretch>
-              </sizepolicy>
-             </property>
-             <property name="text">
-              <string>인증키: 확인 중…</string>
-             </property>
-             <property name="wordWrap">
-              <bool>true</bool>
-             </property>
-            </widget>
-           </item>
-           <item>
-            <widget class="QPushButton" name="pushButton_tracking_key_edit">
-             <property name="minimumSize">
-              <size>
-               <width>80</width>
-               <height>0</height>
-              </size>
-             </property>
-             <property name="maximumSize">
-              <size>
-               <width>100</width>
-               <height>16777215</height>
-              </size>
-             </property>
-             <property name="text">
-              <string>키 변경</string>
-             </property>
-             <property name="toolTip">
-              <string>관리자용: 공유 우체국 인증키(regkey)를 변경합니다. 변경 시 직원 전원에게 적용됩니다.</string>
-             </property>
-            </widget>
-           </item>
-          </layout>
-         </widget>
-        </item>
-        <item>
-         <layout class="QHBoxLayout" name="horizontalLayout_slack_row">
+         <layout class="QHBoxLayout" name="horizontalLayout_tracking_status">
           <property name="spacing">
            <number>8</number>
           </property>
           <item>
-           <widget class="QLabel" name="label_slack_status">
+           <widget class="QLabel" name="label_tracking_status_compact">
             <property name="sizePolicy">
              <sizepolicy hsizetype="Expanding" vsizetype="Preferred">
               <horstretch>1</horstretch>
@@ -1379,37 +1329,20 @@
              </sizepolicy>
             </property>
             <property name="text">
-             <string>슬랙 알림: 미설정</string>
+             <string>우체국 API: 확인 중…</string>
+            </property>
+            <property name="wordWrap">
+             <bool>true</bool>
             </property>
            </widget>
           </item>
           <item>
-           <widget class="QCheckBox" name="checkBox_slack_auto">
+           <widget class="QPushButton" name="pushButton_tracking_settings">
             <property name="text">
-             <string>위험 일일 알림(하루 1통)</string>
+             <string>API·알림 설정</string>
             </property>
             <property name="toolTip">
-             <string>전체 새로고침 시 위험 건이 있으면 하루 1통만 슬랙으로 다이제스트를 보냅니다(중복 방지). 허브 정체·수거 누락·이동 정체를 분류해 알립니다.</string>
-            </property>
-           </widget>
-          </item>
-          <item>
-           <widget class="QPushButton" name="pushButton_slack_config">
-            <property name="text">
-             <string>슬랙 설정</string>
-            </property>
-            <property name="toolTip">
-             <string>슬랙 Incoming Webhook URL을 등록합니다(공유 시트에 저장 · 전원 적용).</string>
-            </property>
-           </widget>
-          </item>
-          <item>
-           <widget class="QPushButton" name="pushButton_slack_test">
-            <property name="text">
-             <string>테스트</string>
-            </property>
-            <property name="toolTip">
-             <string>설정한 슬랙 채널로 테스트 메시지를 보냅니다.</string>
+             <string>관리자용: 우체국 인증키·슬랙 알림 설정을 엽니다. (포장 작업에는 불필요)</string>
             </property>
            </widget>
           </item>
