@@ -1307,7 +1307,8 @@
         <item>
          <widget class="QLabel" name="label_tracking_intro">
           <property name="text">
-           <string>우체국 OpenAPI(종추적조회)로 공유 시트(「송장추적」 탭)의 배송 상태를 갱신합니다. 송장 불러오기·일괄발송 시 등기번호가 자동으로 누적됩니다. (우편번호 검색과 동일한 우체국 인증키 사용)</string>
+           <string>우체국 OpenAPI(종추적조회)로 공유 시트(「송장추적」 탭)의 배송 상태를 갱신합니다. 송장 불러오기·일괄발송 시 등기번호가 자동으로 누적됩니다. (우편번호 검색과 동일한 우체국 인증키 사용)
+※ 표에서 행을 더블클릭하면 해당 등기번호의 우체국 배송조회(상세) 웹페이지가 열립니다.</string>
           </property>
           <property name="wordWrap">
            <bool>true</bool>

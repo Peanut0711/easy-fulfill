@@ -86,6 +86,9 @@ CONFIG_SHEET_HEADERS = ["키", "값"]
 CONFIG_KEY_KPOST_REGKEY = "kpost_regkey"
 CONFIG_KEY_SLACK_WEBHOOK = "slack_webhook_url"
 CONFIG_KEY_DIGEST_DATE = "digest_last_date"  # 일일 다이제스트 발송 날짜(전원 중복 방지)
+# 당일 우체국 수거 시각(시). 오늘 등록+운송장출력만 한 건은 이 시각 전엔 조회해도
+# 새 정보가 없으므로 새로고침 대상에서 제외한다(어제 이전 건은 제외 안 함=수거누락 후보).
+KPOST_PICKUP_HOUR = 18
 # 시작 시 DB동기화 로딩 바: 약 2초+여유 안에 99%까지 선형 증가, 완료 시 즉시 100%
 STARTUP_SYNC_PROGRESS_CAP_MS = 2200
 STARTUP_SYNC_PROGRESS_TICK_MS = 40
@@ -399,6 +402,21 @@ def run_tracking_upsert_worker(records):
         return {"ok": False, "error": str(e)}
 
 
+def _cell_date_tuple(s):
+    """'2026.06.26 02:45' / '2026-06-26 15:48:07' 등에서 (연,월,일) 튜플을 추출."""
+    s = (s or "").strip()
+    if not s:
+        return None
+    datepart = s.split(" ")[0].replace(".", "-")
+    parts = datepart.split("-")
+    if len(parts) >= 3:
+        try:
+            return (int(parts[0]), int(parts[1]), int(parts[2]))
+        except ValueError:
+            return None
+    return None
+
+
 def run_tracking_refresh_worker(regkey, progress_cb=None):
     """「송장추적」 시트의 미완료 행만 골라 우체국 종추적조회로 상태를 갱신합니다.
     progress_cb(done, total)이 주어지면 진행 상황을 보고합니다.
@@ -430,8 +448,13 @@ def run_tracking_refresh_worker(regkey, progress_cb=None):
         if len(values) <= 1:
             return {"ok": True, "total": 0, "complete": 0, "progress": 0,
                     "failed": 0, "checked": 0, "aborted": False}
-        # 미완료(완료여부 H != "Y") 행만 수집: (1-based row, 등기번호)
+        # 미완료 행 수집. 단, '오늘 등록 + 운송장출력 + 수거 시각 전'은 헛호출이라 제외.
+        # (어제 이전의 운송장출력은 수거 누락 후보이므로 제외하지 않고 조회한다.)
+        now_dt = datetime.now()
+        today_tuple = (now_dt.year, now_dt.month, now_dt.day)
+        before_pickup = now_dt.hour < KPOST_PICKUP_HOUR
         active = []
+        skipped_pre_pickup = 0
         for ridx, row in enumerate(values[1:], start=2):
             tno = (row[0] if len(row) > 0 else "").strip()
             if not tno:
@@ -439,11 +462,19 @@ def run_tracking_refresh_worker(regkey, progress_cb=None):
             done = (row[7] if len(row) > 7 else "").strip().upper()
             if done == "Y":
                 continue
+            status = (row[6] if len(row) > 6 else "").strip()
+            if before_pickup and status == "운송장출력":
+                item_d = (_cell_date_tuple(row[11] if len(row) > 11 else "")
+                          or _cell_date_tuple(row[1] if len(row) > 1 else ""))
+                if item_d == today_tuple:
+                    skipped_pre_pickup += 1
+                    continue
             active.append((ridx, tno))
         if not active:
             return {"ok": True, "total": 0, "complete": 0, "progress": 0,
-                    "failed": 0, "checked": 0, "aborted": False}
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    "failed": 0, "checked": 0, "aborted": False,
+                    "skipped": skipped_pre_pickup}
+        now = now_dt.strftime("%Y-%m-%d %H:%M:%S")
         complete = progress = failed = 0
         batch_updates = []
         total_active = len(active)
@@ -505,6 +536,7 @@ def run_tracking_refresh_worker(regkey, progress_cb=None):
             "failed": failed,
             "checked": checked,
             "aborted": aborted,
+            "skipped": skipped_pre_pickup,
         }
     except Exception as e:
         return {"ok": False, "error": str(e)}
@@ -3017,8 +3049,10 @@ class MainWindow(QMainWindow):
     def _on_tracking_refresh_finished(self, payload: dict):
         if payload.get("ok"):
             total = payload.get("total", 0)
+            skipped = payload.get("skipped", 0)
+            skip_note = f" · 출고대기 {skipped}건 제외" if skipped else ""
             if total == 0:
-                self._set_tracking_summary("추적할 미완료 송장이 없습니다.")
+                self._set_tracking_summary("추적할 미완료 송장이 없습니다." + skip_note)
             else:
                 t = datetime.now().strftime("%H:%M:%S")
                 msg = (
@@ -3028,6 +3062,7 @@ class MainWindow(QMainWindow):
                 )
                 if payload.get("aborted"):
                     msg += " · 우체국 부하로 일부 중단(ERR-131)"
+                msg += skip_note
                 self._set_tracking_summary(msg)
             # 갱신된 상태를 표에 반영하고, 반영 후 정체 건 슬랙 알림 검토
             self._slack_notify_after_reload = True
