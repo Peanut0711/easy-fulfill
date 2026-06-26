@@ -89,6 +89,8 @@ CONFIG_SHEET_HEADERS = ["키", "값"]
 CONFIG_KEY_KPOST_REGKEY = "kpost_regkey"
 CONFIG_KEY_SLACK_WEBHOOK = "slack_webhook_url"
 CONFIG_KEY_STALE_HOURS = "stale_hours"  # 정체 판정 기준 시간(전원 공유)
+CONFIG_KEY_INQUIRY_WORK_START = "inquiry_work_start_hour"  # 문의 알림 허용 시작시각(전원 공유)
+CONFIG_KEY_INQUIRY_WORK_END = "inquiry_work_end_hour"      # 문의 알림 허용 종료시각(전원 공유)
 CONFIG_KEY_DIGEST_DATE = "digest_last_date"  # 일일 다이제스트 발송 날짜(전원 중복 방지)
 CONFIG_KEY_DIGEST_SIG = "digest_last_sig"  # 직전 발송 위험목록 서명(동일 내용 재발송 방지)
 # 네이버 커머스API 문의 알림: client_id/secret 은 비공개 시트(설정 탭)에만 저장한다.
@@ -112,16 +114,33 @@ INQUIRY_SHEET_HEADERS = [
 NAVER_INQUIRY_POLL_MS = 300_000  # 5분
 NAVER_INQUIRY_LOOKBACK_DAYS = 30  # 미답변은 오래 묵을 수 있어 넉넉히(페이지네이션 안전)
 NAVER_INQUIRY_REMIND_MIN = 60  # 미답변 리마인더 재알림 주기(분)
-# 미답변 알림 허용 시간대(근무시간): 평일 10:00~19:00. 그 외에는 알림을 보내지 않고
+# 미답변 알림 허용 시간대(근무시간) 기본값: 평일 10:00~19:00. 그 외에는 알림을 보내지 않고
 # 「최근알림시각」도 건드리지 않는다 → 근무 시작 시각에 밀린 미답변이 한 번에 환기된다.
+# 설정 팝업에서 사용자가 시작/종료 시각을 바꿀 수 있고, 공유 「설정」 탭으로 전원 적용된다.
 NAVER_INQUIRY_WORK_START_HOUR = 10
 NAVER_INQUIRY_WORK_END_HOUR = 19
 
 
-def _inquiry_alerts_allowed(now_dt):
-    """평일(월~금) 근무시간(10:00~19:00) 안이면 True."""
-    return (now_dt.weekday() < 5
-            and NAVER_INQUIRY_WORK_START_HOUR <= now_dt.hour < NAVER_INQUIRY_WORK_END_HOUR)
+def _inquiry_alerts_allowed(now_dt, start_hour=NAVER_INQUIRY_WORK_START_HOUR,
+                            end_hour=NAVER_INQUIRY_WORK_END_HOUR):
+    """평일(월~금) 근무시간(start_hour:00~end_hour:00) 안이면 True."""
+    return now_dt.weekday() < 5 and start_hour <= now_dt.hour < end_hour
+
+
+def _read_inquiry_work_hours(cfg):
+    """공유 「설정」 탭 map 에서 문의 알림 허용 시작/종료 시각을 읽어 (start, end) 반환.
+    값이 없거나 잘못됐으면(0~23 범위·start<end 위반) 기본값(10,19)으로 보정."""
+    def _h(key, default):
+        try:
+            v = int(str(cfg.get(key, "")).strip())
+            return v if 0 <= v <= 23 else default
+        except (TypeError, ValueError):
+            return default
+    start = _h(CONFIG_KEY_INQUIRY_WORK_START, NAVER_INQUIRY_WORK_START_HOUR)
+    end = _h(CONFIG_KEY_INQUIRY_WORK_END, NAVER_INQUIRY_WORK_END_HOUR)
+    if start >= end:  # 뒤집힌 설정은 기본값으로 안전 복귀
+        return NAVER_INQUIRY_WORK_START_HOUR, NAVER_INQUIRY_WORK_END_HOUR
+    return start, end
 # 당일 우체국 수거 시각(시). 오늘 등록+운송장출력만 한 건은 이 시각 전엔 조회해도
 # 새 정보가 없으므로 새로고침 대상에서 제외한다(어제 이전 건은 제외 안 함=수거누락 후보).
 KPOST_PICKUP_HOUR = 18
@@ -701,6 +720,8 @@ def run_tracking_config_read_worker():
             "regkey": cfg.get(CONFIG_KEY_KPOST_REGKEY, ""),
             "slack_webhook": cfg.get(CONFIG_KEY_SLACK_WEBHOOK, ""),
             "stale_hours": cfg.get(CONFIG_KEY_STALE_HOURS, ""),
+            "inquiry_work_start": cfg.get(CONFIG_KEY_INQUIRY_WORK_START, ""),
+            "inquiry_work_end": cfg.get(CONFIG_KEY_INQUIRY_WORK_END, ""),
         }
     except Exception as e:
         return {"ok": False, "error": str(e)}
@@ -977,7 +998,8 @@ def run_naver_inquiry_poll_worker():
                 last_dt = None
             index[rid] = (i, last_dt)
 
-        allowed = _inquiry_alerts_allowed(now_dt)
+        start_h, end_h = _read_inquiry_work_hours(cfg)
+        allowed = _inquiry_alerts_allowed(now_dt, start_h, end_h)
         remind_delta = timedelta(minutes=NAVER_INQUIRY_REMIND_MIN)
         now = now_dt.strftime("%Y-%m-%d %H:%M:%S")
         new_rows = []        # 신규 미답변 → 시트 append
@@ -1825,6 +1847,8 @@ class MainWindow(QMainWindow):
         self._dlg_slack_auto = None
         self._dlg_key_btn = None
         self._dlg_stale_hours = None
+        self._dlg_inquiry_start = None
+        self._dlg_inquiry_end = None
         self._key_status_text = "확인 중…"
         self._slack_status_text = "미설정"
         # 네이버 문의 알림(상품문의·고객문의 → 슬랙). 토글은 PC별(app_settings).
@@ -1996,6 +2020,55 @@ class MainWindow(QMainWindow):
             thread.finished.connect(thread.deleteLater)
             thread.start()
 
+    def _inquiry_work_hours(self):
+        """문의 알림 허용 시작/종료 시각(공유 설정 동기화된 로컬 값). 기본 (10, 19)."""
+        def _h(key, default):
+            try:
+                v = int(self.get_app_setting(key, default))
+                return v if 0 <= v <= 23 else default
+            except (TypeError, ValueError):
+                return default
+        start = _h("inquiry_work_start_hour", NAVER_INQUIRY_WORK_START_HOUR)
+        end = _h("inquiry_work_end_hour", NAVER_INQUIRY_WORK_END_HOUR)
+        if start >= end:
+            return NAVER_INQUIRY_WORK_START_HOUR, NAVER_INQUIRY_WORK_END_HOUR
+        return start, end
+
+    def _sync_inquiry_hours_spinboxes(self):
+        """설정 팝업의 알림 시간대 스핀박스를 현재 값으로 갱신(시그널 차단)."""
+        start, end = self._inquiry_work_hours()
+        for box, val in ((getattr(self, "_dlg_inquiry_start", None), start),
+                         (getattr(self, "_dlg_inquiry_end", None), end)):
+            if box is not None:
+                box.blockSignals(True)
+                box.setValue(val)
+                box.blockSignals(False)
+
+    def _on_inquiry_work_hours_changed(self, _value=None):
+        """알림 시간대(시작/종료) 변경 → 로컬 저장 + 공유 「설정」 탭 반영(전원 적용).
+        종료는 시작보다 최소 1시간 뒤가 되도록 보정한다."""
+        if self._dlg_inquiry_start is None or self._dlg_inquiry_end is None:
+            return
+        start = int(self._dlg_inquiry_start.value())
+        end = int(self._dlg_inquiry_end.value())
+        if end <= start:
+            end = min(start + 1, 23)
+            self._dlg_inquiry_end.blockSignals(True)
+            self._dlg_inquiry_end.setValue(end)
+            self._dlg_inquiry_end.blockSignals(False)
+        self.set_app_setting("inquiry_work_start_hour", start)
+        self.set_app_setting("inquiry_work_end_hour", end)
+        if gspread is not None and self._tracking_config_write_thread is None:
+            thread = TrackingConfigWriteThread({
+                CONFIG_KEY_INQUIRY_WORK_START: str(start),
+                CONFIG_KEY_INQUIRY_WORK_END: str(end),
+            }, self)
+            self._tracking_config_write_thread = thread
+            thread.result_ready.connect(self._on_tracking_config_write_finished)
+            thread.finished.connect(self._cleanup_tracking_config_write_thread)
+            thread.finished.connect(thread.deleteLater)
+            thread.start()
+
     def save_app_settings(self):
         """앱 설정을 database/app_settings.json 에 저장합니다."""
         if not hasattr(self.ui, "checkBox_invoice_load_auto_generate"):
@@ -2112,9 +2185,11 @@ class MainWindow(QMainWindow):
             nrow = QHBoxLayout()
             self._dlg_naver_enable = QCheckBox("이 PC에서 자동 조회(5분)")
             self._dlg_naver_enable.setChecked(bool(self.get_app_setting("naver_inquiry_notify", False)))
+            _ws, _we = self._inquiry_work_hours()
             self._dlg_naver_enable.setToolTip(
-                "켜면 이 PC가 5분마다 네이버 상품·고객문의(미답변)를 조회합니다.\n"
-                "새 미답변은 즉시, 처리 안 된 건은 60분마다 다시 슬랙으로 알립니다(평일 10~19시).\n"
+                "켜면 이 PC가 5분마다 네이버·쿠팡 상품·고객문의(미답변)를 조회합니다.\n"
+                f"새 미답변은 즉시, 처리 안 된 건은 60분마다 다시 슬랙으로 알립니다"
+                f"(평일 {_ws}~{_we}시, 아래에서 변경).\n"
                 "누군가 답변하면 자동으로 멈춥니다. 전원 공유 시트(「문의알림」)로 중복을 막으니\n"
                 "여러 대를 동시에 켜둬도 됩니다(호출을 줄이려면 일부만 켜도 무방)."
             )
@@ -2139,6 +2214,30 @@ class MainWindow(QMainWindow):
             nrow.addWidget(btn_cpcfg)
             nrow.addWidget(btn_npoll)
             ndl.addLayout(nrow)
+            # 알림 허용 시간대(평일, 시작~종료 시각). 변경 시 전원 공유.
+            hrow = QHBoxLayout()
+            hrow.addWidget(QLabel("알림 시간대(평일):"))
+            _ih_start, _ih_end = self._inquiry_work_hours()
+            self._dlg_inquiry_start = QSpinBox()
+            self._dlg_inquiry_start.setRange(0, 23)
+            self._dlg_inquiry_start.setSuffix("시")
+            self._dlg_inquiry_start.setValue(_ih_start)
+            self._dlg_inquiry_end = QSpinBox()
+            self._dlg_inquiry_end.setRange(0, 23)
+            self._dlg_inquiry_end.setSuffix("시")
+            self._dlg_inquiry_end.setValue(_ih_end)
+            _ih_tip = ("이 시간대(평일)에만 미답변 문의 알림을 보냅니다. 그 외 시간/주말은 "
+                       "조용히 누적했다가 다음 근무 시작 시각에 한 번에 환기합니다. "
+                       "변경 시 공유 시트에 저장되어 전원에게 적용됩니다. 기본 10~19시.")
+            self._dlg_inquiry_start.setToolTip(_ih_tip)
+            self._dlg_inquiry_end.setToolTip(_ih_tip)
+            self._dlg_inquiry_start.valueChanged.connect(self._on_inquiry_work_hours_changed)
+            self._dlg_inquiry_end.valueChanged.connect(self._on_inquiry_work_hours_changed)
+            hrow.addWidget(self._dlg_inquiry_start)
+            hrow.addWidget(QLabel("~"))
+            hrow.addWidget(self._dlg_inquiry_end)
+            hrow.addStretch(1)
+            ndl.addLayout(hrow)
             outer.addWidget(gb_naver)
 
             gb_risk = QGroupBox("위험 판정 기준")
@@ -2178,6 +2277,7 @@ class MainWindow(QMainWindow):
             self._dlg_stale_hours.blockSignals(True)
             self._dlg_stale_hours.setValue(self._stale_hours())
             self._dlg_stale_hours.blockSignals(False)
+        self._sync_inquiry_hours_spinboxes()
         if self._dlg_naver_enable is not None:
             self._dlg_naver_enable.blockSignals(True)
             self._dlg_naver_enable.setChecked(bool(self.get_app_setting("naver_inquiry_notify", False)))
@@ -2310,13 +2410,24 @@ class MainWindow(QMainWindow):
                     self.set_app_setting("stale_hours", int(sh))
                 except (TypeError, ValueError):
                     pass
-        # 공유 설정 수신 후 상태 텍스트·정체기준·표 갱신
+            for pkey, akey in (("inquiry_work_start", "inquiry_work_start_hour"),
+                               ("inquiry_work_end", "inquiry_work_end_hour")):
+                hv = str(payload.get(pkey, "") or "").strip()
+                if hv:
+                    try:
+                        h = int(hv)
+                        if 0 <= h <= 23:
+                            self.set_app_setting(akey, h)
+                    except (TypeError, ValueError):
+                        pass
+        # 공유 설정 수신 후 상태 텍스트·정체기준·알림시간대·표 갱신
         self._refresh_key_status()
         self._refresh_slack_status()
         if self._dlg_stale_hours is not None:
             self._dlg_stale_hours.blockSignals(True)
             self._dlg_stale_hours.setValue(self._stale_hours())
             self._dlg_stale_hours.blockSignals(False)
+        self._sync_inquiry_hours_spinboxes()
         self._populate_tracking_table()
 
     def _cleanup_tracking_config_read_thread(self):
@@ -2774,7 +2885,7 @@ class MainWindow(QMainWindow):
         t = datetime.now().strftime("%H:%M")
         if not payload.get("ok"):
             err = str(payload.get("error", ""))
-            print(f"! 네이버 문의 조회 실패: {err}")
+            print(f"! 문의 조회 실패: {err}")
             self._set_naver_inquiry_status(f"실패: {err[:60]} · {t}")
             return
         open_cnt = payload.get("open", 0)
@@ -2783,15 +2894,16 @@ class MainWindow(QMainWindow):
         sent = payload.get("sent", 0)
         off_hours = payload.get("off_hours", False)
         if off_hours:
+            _ws, _we = self._inquiry_work_hours()
             self._set_naver_inquiry_status(
-                f"미답변 {open_cnt}건 · 알림 시간대 아님(평일 10~19시) · {t}")
+                f"미답변 {open_cnt}건 · 알림 시간대 아님(평일 {_ws}~{_we}시) · {t}")
         elif new or reminded:
             self._set_naver_inquiry_status(
                 f"미답변 {open_cnt}건 · 알림 {sent}건(신규 {new}/리마인더 {reminded}) · {t}")
         else:
             self._set_naver_inquiry_status(f"미답변 {open_cnt}건 · 새 알림 없음 · {t}")
         for e in payload.get("errors", []) or []:
-            print(f"! 네이버 문의 알림: {e}")
+            print(f"! 문의 알림: {e}")
 
     def _cleanup_naver_inquiry_thread(self):
         self._naver_inquiry_thread = None
