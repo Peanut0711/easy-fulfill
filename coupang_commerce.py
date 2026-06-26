@@ -99,16 +99,21 @@ def _extract_items(js):
 
 
 def _date_windows(from_dt, to_dt, days=MAX_RANGE_DAYS):
-    """[from_dt, to_dt] 를 days 일 이하의 (시작, 끝) 구간들로 쪼갠다."""
+    """[from_dt, to_dt] 를 '겹치지 않고' 날짜 기준 최대 days 일(양끝 포함) 구간들로 쪼갠다.
+    쿠팡은 inquiryStartAt~inquiryEndAt 를 양끝 포함으로 세므로(예 06-01~06-07 = 7일),
+    한 구간의 끝은 시작+ (days-1) 일로 잡아 7일을 넘기지 않게 한다. 반환은 date 객체."""
     windows = []
-    cur = from_dt
-    step = timedelta(days=days)
-    while cur < to_dt:
-        end = min(cur + step, to_dt)
-        windows.append((cur, end))
-        cur = end
+    start = from_dt.date()
+    end_date = to_dt.date()
+    span = timedelta(days=max(1, days) - 1)  # 양끝 포함 days 일 = 차이 (days-1)
+    one = timedelta(days=1)
+    cur = start
+    while cur <= end_date:
+        w_end = min(cur + span, end_date)
+        windows.append((cur, w_end))
+        cur = w_end + one
     if not windows:
-        windows.append((from_dt, to_dt))
+        windows.append((start, end_date))
     return windows
 
 
