@@ -1319,58 +1319,47 @@
           <property name="title">
            <string>스마트택배 API</string>
           </property>
-          <layout class="QVBoxLayout" name="verticalLayout_tracking_api">
+          <layout class="QHBoxLayout" name="horizontalLayout_tracking_api">
            <property name="spacing">
-            <number>6</number>
+            <number>8</number>
            </property>
            <item>
-            <widget class="QLabel" name="label_sweettracker_key">
+            <widget class="QLabel" name="label_tracking_key_status">
+             <property name="sizePolicy">
+              <sizepolicy hsizetype="Expanding" vsizetype="Preferred">
+               <horstretch>1</horstretch>
+               <verstretch>0</verstretch>
+              </sizepolicy>
+             </property>
              <property name="text">
-              <string>API 키 (t_key)</string>
+              <string>API 키: 확인 중…</string>
+             </property>
+             <property name="wordWrap">
+              <bool>true</bool>
              </property>
             </widget>
            </item>
            <item>
-            <layout class="QHBoxLayout" name="horizontalLayout_key_row">
-             <property name="spacing">
-              <number>8</number>
+            <widget class="QPushButton" name="pushButton_tracking_key_edit">
+             <property name="minimumSize">
+              <size>
+               <width>80</width>
+               <height>0</height>
+              </size>
              </property>
-             <item>
-              <widget class="QLineEdit" name="lineEdit_sweettracker_key">
-               <property name="readOnly">
-                <bool>true</bool>
-               </property>
-               <property name="echoMode">
-                <enum>QLineEdit::EchoMode::Password</enum>
-               </property>
-               <property name="placeholderText">
-                <string>「키 변경」을 눌러 입력하세요</string>
-               </property>
-              </widget>
-             </item>
-             <item>
-              <widget class="QPushButton" name="pushButton_tracking_key_edit">
-               <property name="minimumSize">
-                <size>
-                 <width>90</width>
-                 <height>0</height>
-                </size>
-               </property>
-               <property name="maximumSize">
-                <size>
-                 <width>120</width>
-                 <height>16777215</height>
-                </size>
-               </property>
-               <property name="text">
-                <string>키 변경</string>
-               </property>
-               <property name="toolTip">
-                <string>공유 API 키를 변경합니다. 변경 시 직원 전원에게 적용됩니다.</string>
-               </property>
-              </widget>
-             </item>
-            </layout>
+             <property name="maximumSize">
+              <size>
+               <width>100</width>
+               <height>16777215</height>
+              </size>
+             </property>
+             <property name="text">
+              <string>키 변경</string>
+             </property>
+             <property name="toolTip">
+              <string>관리자용: 공유 API 키를 변경합니다. 변경 시 직원 전원에게 적용됩니다.</string>
+             </property>
+            </widget>
            </item>
           </layout>
          </widget>

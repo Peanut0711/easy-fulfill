@@ -1209,9 +1209,10 @@ class MainWindow(QMainWindow):
         # 공유 「설정」 탭 키 읽기/쓰기 단일 실행 추적
         self._tracking_config_read_thread = None
         self._tracking_config_write_thread = None
-        # API 키 변경(읽기전용 잠금해제·검증) 상태
+        # API 키 검증(저장 전 유효성 확인) 상태
         self._tracking_key_validate_thread = None
-        self._tracking_key_backup = None
+        self._key_validate_mode = "status"
+        self._key_validate_pending_key = ""
 
         self.load_ui()
         self.setup_connections()
@@ -1340,14 +1341,6 @@ class MainWindow(QMainWindow):
         cb.setChecked(checked)
         cb.blockSignals(False)
 
-        # 스마트택배 API 키를 환경설정 입력란에 채움(있을 때만)
-        if hasattr(self.ui, "lineEdit_sweettracker_key"):
-            saved_key = self.get_app_setting("sweettracker_t_key", "")
-            w = self.ui.lineEdit_sweettracker_key
-            w.blockSignals(True)
-            w.setText(str(saved_key or ""))
-            w.blockSignals(False)
-
     def save_app_settings(self):
         """앱 설정을 database/app_settings.json 에 저장합니다."""
         if not hasattr(self.ui, "checkBox_invoice_load_auto_generate"):
@@ -1372,55 +1365,53 @@ class MainWindow(QMainWindow):
         except Exception as e:
             print(f"! 앱 설정 저장 중 오류: {e}")
 
-    def _set_key_field_editable(self, editable):
-        """API 키 입력칸을 편집 가능/읽기전용으로 전환하고 버튼 라벨을 맞춥니다."""
-        le = getattr(self.ui, "lineEdit_sweettracker_key", None)
-        btn = getattr(self.ui, "pushButton_tracking_key_edit", None)
-        if le is not None:
-            le.setReadOnly(not editable)
-        if btn is not None:
-            btn.setText("저장" if editable else "키 변경")
+    def _set_key_status_text(self, text):
+        if hasattr(self.ui, "label_tracking_key_status"):
+            self.ui.label_tracking_key_status.setText(text)
+
+    def _refresh_key_status(self):
+        """저장된 키의 유효성을 백그라운드로 확인해 상태 텍스트만 갱신합니다."""
+        key = str(self.get_app_setting("sweettracker_t_key", "") or "").strip()
+        if not key:
+            self._set_key_status_text("API 키: 미설정 — 「키 변경」으로 등록하세요.")
+            return
+        if gspread is None:
+            self._set_key_status_text("API 키: 설정됨 (오프라인 — 유효성 미확인)")
+            return
+        if self._tracking_key_validate_thread is not None:
+            return
+        self._set_key_status_text("API 키: 확인 중…")
+        self._start_key_validation(key, mode="status")
 
     def _on_tracking_key_edit_clicked(self):
-        """「키 변경」(보기→편집, 확인) / 「저장」(편집→검증 후 저장) 토글."""
-        le = getattr(self.ui, "lineEdit_sweettracker_key", None)
-        if le is None:
-            return
-        if le.isReadOnly():
-            # 보기 모드 → 편집 모드(우발적 변경 방지용 확인)
-            reply = QMessageBox.question(
-                self, "API 키 변경",
-                "공유 API 키를 변경하면 직원 전원에게 적용됩니다.\n계속하시겠습니까?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No,
-            )
-            if reply != QMessageBox.StandardButton.Yes:
-                return
-            self._tracking_key_backup = le.text()
-            self._set_key_field_editable(True)
-            le.setFocus()
-            le.selectAll()
-            self._set_tracking_summary("새 API 키를 입력하고 「저장」을 누르세요.")
-            return
-        # 편집 모드 → 저장(검증 선행)
-        new_key = le.text().strip()
-        if not new_key:
-            QMessageBox.warning(self, "API 키 변경", "키가 비어 있습니다. 입력 후 다시 저장해 주세요.")
-            return
-        if new_key == str(self._tracking_key_backup or "").strip():
-            self._set_key_field_editable(False)
-            self._set_tracking_summary("변경 사항이 없습니다.")
-            return
+        """관리자용: 작은 입력 다이얼로그로 새 키를 받아 검증 후 저장합니다.
+        일반 유저는 평소 키를 보거나 바꿀 필요가 없으므로 입력칸을 노출하지 않습니다."""
         if gspread is None:
             QMessageBox.warning(self, "API 키 변경", "gspread 패키지가 필요합니다. (pip install gspread)")
             return
         if self._tracking_key_validate_thread is not None:
             return
+        new_key, ok = QInputDialog.getText(
+            self, "API 키 변경",
+            "새 스마트택배 API 키를 입력하세요.\n(검증 후 직원 전원에게 적용됩니다)",
+            QLineEdit.EchoMode.Password, "",
+        )
+        if not ok:
+            return
+        new_key = new_key.strip()
+        if not new_key:
+            QMessageBox.warning(self, "API 키 변경", "키가 비어 있습니다.")
+            return
+        self._set_key_status_text("API 키: 검증 중…")
+        self._start_key_validation(new_key, mode="save")
+
+    def _start_key_validation(self, key, mode):
+        self._key_validate_mode = mode
+        self._key_validate_pending_key = key
         btn = getattr(self.ui, "pushButton_tracking_key_edit", None)
         if btn is not None:
             btn.setEnabled(False)
-        self._set_tracking_summary("API 키 검증 중…")
-        thread = TrackingKeyValidateThread(new_key, self)
+        thread = TrackingKeyValidateThread(key, self)
         self._tracking_key_validate_thread = thread
         thread.result_ready.connect(self._on_key_validate_finished)
         thread.finished.connect(self._cleanup_key_validate_thread)
@@ -1434,25 +1425,29 @@ class MainWindow(QMainWindow):
             btn.setEnabled(True)
 
     def _on_key_validate_finished(self, payload: dict):
-        le = getattr(self.ui, "lineEdit_sweettracker_key", None)
-        if le is None:
-            return
-        new_key = le.text().strip()
-        if not payload.get("ok") or not payload.get("valid"):
-            err = payload.get("error", "유효하지 않은 키")
-            QMessageBox.warning(
-                self, "API 키 검증 실패",
-                f"이 키로 택배사 목록을 가져오지 못했습니다.\n\n{err}\n\n"
-                "키를 다시 확인해 주세요. (저장하지 않았습니다)",
-            )
-            self._set_tracking_summary("키 검증 실패 — 저장하지 않았습니다.")
-            return  # 편집 모드 유지(사용자가 수정하도록)
-        # 검증 성공 → 로컬+공유 시트 저장 후 잠금
+        mode = getattr(self, "_key_validate_mode", "status")
+        key = getattr(self, "_key_validate_pending_key", "")
+        valid = bool(payload.get("ok") and payload.get("valid"))
         code = str(payload.get("t_code", "") or "").strip()
-        self._commit_sweettracker_key(new_key, code)
-        self._tracking_key_backup = new_key
-        self._set_key_field_editable(False)
-        self._set_tracking_summary("API 키 검증·저장 완료 (직원 전원 자동 적용).")
+        if mode == "save":
+            if not valid:
+                err = payload.get("error", "유효하지 않은 키")
+                QMessageBox.warning(
+                    self, "API 키 검증 실패",
+                    f"이 키로 택배사 목록을 가져오지 못했습니다.\n\n{err}\n\n"
+                    "키를 다시 확인해 주세요. (저장하지 않았습니다)",
+                )
+                self._set_key_status_text("API 키: 검증 실패 — 저장하지 않음")
+                return
+            self._commit_sweettracker_key(key, code)
+            self._set_key_status_text("API 키: 유효함 ✓ (저장됨 · 전원 적용)")
+        else:  # status
+            if valid:
+                if code:
+                    self.set_app_setting("sweettracker_t_code", code)
+                self._set_key_status_text("API 키: 유효함 ✓")
+            else:
+                self._set_key_status_text("API 키: 확인 실패 — 「키 변경」으로 다시 등록")
 
     def _commit_sweettracker_key(self, key, code):
         """검증된 키를 로컬과 공유 「설정」 탭에 저장합니다."""
@@ -1493,24 +1488,25 @@ class MainWindow(QMainWindow):
         thread.start()
 
     def _on_tracking_config_read_finished(self, payload: dict):
-        if not payload.get("ok"):
-            return
-        t_key = str(payload.get("t_key", "") or "").strip()
-        t_code = str(payload.get("t_code", "") or "").strip()
-        if t_code:
-            self.set_app_setting("sweettracker_t_code", t_code)
-        if t_key:
-            self.set_app_setting("sweettracker_t_key", t_key)
-            if hasattr(self.ui, "lineEdit_sweettracker_key"):
-                w = self.ui.lineEdit_sweettracker_key
-                # 사용자가 편집 중(잠금해제 상태)이면 입력을 덮어쓰지 않음
-                if w.isReadOnly() and w.text().strip() != t_key:
-                    w.blockSignals(True)
-                    w.setText(t_key)
-                    w.blockSignals(False)
+        if payload.get("ok"):
+            t_key = str(payload.get("t_key", "") or "").strip()
+            t_code = str(payload.get("t_code", "") or "").strip()
+            if t_code:
+                self.set_app_setting("sweettracker_t_code", t_code)
+            if t_key:
+                self.set_app_setting("sweettracker_t_key", t_key)
+        # 공유 키 수신 후 유효성 상태 텍스트 갱신
+        self._refresh_key_status()
 
     def _cleanup_tracking_config_read_thread(self):
         self._tracking_config_read_thread = None
+
+    def _enter_tracking_tab(self):
+        """배송추적 탭 진입: 공유 키를 받아 상태 텍스트를 갱신합니다."""
+        if gspread is not None:
+            self._begin_tracking_config_read()  # 완료 후 _refresh_key_status 호출
+        else:
+            self._refresh_key_status()
 
     def get_app_setting(self, key, default=None):
         """database/app_settings.json 에서 단일 설정값을 읽습니다."""
@@ -1905,6 +1901,7 @@ class MainWindow(QMainWindow):
         
         # 메인 윈도우 설정
         self.setCentralWidget(window.centralwidget)
+        self._apply_tab_order()
         # self.setMenuBar(window.menubar)
         
         # 툴바 설정
@@ -1914,6 +1911,25 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(window.windowTitle())
         self.resize(window.size())
         self._order_ship_splitter_initialized = False
+
+    def _apply_tab_order(self):
+        """탭을 주문·발송 / 배송추적 / DB동기화 / 환경설정 순으로 재배치합니다.
+        (UI 파일의 정의 순서와 무관하게 런타임에서 보장)"""
+        tw = getattr(self.ui, "tabWidget", None)
+        if tw is None:
+            return
+        desired = ["tab", "tab_tracking", "tab_db_sheet_sync", "tab_2"]
+        bar = tw.tabBar()
+        for target in range(len(desired)):
+            name = desired[target]
+            cur = -1
+            for i in range(tw.count()):
+                if tw.widget(i).objectName() == name:
+                    cur = i
+                    break
+            if cur != -1 and cur != target:
+                bar.moveTab(cur, target)
+        tw.setCurrentIndex(0)
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -2775,13 +2791,15 @@ class MainWindow(QMainWindow):
             self.ui.label_google_auth_status.setText(f"상태를 표시할 수 없습니다.\n{e}")
 
     def _on_main_tab_changed(self, index):
-        if index == 1:
+        # 탭 순서가 바뀌어도 동작하도록 인덱스가 아닌 objectName으로 분기
+        w = self.ui.tabWidget.widget(index) if hasattr(self.ui, "tabWidget") else None
+        name = w.objectName() if w is not None else ""
+        if name == "tab_2":
             self._refresh_google_auth_status_ui()
-        if index == 2:
+        elif name == "tab_db_sheet_sync":
             self._refresh_db_sheet_sync_path_labels()
-        if index == 3:
-            # 배송추적 탭 진입 시 공유 시트의 회사 공통 키를 읽어 자동 반영
-            self._begin_tracking_config_read()
+        elif name == "tab_tracking":
+            self._enter_tracking_tab()
 
     def _on_db_sync_refresh_paths_clicked(self):
         self._refresh_db_sheet_sync_path_labels(reset_manual_overrides=True)
