@@ -937,7 +937,7 @@ class MainWindow(QMainWindow):
     def load_app_settings(self):
         """앱 설정(체크박스 등)을 로드합니다."""
         key = "auto_generate_after_invoice_load"
-        default_checked = False
+        default_checked = True
         if not hasattr(self.ui, "checkBox_invoice_load_auto_generate"):
             return
         cb = self.ui.checkBox_invoice_load_auto_generate

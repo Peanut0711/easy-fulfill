@@ -888,7 +888,7 @@
           <string>송장 불러오기 성공 시 일괄 발송 파일 자동 생성</string>
          </property>
          <property name="checked">
-          <bool>false</bool>
+          <bool>true</bool>
          </property>
         </widget>
        </widget>
