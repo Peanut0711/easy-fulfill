@@ -6,7 +6,7 @@ import os
 import re
 import math
 import time
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from pathlib import Path
 import pandas as pd
 import numpy as np
@@ -89,6 +89,33 @@ CONFIG_KEY_SLACK_WEBHOOK = "slack_webhook_url"
 CONFIG_KEY_STALE_HOURS = "stale_hours"  # 정체 판정 기준 시간(전원 공유)
 CONFIG_KEY_DIGEST_DATE = "digest_last_date"  # 일일 다이제스트 발송 날짜(전원 중복 방지)
 CONFIG_KEY_DIGEST_SIG = "digest_last_sig"  # 직전 발송 위험목록 서명(동일 내용 재발송 방지)
+# 네이버 커머스API 문의 알림: client_id/secret 은 비공개 시트(설정 탭)에만 저장한다.
+CONFIG_KEY_NAVER_CLIENT_ID = "naver_client_id"
+CONFIG_KEY_NAVER_CLIENT_SECRET = "naver_client_secret"
+# 상품문의·고객문의 미답변 추적용 공유 누적 시트.
+# 매 폴링마다 네이버에서 '현재 미답변 전체'를 받아오므로, 누군가 답변하면 다음 조회부터
+# 목록에서 사라져 알림이 자동으로 멈춘다(별도 처리자 추적 불필요).
+# 「최근알림시각」을 키로, R분(=리마인더 주기)이 지난 미답변만 다시 알린다.
+# 이 시각은 전원 공유 시트에 있으므로, R 창 안에서 먼저 조회한 1대만 보내고 나머지는
+# '방금 알림됨'을 보고 건너뛴다 → 4~5대 모두 켜둬도 중복 알림이 거의 없다.
+INQUIRY_SHEET_TITLE = "문의알림"
+INQUIRY_SHEET_HEADERS = [
+    "문의ID", "유형", "등록일시", "대상", "작성자", "내용",
+    "감지시각", "최근알림시각", "상태",
+]
+NAVER_INQUIRY_POLL_MS = 300_000  # 5분
+NAVER_INQUIRY_LOOKBACK_DAYS = 30  # 미답변은 오래 묵을 수 있어 넉넉히(페이지네이션 안전)
+NAVER_INQUIRY_REMIND_MIN = 60  # 미답변 리마인더 재알림 주기(분)
+# 미답변 알림 허용 시간대(근무시간): 평일 10:00~19:00. 그 외에는 알림을 보내지 않고
+# 「최근알림시각」도 건드리지 않는다 → 근무 시작 시각에 밀린 미답변이 한 번에 환기된다.
+NAVER_INQUIRY_WORK_START_HOUR = 10
+NAVER_INQUIRY_WORK_END_HOUR = 19
+
+
+def _inquiry_alerts_allowed(now_dt):
+    """평일(월~금) 근무시간(10:00~19:00) 안이면 True."""
+    return (now_dt.weekday() < 5
+            and NAVER_INQUIRY_WORK_START_HOUR <= now_dt.hour < NAVER_INQUIRY_WORK_END_HOUR)
 # 당일 우체국 수거 시각(시). 오늘 등록+운송장출력만 한 건은 이 시각 전엔 조회해도
 # 새 정보가 없으므로 새로고침 대상에서 제외한다(어제 이전 건은 제외 안 함=수거누락 후보).
 KPOST_PICKUP_HOUR = 18
@@ -762,6 +789,199 @@ def run_digest_send_worker(webhook_url, text, today_str, sig):
         return {"ok": False, "error": str(e), "sent": False}
 
 
+def _standalone_open_inquiry_ws(gc):
+    """공유 「문의알림」 탭을 제목으로 찾고, 없으면 맨 끝에 생성하고 헤더를 기록합니다."""
+    spreadsheet = gc.open_by_key(SPREADSHEET_ID)
+    for ws in spreadsheet.worksheets():
+        if ws.title == INQUIRY_SHEET_TITLE:
+            return ws
+    ws = spreadsheet.add_worksheet(
+        title=INQUIRY_SHEET_TITLE, rows=500, cols=len(INQUIRY_SHEET_HEADERS)
+    )
+    ws.update([list(INQUIRY_SHEET_HEADERS)], range_name="A1", value_input_option="RAW")
+    print(f"✓ 스프레드시트에 「{INQUIRY_SHEET_TITLE}」 탭을 만들었습니다.")
+    return ws
+
+
+def _build_inquiry_slack_text(records):
+    """미답변 문의 레코드 리스트 → 슬랙 메시지 텍스트.
+    각 레코드의 '_kind'('new'|'remind')에 따라 🆕/🔁 표시를 붙인다."""
+    t = datetime.now().strftime("%Y-%m-%d %H:%M")
+    n_new = sum(1 for r in records if r.get("_kind") != "remind")
+    n_rem = len(records) - n_new
+    parts = []
+    if n_new:
+        parts.append(f"신규 {n_new}")
+    if n_rem:
+        parts.append(f"미답변 리마인더 {n_rem}")
+    lines = [f"📨 처리 필요 문의 {len(records)}건 ({' · '.join(parts)}) · {t}"]
+    for r in records[:25]:
+        head = " ".join((r.get("content", "") or "").split())
+        if len(head) > 60:
+            head = head[:60] + "…"
+        who = r.get("writer", "") or "익명"
+        tgt = f" · {r['target']}" if r.get("target") else ""
+        mark = "🔁 " if r.get("_kind") == "remind" else "🆕 "
+        lines.append(f"• {mark}[{r.get('type', '문의')}] {who}{tgt} — {head}")
+    if len(records) > 25:
+        lines.append(f"… 외 {len(records) - 25}건")
+    return "\n".join(lines)
+
+
+def run_naver_inquiry_poll_worker():
+    """네이버 상품문의·고객문의(미답변)를 조회해 「문의알림」 시트에 누적하고, 처리될 때까지
+    주기적으로 슬랙에 알립니다.
+      • 새 미답변 → 즉시 1회 알림.
+      • 아직 미답변인 건 → 「최근알림시각」에서 R분(NAVER_INQUIRY_REMIND_MIN)이 지나면 다시 알림.
+      • 누군가 답변하면 다음 조회의 미답변 목록에서 사라져 알림이 자동으로 멈춘다.
+    알림은 근무시간(평일 10~19시)에만 보내고, 그 외 시간엔 발송도 「최근알림시각」 갱신도 하지
+    않아 근무 시작 시각에 밀린 미답변이 한 번에 환기된다. 「최근알림시각」이 전원 공유 시트에
+    있어 R 창 안에서는 먼저 조회한 1대만 발송한다(4~5대 동시 가동 중복 방지).
+    반환 dict: ok, open, new, reminded, sent, off_hours, errors — 또는 ok False, error.
+    """
+    if gspread is None:
+        return {"ok": False, "error": "gspread 패키지가 필요합니다."}
+    try:
+        from google_sheets_oauth import get_authorized_gspread_client
+    except ImportError as e:
+        return {"ok": False, "error": str(e)}
+    try:
+        import naver_commerce
+        import slack_notify
+    except ImportError as e:
+        return {"ok": False, "error": str(e)}
+    try:
+        gc = get_authorized_gspread_client()
+        cfg = _read_config_values_map(_standalone_open_config_ws(gc))
+        client_id = cfg.get(CONFIG_KEY_NAVER_CLIENT_ID, "")
+        client_secret = cfg.get(CONFIG_KEY_NAVER_CLIENT_SECRET, "")
+        webhook = cfg.get(CONFIG_KEY_SLACK_WEBHOOK, "")
+        if not client_id or not client_secret:
+            return {"ok": False,
+                    "error": "네이버 client_id/secret 미설정 — 설정 팝업의 「키 설정」에서 등록하세요."}
+        token = naver_commerce.get_access_token(client_id, client_secret)
+        now_dt = datetime.now()
+        from_dt = now_dt - timedelta(days=NAVER_INQUIRY_LOOKBACK_DAYS)
+        records = []
+        errors = []
+        # 상품문의(미답변)
+        try:
+            for it in naver_commerce.fetch_product_qnas(token, from_dt, now_dt, answered=False):
+                qid = it.get("questionId")
+                if qid is None:
+                    continue
+                records.append({
+                    "id": f"Q{qid}",
+                    "type": "상품문의",
+                    "reg": str(it.get("createDate", "") or ""),
+                    "target": str(it.get("productName", "") or ""),
+                    "writer": str(it.get("maskedWriterId", "") or ""),
+                    "content": str(it.get("question", "") or ""),
+                })
+        except Exception as e:
+            errors.append(f"상품문의 조회 실패: {e}")
+        # 고객문의(미답변)
+        try:
+            for it in naver_commerce.fetch_customer_inquiries(token, from_dt, now_dt, answered=False):
+                ino = it.get("inquiryNo")
+                if ino is None:
+                    continue
+                records.append({
+                    "id": f"C{ino}",
+                    "type": "고객문의",
+                    "reg": str(it.get("inquiryRegistrationDateTime", "") or ""),
+                    "target": str(it.get("productName") or it.get("orderId", "") or ""),
+                    "writer": str(it.get("customerName", "") or ""),
+                    "content": str(it.get("title") or it.get("inquiryContent", "") or ""),
+                })
+        except Exception as e:
+            errors.append(f"고객문의 조회 실패: {e}")
+        if not records and errors:
+            return {"ok": False, "error": " / ".join(errors)}
+
+        ws = _standalone_open_inquiry_ws(gc)
+        values = ws.get_all_values()
+        # 헤더가 옛 형식이면 새 형식으로 교체(기존 데이터 행은 보존; 옛 「알림」값은
+        # 「최근알림시각」 자리에서 파싱 불가→미알림 취급되어 다음 근무시간에 한 번 환기됨).
+        if not values or values[0] != list(INQUIRY_SHEET_HEADERS):
+            need_cols = len(INQUIRY_SHEET_HEADERS)
+            if getattr(ws, "col_count", need_cols) < need_cols:
+                ws.add_cols(need_cols - ws.col_count)  # 옛 8열 시트 → 9열로 확장 후 헤더 교체
+            ws.update([list(INQUIRY_SHEET_HEADERS)], range_name="A1",
+                      value_input_option="RAW")
+            if not values:
+                values = [list(INQUIRY_SHEET_HEADERS)]
+        # 문의ID → (시트 행번호, 최근알림시각 dt) 인덱스
+        index = {}
+        for i, row in enumerate(values[1:], start=2):
+            rid = (row[0] or "").strip() if row else ""
+            if not rid:
+                continue
+            last_s = row[7].strip() if len(row) > 7 else ""
+            try:
+                last_dt = datetime.strptime(last_s, "%Y-%m-%d %H:%M:%S")
+            except (ValueError, AttributeError):
+                last_dt = None
+            index[rid] = (i, last_dt)
+
+        allowed = _inquiry_alerts_allowed(now_dt)
+        remind_delta = timedelta(minutes=NAVER_INQUIRY_REMIND_MIN)
+        now = now_dt.strftime("%Y-%m-%d %H:%M:%S")
+        new_rows = []        # 신규 미답변 → 시트 append
+        ts_updates = []      # 기존 행 「최근알림시각」 갱신용 batch_update
+        to_notify = []       # 이번에 슬랙으로 보낼 레코드
+        seen_batch = set()
+        for r in records:
+            rid = r["id"]
+            if rid in seen_batch:
+                continue
+            seen_batch.add(rid)
+            if rid not in index:
+                # 새 미답변: 행 추가. 근무시간이면 즉시 알림(최근알림시각=now),
+                # 아니면 최근알림시각을 비워 둬 다음 근무시간에 알리도록 한다.
+                notify_now = allowed
+                new_rows.append([
+                    rid, r["type"], r["reg"], r["target"], r["writer"],
+                    (r["content"] or "")[:200], now,
+                    now if notify_now else "", "미답변",
+                ])
+                if notify_now:
+                    r["_kind"] = "new"
+                    to_notify.append(r)
+            else:
+                # 기존 미답변: 근무시간 + R분 경과 시 리마인더.
+                row_no, last_dt = index[rid]
+                if allowed and (last_dt is None or now_dt - last_dt >= remind_delta):
+                    r["_kind"] = "remind"
+                    to_notify.append(r)
+                    ts_updates.append({"range": f"H{row_no}", "values": [[now]]})
+        if new_rows:
+            ws.append_rows(new_rows, value_input_option="RAW")
+        sent = 0
+        if to_notify and webhook:
+            res = slack_notify.send_slack(webhook, _build_inquiry_slack_text(to_notify))
+            if res.get("ok"):
+                sent = len(to_notify)
+                if ts_updates:
+                    ws.batch_update(ts_updates, value_input_option="RAW")
+            else:
+                errors.append(f"슬랙 전송 실패: {res.get('error', '')}")
+        elif to_notify and not webhook:
+            errors.append("슬랙 웹훅 미설정 — 알림을 보내지 못했습니다.")
+        new_cnt = sum(1 for r in to_notify if r.get("_kind") == "new")
+        return {
+            "ok": True,
+            "open": len(seen_batch),
+            "new": new_cnt,
+            "reminded": len(to_notify) - new_cnt,
+            "sent": sent,
+            "off_hours": (not allowed),
+            "errors": errors,
+        }
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 class CircularBusySpinner(QWidget):
     """Google 시트·처리 대기용 무한 회전 링 스피너."""
 
@@ -1029,6 +1249,37 @@ class TrackingKeyValidateThread(QThread):
                                     "error": f"kpost_tracker 로드 실패: {e}"})
             return
         self.result_ready.emit(kpost_tracker.validate_key(self._regkey))
+
+
+class NaverInquiryPollThread(QThread):
+    """네이버 상품·고객문의를 조회해 신규를 슬랙으로 알리는 작업을 백그라운드로 실행."""
+
+    result_ready = Signal(dict)
+
+    def run(self):
+        self.result_ready.emit(run_naver_inquiry_poll_worker())
+
+
+class NaverCredsValidateThread(QThread):
+    """입력한 네이버 client_id/secret 으로 토큰 발급을 시도해 유효성을 검증합니다."""
+
+    result_ready = Signal(dict)
+
+    def __init__(self, client_id, client_secret, parent=None):
+        super().__init__(parent)
+        self._client_id = client_id
+        self._client_secret = client_secret
+
+    def run(self):
+        try:
+            import naver_commerce
+        except ImportError as e:
+            self.result_ready.emit({"ok": False, "valid": False,
+                                    "error": f"naver_commerce 로드 실패: {e}"})
+            return
+        self.result_ready.emit(
+            naver_commerce.validate_credentials(self._client_id, self._client_secret)
+        )
 
 
 class DbSheetSyncThread(QThread):
@@ -1487,6 +1738,16 @@ class MainWindow(QMainWindow):
         self._dlg_stale_hours = None
         self._key_status_text = "확인 중…"
         self._slack_status_text = "미설정"
+        # 네이버 문의 알림(상품문의·고객문의 → 슬랙). 토글은 PC별(app_settings).
+        self._naver_inquiry_thread = None
+        self._naver_creds_validate_thread = None
+        self._naver_pending_creds = ("", "")
+        self._naver_inquiry_status_text = "미설정"
+        self._dlg_naver_status = None
+        self._dlg_naver_enable = None
+        self._naver_inquiry_timer = QTimer(self)
+        self._naver_inquiry_timer.setInterval(NAVER_INQUIRY_POLL_MS)
+        self._naver_inquiry_timer.timeout.connect(self._on_naver_inquiry_poll)
         # 우체국 등기 웹조회 URL 템플릿
         self._kpost_trace_web_url = (
             "https://service.epost.go.kr/trace.RetrieveDomRigiTraceList.comm"
@@ -1504,6 +1765,7 @@ class MainWindow(QMainWindow):
         self.load_app_settings()
         self._refresh_google_auth_status_ui()
         self._refresh_db_sheet_sync_path_labels()
+        self._init_naver_inquiry_polling()
 
         print("초기화 완료")
 
@@ -1751,6 +2013,36 @@ class MainWindow(QMainWindow):
             sl.addLayout(srow)
             outer.addWidget(gb_slack)
 
+            gb_naver = QGroupBox("네이버 문의 알림 (상품·고객문의 → 슬랙)")
+            ndl = QVBoxLayout(gb_naver)
+            self._dlg_naver_status = QLabel(f"문의 알림: {self._naver_inquiry_status_text}")
+            self._dlg_naver_status.setWordWrap(True)
+            ndl.addWidget(self._dlg_naver_status)
+            nrow = QHBoxLayout()
+            self._dlg_naver_enable = QCheckBox("이 PC에서 자동 조회(5분)")
+            self._dlg_naver_enable.setChecked(bool(self.get_app_setting("naver_inquiry_notify", False)))
+            self._dlg_naver_enable.setToolTip(
+                "켜면 이 PC가 5분마다 네이버 상품·고객문의(미답변)를 조회합니다.\n"
+                "새 미답변은 즉시, 처리 안 된 건은 60분마다 다시 슬랙으로 알립니다(평일 10~19시).\n"
+                "누군가 답변하면 자동으로 멈춥니다. 전원 공유 시트(「문의알림」)로 중복을 막으니\n"
+                "여러 대를 동시에 켜둬도 됩니다(호출을 줄이려면 일부만 켜도 무방)."
+            )
+            self._dlg_naver_enable.stateChanged.connect(self._on_naver_inquiry_toggled)
+            btn_ncfg = QPushButton("키 설정")
+            btn_ncfg.setToolTip(
+                "관리자용: 네이버 커머스API client_id/secret 입력(검증 후 전원 공유 시트에 저장)."
+            )
+            btn_ncfg.clicked.connect(self._on_naver_creds_edit_clicked)
+            btn_npoll = QPushButton("지금 확인")
+            btn_npoll.setToolTip("토글과 무관하게 지금 한 번 조회합니다.")
+            btn_npoll.clicked.connect(self._on_naver_inquiry_manual_poll)
+            nrow.addWidget(self._dlg_naver_enable)
+            nrow.addStretch(1)
+            nrow.addWidget(btn_ncfg)
+            nrow.addWidget(btn_npoll)
+            ndl.addLayout(nrow)
+            outer.addWidget(gb_naver)
+
             gb_risk = QGroupBox("위험 판정 기준")
             rl = QHBoxLayout(gb_risk)
             rl.addWidget(QLabel("정체기준(시간):"))
@@ -1788,6 +2080,11 @@ class MainWindow(QMainWindow):
             self._dlg_stale_hours.blockSignals(True)
             self._dlg_stale_hours.setValue(self._stale_hours())
             self._dlg_stale_hours.blockSignals(False)
+        if self._dlg_naver_enable is not None:
+            self._dlg_naver_enable.blockSignals(True)
+            self._dlg_naver_enable.setChecked(bool(self.get_app_setting("naver_inquiry_notify", False)))
+            self._dlg_naver_enable.blockSignals(False)
+        self._update_naver_inquiry_status_label()
         self._tracking_settings_dialog.show()
         self._tracking_settings_dialog.raise_()
         self._tracking_settings_dialog.activateWindow()
@@ -2338,6 +2635,139 @@ class MainWindow(QMainWindow):
 
     def _cleanup_digest_thread(self):
         self._digest_thread = None
+
+    # ── 네이버 문의 알림(상품문의·고객문의 → 슬랙) ──────────────────────────
+    def _init_naver_inquiry_polling(self):
+        """이 PC에서 문의 자동 알림이 켜져 있으면 5분 폴링을 시작합니다.
+        시작 직후 1회 조회(미답변을 누적·환기; 알림은 평일 10~19시에만 발송)."""
+        if gspread is None:
+            return
+        if bool(self.get_app_setting("naver_inquiry_notify", False)):
+            self._naver_inquiry_timer.start()
+            # 시작 직후 다른 로딩과 겹치지 않게 약간 지연 후 첫 조회.
+            QTimer.singleShot(8000, self._on_naver_inquiry_poll)
+
+    def _on_naver_inquiry_toggled(self, state):
+        enabled = bool(state)
+        self.set_app_setting("naver_inquiry_notify", enabled)
+        if enabled:
+            self._naver_inquiry_timer.start()
+            self._set_naver_inquiry_status("조회 중…")
+            self._on_naver_inquiry_poll()
+        else:
+            self._naver_inquiry_timer.stop()
+            self._set_naver_inquiry_status("자동 조회 꺼짐")
+
+    def _on_naver_inquiry_manual_poll(self):
+        self._set_naver_inquiry_status("조회 중…")
+        self._on_naver_inquiry_poll()
+
+    def _on_naver_inquiry_poll(self):
+        if gspread is None or self._naver_inquiry_thread is not None:
+            return
+        thread = NaverInquiryPollThread(self)
+        self._naver_inquiry_thread = thread
+        thread.result_ready.connect(self._on_naver_inquiry_result)
+        thread.finished.connect(self._cleanup_naver_inquiry_thread)
+        thread.finished.connect(thread.deleteLater)
+        thread.start()
+
+    def _on_naver_inquiry_result(self, payload: dict):
+        t = datetime.now().strftime("%H:%M")
+        if not payload.get("ok"):
+            err = str(payload.get("error", ""))
+            print(f"! 네이버 문의 조회 실패: {err}")
+            self._set_naver_inquiry_status(f"실패: {err[:60]} · {t}")
+            return
+        open_cnt = payload.get("open", 0)
+        new = payload.get("new", 0)
+        reminded = payload.get("reminded", 0)
+        sent = payload.get("sent", 0)
+        off_hours = payload.get("off_hours", False)
+        if off_hours:
+            self._set_naver_inquiry_status(
+                f"미답변 {open_cnt}건 · 알림 시간대 아님(평일 10~19시) · {t}")
+        elif new or reminded:
+            self._set_naver_inquiry_status(
+                f"미답변 {open_cnt}건 · 알림 {sent}건(신규 {new}/리마인더 {reminded}) · {t}")
+        else:
+            self._set_naver_inquiry_status(f"미답변 {open_cnt}건 · 새 알림 없음 · {t}")
+        for e in payload.get("errors", []) or []:
+            print(f"! 네이버 문의 알림: {e}")
+
+    def _cleanup_naver_inquiry_thread(self):
+        self._naver_inquiry_thread = None
+
+    def _set_naver_inquiry_status(self, text):
+        self._naver_inquiry_status_text = text
+        self._update_naver_inquiry_status_label()
+
+    def _update_naver_inquiry_status_label(self):
+        if self._dlg_naver_status is not None:
+            self._dlg_naver_status.setText(f"문의 알림: {self._naver_inquiry_status_text}")
+
+    def _on_naver_creds_edit_clicked(self):
+        """관리자용: client_id/secret 을 입력받아 토큰 발급으로 검증 후 공유 시트에 저장."""
+        if gspread is None:
+            QMessageBox.warning(self, "키 설정", "gspread 패키지가 필요합니다. (pip install gspread)")
+            return
+        if self._naver_creds_validate_thread is not None:
+            return
+        cid, ok = QInputDialog.getText(
+            self, "네이버 커머스API · client_id",
+            "client_id 를 입력하세요.\n(검증 후 직원 전원 공유 시트에 저장됩니다)",
+            QLineEdit.EchoMode.Normal, "",
+        )
+        if not ok:
+            return
+        cid = cid.strip()
+        if not cid:
+            QMessageBox.warning(self, "키 설정", "client_id 가 비어 있습니다.")
+            return
+        csec, ok = QInputDialog.getText(
+            self, "네이버 커머스API · client_secret",
+            "client_secret 을 입력하세요.",
+            QLineEdit.EchoMode.Password, "",
+        )
+        if not ok:
+            return
+        csec = csec.strip()
+        if not csec:
+            QMessageBox.warning(self, "키 설정", "client_secret 이 비어 있습니다.")
+            return
+        self._naver_pending_creds = (cid, csec)
+        self._set_naver_inquiry_status("키 검증 중…")
+        thread = NaverCredsValidateThread(cid, csec, self)
+        self._naver_creds_validate_thread = thread
+        thread.result_ready.connect(self._on_naver_creds_validated)
+        thread.finished.connect(self._cleanup_naver_creds_validate_thread)
+        thread.finished.connect(thread.deleteLater)
+        thread.start()
+
+    def _cleanup_naver_creds_validate_thread(self):
+        self._naver_creds_validate_thread = None
+
+    def _on_naver_creds_validated(self, payload: dict):
+        cid, csec = self._naver_pending_creds
+        if not (payload.get("ok") and payload.get("valid")):
+            err = payload.get("error", "토큰 발급 실패")
+            QMessageBox.warning(
+                self, "키 검증 실패",
+                f"이 client_id/secret 으로 토큰 발급에 실패했습니다.\n\n{err}\n\n"
+                "키를 다시 확인해 주세요. (저장하지 않았습니다)",
+            )
+            self._set_naver_inquiry_status("키 검증 실패 — 저장 안 함")
+            return
+        # 검증 통과 → 공유 「설정」 탭에 저장(전원 적용)
+        if self._tracking_config_write_thread is None:
+            thread = TrackingConfigWriteThread(
+                {CONFIG_KEY_NAVER_CLIENT_ID: cid, CONFIG_KEY_NAVER_CLIENT_SECRET: csec}, self)
+            self._tracking_config_write_thread = thread
+            thread.result_ready.connect(self._on_tracking_config_write_finished)
+            thread.finished.connect(self._cleanup_tracking_config_write_thread)
+            thread.finished.connect(thread.deleteLater)
+            thread.start()
+        self._set_naver_inquiry_status("키 유효함 ✓ (저장됨 · 전원 적용)")
 
     def get_app_setting(self, key, default=None):
         """database/app_settings.json 에서 단일 설정값을 읽습니다."""
