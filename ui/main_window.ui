@@ -1305,6 +1305,55 @@
          <number>12</number>
         </property>
         <item>
+         <layout class="QHBoxLayout" name="horizontalLayout_tracking_filter">
+          <property name="spacing">
+           <number>8</number>
+          </property>
+          <item>
+           <widget class="QLabel" name="label_tracking_filter">
+            <property name="text">
+             <string>보기</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QComboBox" name="comboBox_tracking_filter">
+            <item>
+             <property name="text">
+              <string>배송중</string>
+             </property>
+            </item>
+            <item>
+             <property name="text">
+              <string>오늘</string>
+             </property>
+            </item>
+            <item>
+             <property name="text">
+              <string>전체</string>
+             </property>
+            </item>
+           </widget>
+          </item>
+          <item>
+           <widget class="QLabel" name="label_tracking_count">
+            <property name="sizePolicy">
+             <sizepolicy hsizetype="Expanding" vsizetype="Preferred">
+              <horstretch>1</horstretch>
+              <verstretch>0</verstretch>
+             </sizepolicy>
+            </property>
+            <property name="text">
+             <string/>
+            </property>
+            <property name="alignment">
+             <set>Qt::AlignmentFlag::AlignRight|Qt::AlignmentFlag::AlignVCenter</set>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </item>
+        <item>
          <layout class="QHBoxLayout" name="horizontalLayout_tracking_actions">
           <property name="spacing">
            <number>8</number>
@@ -1366,55 +1415,6 @@
             </property>
             <property name="toolTip">
              <string>공유 시트의 미완료 송장을 우체국 종추적조회로 조회해 배송 상태를 갱신합니다.</string>
-            </property>
-           </widget>
-          </item>
-         </layout>
-        </item>
-        <item>
-         <layout class="QHBoxLayout" name="horizontalLayout_tracking_filter">
-          <property name="spacing">
-           <number>8</number>
-          </property>
-          <item>
-           <widget class="QLabel" name="label_tracking_filter">
-            <property name="text">
-             <string>보기</string>
-            </property>
-           </widget>
-          </item>
-          <item>
-           <widget class="QComboBox" name="comboBox_tracking_filter">
-            <item>
-             <property name="text">
-              <string>배송중</string>
-             </property>
-            </item>
-            <item>
-             <property name="text">
-              <string>오늘</string>
-             </property>
-            </item>
-            <item>
-             <property name="text">
-              <string>전체</string>
-             </property>
-            </item>
-           </widget>
-          </item>
-          <item>
-           <widget class="QLabel" name="label_tracking_count">
-            <property name="sizePolicy">
-             <sizepolicy hsizetype="Expanding" vsizetype="Preferred">
-              <horstretch>1</horstretch>
-              <verstretch>0</verstretch>
-             </sizepolicy>
-            </property>
-            <property name="text">
-             <string/>
-            </property>
-            <property name="alignment">
-             <set>Qt::AlignmentFlag::AlignRight|Qt::AlignmentFlag::AlignVCenter</set>
             </property>
            </widget>
           </item>
