@@ -18,7 +18,8 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QFileDialog, QMessageB
                               QInputDialog, QLineEdit, QTableWidgetItem, QLabel, 
                               QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QWidget,
                               QProgressBar, QFrame, QGraphicsOpacityEffect, QListWidget,
-                              QAbstractItemView, QGroupBox, QCheckBox, QSpinBox, QMenu)
+                              QAbstractItemView, QGroupBox, QCheckBox, QSpinBox, QMenu,
+                              QStyle, QProxyStyle)
 from PySide6.QtUiTools import QUiLoader
 from PySide6.QtCore import (
     QFile,
@@ -43,6 +44,7 @@ from PySide6.QtGui import (
     QPainter,
     QColor,
     QPen,
+    QPalette,
 )
 import requests
 from io import BytesIO
@@ -1031,6 +1033,18 @@ def run_naver_inquiry_poll_worker():
         }
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
+
+class NoHoverProxyStyle(QProxyStyle):
+    """표 항목의 마우스 오버(파란 호버) 하이라이트만 제거한다.
+    모델 배경색(item.setBackground 으로 칠한 위험행 빨강/주황)과 선택 하이라이트는
+    그대로 유지된다 — State_MouseOver 플래그만 그려지기 직전에 떼어낸다."""
+
+    def drawPrimitive(self, element, option, painter, widget=None):
+        if element in (QStyle.PrimitiveElement.PE_PanelItemViewItem,
+                       QStyle.PrimitiveElement.PE_PanelItemViewRow):
+            option.state &= ~QStyle.StateFlag.State_MouseOver
+        super().drawPrimitive(element, option, painter, widget)
 
 
 class CircularBusySpinner(QWidget):
@@ -4178,6 +4192,17 @@ class MainWindow(QMainWindow):
                 self._open_tracking_settings_dialog
             )
         if hasattr(self.ui, "tableWidget_tracking"):
+            # 마우스 올릴 때 생기는 파란 호버 하이라이트 제거(위험행 색칠·선택은 유지).
+            # 프록시 스타일은 파이썬 참조가 사라지면 GC 되므로 self 에 보관한다.
+            self._tracking_no_hover_style = NoHoverProxyStyle(
+                self.ui.tableWidget_tracking.style())
+            self.ui.tableWidget_tracking.setStyle(self._tracking_no_hover_style)
+            # 클릭(행 선택) 하이라이트를 진한 파랑 → 옅은 파스텔로(팔레트 방식이라
+            # item.setBackground 위험행 색칠을 깨지 않음). 글자색은 진하게 유지.
+            _tpal = self.ui.tableWidget_tracking.palette()
+            _tpal.setColor(QPalette.ColorRole.Highlight, QColor("#d8f0e6"))
+            _tpal.setColor(QPalette.ColorRole.HighlightedText, QColor("#1a202c"))
+            self.ui.tableWidget_tracking.setPalette(_tpal)
             self.ui.tableWidget_tracking.cellDoubleClicked.connect(
                 self._on_tracking_cell_double_clicked
             )
