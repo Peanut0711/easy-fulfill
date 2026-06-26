@@ -1923,7 +1923,7 @@ class MainWindow(QMainWindow):
 
     def _collect_stale_rows(self):
         """현재 목록에서 정체(미완료 + 기준시간 무이동) 행을 모읍니다.
-        반환: (list[(등기번호, 수취인, 상태)], stale_hours)."""
+        반환: (list[dict], stale_hours). dict: regino,name,status,where,event_time,from_event,elapsed_h."""
         values = self._tracking_list_values
         data = values[1:] if len(values) > 1 else []
         hours = 12
@@ -1938,9 +1938,19 @@ class MainWindow(QMainWindow):
         for row in data:
             if _cell(row, 7).strip().upper() == "Y":
                 continue
-            ref = self._parse_event_dt(_cell(row, 11)) or self._parse_event_dt(_cell(row, 1))
-            if ref is not None and (now_dt - ref).total_seconds() > hours * 3600:
-                out.append((_cell(row, 0), _cell(row, 4), _cell(row, 6)))
+            ev = self._parse_event_dt(_cell(row, 11))
+            ref = ev or self._parse_event_dt(_cell(row, 1))
+            if ref is None or (now_dt - ref).total_seconds() <= hours * 3600:
+                continue
+            out.append({
+                "regino": _cell(row, 0),
+                "name": _cell(row, 4),
+                "status": _cell(row, 6),
+                "where": _cell(row, 8),
+                "event_time": _cell(row, 11) if ev else "",
+                "from_event": ev is not None,
+                "elapsed_h": (now_dt - ref).total_seconds() / 3600.0,
+            })
         return out, hours
 
     def _maybe_notify_stale_to_slack(self):
@@ -1954,8 +1964,18 @@ class MainWindow(QMainWindow):
             return
         t = datetime.now().strftime("%Y-%m-%d %H:%M")
         lines = [f"⚠️ 배송 정체 {len(stale)}건 (기준 {hours}시간 무이동 · {t})"]
-        for tno, name, st in stale[:20]:
-            lines.append(f"• {tno} {name} — {st or '추적정보 없음'}")
+        for it in stale[:20]:
+            elapsed = f"{it['elapsed_h']:.0f}시간째"
+            if it["from_event"]:
+                where = it["where"] or "위치미상"
+                lines.append(
+                    f"• {it['regino']} {it['name']} — {it['status']} @ {where} "
+                    f"(마지막 {it['event_time']}, {elapsed} 무이동)"
+                )
+            else:
+                lines.append(
+                    f"• {it['regino']} {it['name']} — 추적정보 없음 ({elapsed} 경과)"
+                )
         if len(stale) > 20:
             lines.append(f"… 외 {len(stale) - 20}건")
         self._send_slack_async("\n".join(lines))
