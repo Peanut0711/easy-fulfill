@@ -1326,29 +1326,19 @@
            </widget>
           </item>
           <item>
-           <widget class="QPushButton" name="pushButton_tracking_help">
+           <widget class="QPushButton" name="pushButton_tracking_settings">
             <property name="minimumSize">
              <size>
-              <width>32</width>
-              <height>0</height>
+              <width>90</width>
+              <height>34</height>
              </size>
             </property>
             <property name="maximumSize">
              <size>
-              <width>36</width>
+              <width>110</width>
               <height>16777215</height>
              </size>
             </property>
-            <property name="text">
-             <string>?</string>
-            </property>
-            <property name="toolTip">
-             <string>배송추적 사용 안내 보기</string>
-            </property>
-           </widget>
-          </item>
-          <item>
-           <widget class="QPushButton" name="pushButton_tracking_settings">
             <property name="text">
              <string>설정</string>
             </property>
@@ -1362,12 +1352,12 @@
             <property name="minimumSize">
              <size>
               <width>90</width>
-              <height>36</height>
+              <height>34</height>
              </size>
             </property>
             <property name="maximumSize">
              <size>
-              <width>140</width>
+              <width>110</width>
               <height>16777215</height>
              </size>
             </property>
@@ -1397,7 +1387,7 @@
            <widget class="QComboBox" name="comboBox_tracking_filter">
             <item>
              <property name="text">
-              <string>미완료</string>
+              <string>배송중</string>
              </property>
             </item>
             <item>
@@ -1410,26 +1400,6 @@
               <string>전체</string>
              </property>
             </item>
-           </widget>
-          </item>
-          <item>
-           <widget class="QPushButton" name="pushButton_tracking_list_reload">
-            <property name="text">
-             <string>목록 새로고침</string>
-            </property>
-            <property name="toolTip">
-             <string>공유 시트에서 송장추적 목록을 다시 읽어옵니다.</string>
-            </property>
-           </widget>
-          </item>
-          <item>
-           <widget class="QPushButton" name="pushButton_tracking_refresh_one">
-            <property name="text">
-             <string>선택 새로고침</string>
-            </property>
-            <property name="toolTip">
-             <string>선택한 행의 등기번호 1건만 우체국으로 재조회해 갱신합니다. (더블클릭하면 우체국 웹조회가 열립니다)</string>
-            </property>
            </widget>
           </item>
           <item>

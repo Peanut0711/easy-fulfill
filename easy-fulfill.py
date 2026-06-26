@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QFileDialog, QMessageB
                               QInputDialog, QLineEdit, QTableWidgetItem, QLabel, 
                               QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QWidget,
                               QProgressBar, QFrame, QGraphicsOpacityEffect, QListWidget,
-                              QAbstractItemView, QGroupBox, QCheckBox, QSpinBox)
+                              QAbstractItemView, QGroupBox, QCheckBox, QSpinBox, QMenu)
 from PySide6.QtUiTools import QUiLoader
 from PySide6.QtCore import (
     QFile,
@@ -1469,6 +1469,11 @@ class MainWindow(QMainWindow):
         # 배송추적 목록(표) 뷰
         self._tracking_list_thread = None
         self._tracking_list_values = []  # 시트에서 읽어온 원본(헤더 포함)
+        # 목록 자동 갱신: 배송추적 탭을 보고 있을 때 주기적으로 시트를 다시 읽음(버튼 대체)
+        self._tracking_list_timer = QTimer(self)
+        self._tracking_list_timer.setInterval(120000)  # 2분
+        self._tracking_list_timer.timeout.connect(self._on_tracking_list_poll)
+        self._tracking_list_timer.start()
         self._tracking_refresh_one_thread = None
         self._slack_send_thread = None
         self._digest_thread = None
@@ -1762,9 +1767,16 @@ class MainWindow(QMainWindow):
             rl.addStretch(1)
             outer.addWidget(gb_risk)
 
+            bottom = QHBoxLayout()
+            btn_help = QPushButton("도움말")
+            btn_help.setToolTip("배송추적 사용 안내 보기")
+            btn_help.clicked.connect(self._on_tracking_help_clicked)
             btn_close = QPushButton("닫기")
             btn_close.clicked.connect(dlg.accept)
-            outer.addWidget(btn_close, alignment=Qt.AlignmentFlag.AlignRight)
+            bottom.addWidget(btn_help)
+            bottom.addStretch(1)
+            bottom.addWidget(btn_close)
+            outer.addLayout(bottom)
             self._tracking_settings_dialog = dlg
 
         self._update_status_displays()
@@ -1948,6 +1960,38 @@ class MainWindow(QMainWindow):
             return "허브정체"  # 물류센터/허브에서 정지 → 분실·사고 의심(최우선)
         return "이동정체"
 
+    def _on_tracking_list_poll(self):
+        """주기 타이머: 배송추적 탭을 보고 있을 때만 목록을 자동 재로딩."""
+        if gspread is None or self._tracking_list_thread is not None:
+            return
+        tw = getattr(self.ui, "tabWidget", None)
+        if tw is None:
+            return
+        cur = tw.currentWidget()
+        if cur is None or cur.objectName() != "tab_tracking":
+            return
+        self._load_tracking_list()
+
+    def _on_tracking_context_menu(self, pos):
+        """행 우클릭 메뉴: 단건 우체국 조회 / 우체국 웹조회(버튼 대체)."""
+        table = getattr(self.ui, "tableWidget_tracking", None)
+        if table is None:
+            return
+        item = table.itemAt(pos)
+        if item is not None:
+            table.setCurrentCell(item.row(), 0)
+        regino = self._selected_tracking_regino()
+        if not regino:
+            return
+        menu = QMenu(table)
+        act_query = menu.addAction("이 송장만 우체국 조회")
+        act_web = menu.addAction("우체국 웹조회 열기")
+        chosen = menu.exec(table.viewport().mapToGlobal(pos))
+        if chosen == act_query:
+            self._on_tracking_refresh_one_clicked()
+        elif chosen == act_web:
+            QDesktopServices.openUrl(QUrl(self._kpost_trace_web_url.format(regino=regino)))
+
     def _load_tracking_list(self):
         """공유 시트에서 송장추적 목록을 백그라운드로 읽어옵니다."""
         if gspread is None or self._tracking_list_thread is not None:
@@ -1983,7 +2027,7 @@ class MainWindow(QMainWindow):
         data_rows = values[1:] if len(values) > 1 else []
         total = len(data_rows)
 
-        mode = "미완료"
+        mode = "배송중"
         if hasattr(self.ui, "comboBox_tracking_filter"):
             mode = self.ui.comboBox_tracking_filter.currentText()
         today = date.today().strftime("%Y-%m-%d")
@@ -1995,7 +2039,7 @@ class MainWindow(QMainWindow):
             rows = [r for r in data_rows if _cell(r, 1).startswith(today)]
         elif mode == "전체":
             rows = list(data_rows)
-        else:  # 미완료
+        else:  # 배송중(=미완료): 완료여부 != Y
             rows = [r for r in data_rows if _cell(r, 7).strip().upper() != "Y"]
 
         # 위험 판정 기준(시간). 미완료 + 마지막 이벤트(없으면 등록) 후 N시간 무이동.
@@ -2006,6 +2050,7 @@ class MainWindow(QMainWindow):
         counts = {"허브정체": 0, "수거누락": 0, "이동정체": 0}
 
         cols = self._TRACKING_TABLE_COLUMNS
+        prev_regino = self._selected_tracking_regino()  # 자동 갱신 시 선택 유지용
         table.setSortingEnabled(False)
         table.clearContents()
         table.setColumnCount(len(cols))
@@ -2031,6 +2076,12 @@ class MainWindow(QMainWindow):
         header = table.horizontalHeader()
         if header is not None:
             header.setStretchLastSection(True)
+        if prev_regino:  # 자동 갱신 후 이전 선택 행 복원
+            for r in range(table.rowCount()):
+                it = table.item(r, 0)
+                if it is not None and it.text().strip() == prev_regino:
+                    table.setCurrentCell(r, 0)
+                    break
         if hasattr(self.ui, "label_tracking_count"):
             total_risk = sum(counts.values())
             txt = f"표시 {len(rows)}건 / 전체 {total}건"
@@ -3530,21 +3581,20 @@ class MainWindow(QMainWindow):
 
         if hasattr(self.ui, "pushButton_refresh_tracking"):
             self.ui.pushButton_refresh_tracking.clicked.connect(self.on_refresh_tracking_clicked)
-        if hasattr(self.ui, "pushButton_tracking_help"):
-            self.ui.pushButton_tracking_help.clicked.connect(self._on_tracking_help_clicked)
         if hasattr(self.ui, "pushButton_tracking_settings"):
             self.ui.pushButton_tracking_settings.clicked.connect(
                 self._open_tracking_settings_dialog
             )
-        if hasattr(self.ui, "pushButton_tracking_list_reload"):
-            self.ui.pushButton_tracking_list_reload.clicked.connect(self._load_tracking_list)
-        if hasattr(self.ui, "pushButton_tracking_refresh_one"):
-            self.ui.pushButton_tracking_refresh_one.clicked.connect(
-                self._on_tracking_refresh_one_clicked
-            )
         if hasattr(self.ui, "tableWidget_tracking"):
             self.ui.tableWidget_tracking.cellDoubleClicked.connect(
                 self._on_tracking_cell_double_clicked
+            )
+            # 단건 조회는 우클릭 메뉴로(버튼 제거)
+            self.ui.tableWidget_tracking.setContextMenuPolicy(
+                Qt.ContextMenuPolicy.CustomContextMenu
+            )
+            self.ui.tableWidget_tracking.customContextMenuRequested.connect(
+                self._on_tracking_context_menu
             )
         if hasattr(self.ui, "comboBox_tracking_filter"):
             self.ui.comboBox_tracking_filter.currentIndexChanged.connect(
