@@ -405,51 +405,6 @@
               </property>
              </widget>
             </item>
-            <item>
-             <layout class="QHBoxLayout" name="horizontalLayout_tracking_row">
-              <property name="spacing">
-               <number>8</number>
-              </property>
-              <item>
-               <widget class="QPushButton" name="pushButton_refresh_tracking">
-                <property name="minimumSize">
-                 <size>
-                  <width>120</width>
-                  <height>30</height>
-                 </size>
-                </property>
-                <property name="text">
-                 <string>배송추적 새로고침</string>
-                </property>
-                <property name="toolTip">
-                 <string>공유 시트의 미완료 송장을 스마트택배로 조회해 배송 상태를 갱신합니다.</string>
-                </property>
-               </widget>
-              </item>
-              <item>
-               <widget class="QLabel" name="label_tracking_summary">
-                <property name="sizePolicy">
-                 <sizepolicy hsizetype="Expanding" vsizetype="Preferred">
-                  <horstretch>1</horstretch>
-                  <verstretch>0</verstretch>
-                 </sizepolicy>
-                </property>
-                <property name="font">
-                 <font>
-                  <family>맑은 고딕</family>
-                  <pointsize>8</pointsize>
-                 </font>
-                </property>
-                <property name="text">
-                 <string>배송추적: API 키 설정 후 새로고침을 눌러 주세요.</string>
-                </property>
-                <property name="wordWrap">
-                 <bool>true</bool>
-                </property>
-               </widget>
-              </item>
-             </layout>
-            </item>
            </layout>
           </widget>
          </widget>
@@ -460,67 +415,6 @@
        <attribute name="title">
         <string>환경설정</string>
        </attribute>
-       <widget class="QGroupBox" name="groupBox_tracking_api">
-        <property name="geometry">
-         <rect>
-          <x>30</x>
-          <y>238</y>
-          <width>341</width>
-          <height>120</height>
-         </rect>
-        </property>
-        <property name="title">
-         <string>배송추적 (스마트택배 API)</string>
-        </property>
-        <widget class="QLabel" name="label_sweettracker_key">
-         <property name="geometry">
-          <rect>
-           <x>16</x>
-           <y>28</y>
-           <width>305</width>
-           <height>16</height>
-          </rect>
-         </property>
-         <property name="text">
-          <string>스마트택배 API 키 (t_key)</string>
-         </property>
-        </widget>
-        <widget class="QLineEdit" name="lineEdit_sweettracker_key">
-         <property name="geometry">
-          <rect>
-           <x>16</x>
-           <y>50</y>
-           <width>305</width>
-           <height>24</height>
-          </rect>
-         </property>
-         <property name="placeholderText">
-          <string>발급받은 API 키를 입력하세요</string>
-         </property>
-        </widget>
-        <widget class="QLabel" name="label_sweettracker_hint">
-         <property name="geometry">
-          <rect>
-           <x>16</x>
-           <y>82</y>
-           <width>305</width>
-           <height>32</height>
-          </rect>
-         </property>
-         <property name="font">
-          <font>
-           <family>맑은 고딕</family>
-           <pointsize>8</pointsize>
-          </font>
-         </property>
-         <property name="text">
-          <string>「주문·발송」 탭의 「배송추적 새로고침」으로 공유 시트의 우체국 배송 상태를 갱신합니다.</string>
-         </property>
-         <property name="wordWrap">
-          <bool>true</bool>
-         </property>
-        </widget>
-       </widget>
        <widget class="QGroupBox" name="groupBox_order_index">
         <property name="geometry">
          <rect>
@@ -1387,6 +1281,122 @@
            <string>실행 결과 로그가 여기에 표시됩니다.</string>
           </property>
          </widget>
+        </item>
+       </layout>
+      </widget>
+      <widget class="QWidget" name="tab_tracking">
+       <attribute name="title">
+        <string>배송추적</string>
+       </attribute>
+       <layout class="QVBoxLayout" name="verticalLayout_tracking">
+        <property name="spacing">
+         <number>10</number>
+        </property>
+        <property name="leftMargin">
+         <number>12</number>
+        </property>
+        <property name="topMargin">
+         <number>12</number>
+        </property>
+        <property name="rightMargin">
+         <number>12</number>
+        </property>
+        <property name="bottomMargin">
+         <number>12</number>
+        </property>
+        <item>
+         <widget class="QLabel" name="label_tracking_intro">
+          <property name="text">
+           <string>우체국 송장을 스마트택배 API로 조회해 공유 시트(「송장추적」 탭)의 배송 상태를 갱신합니다. 송장 불러오기·일괄발송 시 등기번호가 자동으로 누적됩니다.</string>
+          </property>
+          <property name="wordWrap">
+           <bool>true</bool>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QGroupBox" name="groupBox_tracking_api">
+          <property name="title">
+           <string>스마트택배 API</string>
+          </property>
+          <layout class="QVBoxLayout" name="verticalLayout_tracking_api">
+           <property name="spacing">
+            <number>6</number>
+           </property>
+           <item>
+            <widget class="QLabel" name="label_sweettracker_key">
+             <property name="text">
+              <string>API 키 (t_key)</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QLineEdit" name="lineEdit_sweettracker_key">
+             <property name="placeholderText">
+              <string>발급받은 스마트택배 API 키를 입력하세요</string>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </widget>
+        </item>
+        <item>
+         <layout class="QHBoxLayout" name="horizontalLayout_tracking_actions">
+          <property name="spacing">
+           <number>10</number>
+          </property>
+          <item>
+           <widget class="QPushButton" name="pushButton_refresh_tracking">
+            <property name="minimumSize">
+             <size>
+              <width>140</width>
+              <height>36</height>
+             </size>
+            </property>
+            <property name="maximumSize">
+             <size>
+              <width>180</width>
+              <height>16777215</height>
+             </size>
+            </property>
+            <property name="text">
+             <string>배송추적 새로고침</string>
+            </property>
+            <property name="toolTip">
+             <string>공유 시트의 미완료 송장을 스마트택배로 조회해 배송 상태를 갱신합니다.</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QLabel" name="label_tracking_summary">
+            <property name="sizePolicy">
+             <sizepolicy hsizetype="Expanding" vsizetype="Preferred">
+              <horstretch>1</horstretch>
+              <verstretch>0</verstretch>
+             </sizepolicy>
+            </property>
+            <property name="text">
+             <string>배송추적: API 키 설정 후 새로고침을 눌러 주세요.</string>
+            </property>
+            <property name="wordWrap">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </item>
+        <item>
+         <spacer name="verticalSpacer_tracking">
+          <property name="orientation">
+           <enum>Qt::Orientation::Vertical</enum>
+          </property>
+          <property name="sizeHint" stdset="0">
+           <size>
+            <width>0</width>
+            <height>0</height>
+           </size>
+          </property>
+         </spacer>
         </item>
        </layout>
       </widget>
