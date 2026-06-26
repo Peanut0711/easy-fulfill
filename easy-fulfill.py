@@ -1471,6 +1471,21 @@ class MainWindow(QMainWindow):
         cb.setChecked(checked)
         cb.blockSignals(False)
 
+        # 정체 기준 시간(기본 12h)
+        if hasattr(self.ui, "spinBox_stale_hours"):
+            try:
+                hours = int(self.get_app_setting("stale_hours", 12) or 12)
+            except (TypeError, ValueError):
+                hours = 12
+            sp = self.ui.spinBox_stale_hours
+            sp.blockSignals(True)
+            sp.setValue(hours)
+            sp.blockSignals(False)
+
+    def _on_stale_hours_changed(self, value):
+        self.set_app_setting("stale_hours", int(value))
+        self._populate_tracking_table()
+
     def save_app_settings(self):
         """앱 설정을 database/app_settings.json 에 저장합니다."""
         if not hasattr(self.ui, "checkBox_invoice_load_auto_generate"):
@@ -1684,6 +1699,14 @@ class MainWindow(QMainWindow):
         else:  # 미완료
             rows = [r for r in data_rows if _cell(r, 7).strip().upper() != "Y"]
 
+        # 정체 판정 기준(시간). 미완료 + 마지막 이벤트(없으면 등록) 후 N시간 무이동.
+        stale_hours = 12
+        if hasattr(self.ui, "spinBox_stale_hours"):
+            stale_hours = self.ui.spinBox_stale_hours.value()
+        now_dt = datetime.now()
+        stale_bg = QColor("#ffd6d6")
+        stale_count = 0
+
         cols = self._TRACKING_TABLE_COLUMNS
         table.setSortingEnabled(False)
         table.clearContents()
@@ -1691,15 +1714,46 @@ class MainWindow(QMainWindow):
         table.setHorizontalHeaderLabels([label for _, label in cols])
         table.setRowCount(len(rows))
         for r, row in enumerate(rows):
+            done = _cell(row, 7).strip().upper() == "Y"
+            ref = self._parse_event_dt(_cell(row, 11)) or self._parse_event_dt(_cell(row, 1))
+            is_stale = (
+                not done and ref is not None
+                and (now_dt - ref).total_seconds() > stale_hours * 3600
+            )
+            if is_stale:
+                stale_count += 1
             for c, (src_idx, _label) in enumerate(cols):
-                table.setItem(r, c, QTableWidgetItem(_cell(row, src_idx)))
+                item = QTableWidgetItem(_cell(row, src_idx))
+                if is_stale:
+                    item.setBackground(stale_bg)
+                table.setItem(r, c, item)
         table.setSortingEnabled(True)
         table.resizeColumnsToContents()
         header = table.horizontalHeader()
         if header is not None:
             header.setStretchLastSection(True)
         if hasattr(self.ui, "label_tracking_count"):
-            self.ui.label_tracking_count.setText(f"표시 {len(rows)}건 / 전체 {total}건")
+            txt = f"표시 {len(rows)}건 / 전체 {total}건"
+            if stale_count:
+                txt += f"  ·  ⚠️ 정체 {stale_count}건({stale_hours}h+)"
+                self.ui.label_tracking_count.setStyleSheet("color:#c0392b; font-weight:bold;")
+            else:
+                self.ui.label_tracking_count.setStyleSheet("")
+            self.ui.label_tracking_count.setText(txt)
+
+    @staticmethod
+    def _parse_event_dt(s):
+        """'2026.06.26 02:45'(이벤트) / '2026-06-26 02:45:00'(등록·조회) 등을 파싱."""
+        s = (s or "").strip()
+        if not s:
+            return None
+        for fmt in ("%Y.%m.%d %H:%M", "%Y.%m.%d %H:%M:%S",
+                    "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+            try:
+                return datetime.strptime(s, fmt)
+            except ValueError:
+                continue
+        return None
 
     def _selected_tracking_regino(self):
         table = getattr(self.ui, "tableWidget_tracking", None)
@@ -3017,6 +3071,8 @@ class MainWindow(QMainWindow):
             self.ui.comboBox_tracking_filter.currentIndexChanged.connect(
                 self._populate_tracking_table
             )
+        if hasattr(self.ui, "spinBox_stale_hours"):
+            self.ui.spinBox_stale_hours.valueChanged.connect(self._on_stale_hours_changed)
 
         if hasattr(self.ui, "pushButton_google_reauth"):
             self.ui.pushButton_google_reauth.clicked.connect(self._on_google_reauth_clicked)
