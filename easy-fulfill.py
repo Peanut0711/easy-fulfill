@@ -78,6 +78,12 @@ TRACKING_SHEET_HEADERS = [
 ]
 TRACKING_SHEET_PUSH_DEBOUNCE_MS = 1200
 SWEETTRACKER_KPOST_T_CODE = "04"  # 우체국택배 (companylist로 최종 확정 필요)
+# 공유 설정 탭: 회사 공통 키(스마트택배 등)를 한 곳에 두고 직원 전원이 읽어 쓴다.
+# (퍼블릭 레포에 키를 넣지 않기 위함 — 키는 코드가 아니라 비공개 시트에 저장)
+CONFIG_SHEET_TITLE = "설정"
+CONFIG_SHEET_HEADERS = ["키", "값"]
+CONFIG_KEY_SWEETTRACKER_KEY = "sweettracker_t_key"
+CONFIG_KEY_SWEETTRACKER_CODE = "sweettracker_t_code"
 # 시작 시 DB동기화 로딩 바: 약 2초+여유 안에 99%까지 선형 증가, 완료 시 즉시 100%
 STARTUP_SYNC_PROGRESS_CAP_MS = 2200
 STARTUP_SYNC_PROGRESS_TICK_MS = 40
@@ -397,8 +403,6 @@ def run_tracking_refresh_worker(t_key, t_code):
     """
     if gspread is None:
         return {"ok": False, "error": "gspread 패키지가 필요합니다. (pip install gspread)"}
-    if not t_key:
-        return {"ok": False, "error": "스마트택배 API 키가 설정되지 않았습니다. (환경설정에서 입력)"}
     try:
         from google_sheets_oauth import get_authorized_gspread_client
     except ImportError as e:
@@ -409,6 +413,18 @@ def run_tracking_refresh_worker(t_key, t_code):
         return {"ok": False, "error": f"smart_tracker 모듈을 불러올 수 없습니다: {e}"}
     try:
         gc = get_authorized_gspread_client()
+        # 로컬에 키가 없으면 공유 「설정」 탭에서 회사 공통 키를 가져온다.
+        if not t_key:
+            try:
+                cfg = _read_config_values_map(_standalone_open_config_ws(gc))
+                t_key = cfg.get(CONFIG_KEY_SWEETTRACKER_KEY, "") or t_key
+                t_code = t_code or cfg.get(CONFIG_KEY_SWEETTRACKER_CODE, "")
+            except Exception:
+                pass
+        if not t_key:
+            return {"ok": False, "error": "스마트택배 API 키가 없습니다. 「배송추적」 탭에서 키를 입력하거나 관리자에게 문의하세요."}
+        if not t_code:
+            t_code = SWEETTRACKER_KPOST_T_CODE
         ws = _standalone_open_tracking_ws(gc)
         values = ws.get_all_values()
         if len(values) <= 1:
@@ -464,6 +480,92 @@ def run_tracking_refresh_worker(t_key, t_code):
             "failed": failed,
             "checked": len(active),
         }
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+def _standalone_open_config_ws(gc):
+    """공유 「설정」 탭을 제목으로 찾고, 없으면 맨 끝에 생성하고 헤더를 기록합니다."""
+    spreadsheet = gc.open_by_key(SPREADSHEET_ID)
+    for ws in spreadsheet.worksheets():
+        if ws.title == CONFIG_SHEET_TITLE:
+            return ws
+    ws = spreadsheet.add_worksheet(title=CONFIG_SHEET_TITLE, rows=50, cols=2)
+    ws.update([list(CONFIG_SHEET_HEADERS)], range_name="A1", value_input_option="RAW")
+    print(f"✓ 스프레드시트에 「{CONFIG_SHEET_TITLE}」 탭을 만들었습니다.")
+    return ws
+
+
+def _read_config_values_map(ws):
+    """「설정」 탭을 키→값 dict 로 읽습니다(헤더 1행 제외)."""
+    cfg = {}
+    for row in ws.get_all_values()[1:]:
+        if not row:
+            continue
+        k = (row[0] or "").strip()
+        if not k:
+            continue
+        cfg[k] = (row[1] if len(row) > 1 else "").strip()
+    return cfg
+
+
+def run_tracking_config_read_worker():
+    """공유 「설정」 탭에서 회사 공통 키를 읽습니다.
+    반환 dict: ok, t_key, t_code — 또는 ok False, error.
+    """
+    if gspread is None:
+        return {"ok": False, "error": "gspread 패키지가 필요합니다. (pip install gspread)"}
+    try:
+        from google_sheets_oauth import get_authorized_gspread_client
+    except ImportError as e:
+        return {"ok": False, "error": str(e)}
+    try:
+        gc = get_authorized_gspread_client()
+        ws = _standalone_open_config_ws(gc)
+        cfg = _read_config_values_map(ws)
+        return {
+            "ok": True,
+            "t_key": cfg.get(CONFIG_KEY_SWEETTRACKER_KEY, ""),
+            "t_code": cfg.get(CONFIG_KEY_SWEETTRACKER_CODE, ""),
+        }
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+def run_tracking_config_write_worker(t_key, t_code):
+    """공유 「설정」 탭에 회사 공통 키를 upsert(없으면 추가, 있으면 갱신)합니다."""
+    if gspread is None:
+        return {"ok": False, "error": "gspread 패키지가 필요합니다. (pip install gspread)"}
+    try:
+        from google_sheets_oauth import get_authorized_gspread_client
+    except ImportError as e:
+        return {"ok": False, "error": str(e)}
+    try:
+        gc = get_authorized_gspread_client()
+        ws = _standalone_open_config_ws(gc)
+        values = ws.get_all_values()
+        key_to_row = {}
+        for ridx, row in enumerate(values[1:], start=2):
+            k = (row[0] if row else "").strip()
+            if k and k not in key_to_row:
+                key_to_row[k] = ridx
+        pairs = []
+        if t_key is not None:
+            pairs.append((CONFIG_KEY_SWEETTRACKER_KEY, str(t_key)))
+        if t_code:
+            pairs.append((CONFIG_KEY_SWEETTRACKER_CODE, str(t_code)))
+        new_rows = []
+        batch_updates = []
+        for k, v in pairs:
+            if k in key_to_row:
+                batch_updates.append({"range": f"B{key_to_row[k]}", "values": [[v]]})
+            else:
+                new_rows.append([k, v])
+        if new_rows:
+            ws.append_rows(new_rows, value_input_option="RAW")
+        if batch_updates:
+            ws.batch_update(batch_updates, value_input_option="RAW")
+        return {"ok": True}
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
@@ -632,6 +734,29 @@ class TrackingRefreshThread(QThread):
 
     def run(self):
         self.result_ready.emit(run_tracking_refresh_worker(self._t_key, self._t_code))
+
+
+class TrackingConfigReadThread(QThread):
+    """공유 「설정」 탭에서 회사 공통 키를 백그라운드로 읽습니다."""
+
+    result_ready = Signal(dict)
+
+    def run(self):
+        self.result_ready.emit(run_tracking_config_read_worker())
+
+
+class TrackingConfigWriteThread(QThread):
+    """공유 「설정」 탭에 회사 공통 키를 백그라운드로 저장합니다."""
+
+    result_ready = Signal(dict)
+
+    def __init__(self, t_key, t_code, parent=None):
+        super().__init__(parent)
+        self._t_key = t_key
+        self._t_code = t_code
+
+    def run(self):
+        self.result_ready.emit(run_tracking_config_write_worker(self._t_key, self._t_code))
 
 
 class DbSheetSyncThread(QThread):
@@ -1062,6 +1187,9 @@ class MainWindow(QMainWindow):
         self._tracking_push_timer.timeout.connect(self._flush_tracking_records)
         # 배송추적 새로고침(스마트택배 조회) 단일 실행 추적
         self._tracking_refresh_thread = None
+        # 공유 「설정」 탭 키 읽기/쓰기 단일 실행 추적
+        self._tracking_config_read_thread = None
+        self._tracking_config_write_thread = None
 
         self.load_ui()
         self.setup_connections()
@@ -1223,11 +1351,63 @@ class MainWindow(QMainWindow):
             print(f"! 앱 설정 저장 중 오류: {e}")
 
     def _on_sweettracker_key_edited(self):
-        """환경설정의 스마트택배 API 키 입력을 저장합니다."""
+        """스마트택배 API 키 입력을 로컬에 저장하고, 공유 「설정」 탭에도 반영합니다.
+        공유 시트에 저장하면 직원 전원이 자동으로 같은 키를 사용하게 됩니다."""
         if not hasattr(self.ui, "lineEdit_sweettracker_key"):
             return
         key = self.ui.lineEdit_sweettracker_key.text().strip()
         self.set_app_setting("sweettracker_t_key", key)
+        if not key:
+            return
+        if gspread is None or self._tracking_config_write_thread is not None:
+            return
+        code = str(self.get_app_setting("sweettracker_t_code", SWEETTRACKER_KPOST_T_CODE)
+                   or SWEETTRACKER_KPOST_T_CODE)
+        thread = TrackingConfigWriteThread(key, code, self)
+        self._tracking_config_write_thread = thread
+        thread.result_ready.connect(self._on_tracking_config_write_finished)
+        thread.finished.connect(self._cleanup_tracking_config_write_thread)
+        thread.finished.connect(thread.deleteLater)
+        thread.start()
+
+    def _on_tracking_config_write_finished(self, payload: dict):
+        if payload.get("ok"):
+            self._set_tracking_summary("API 키를 공유 시트에 저장했습니다. (직원 전원 자동 적용)")
+        else:
+            print(f"! 공유 설정 저장 실패: {payload.get('error', '')}")
+
+    def _cleanup_tracking_config_write_thread(self):
+        self._tracking_config_write_thread = None
+
+    def _begin_tracking_config_read(self):
+        """공유 「설정」 탭에서 회사 공통 키를 읽어 입력란·로컬에 반영합니다."""
+        if gspread is None or self._tracking_config_read_thread is not None:
+            return
+        thread = TrackingConfigReadThread(self)
+        self._tracking_config_read_thread = thread
+        thread.result_ready.connect(self._on_tracking_config_read_finished)
+        thread.finished.connect(self._cleanup_tracking_config_read_thread)
+        thread.finished.connect(thread.deleteLater)
+        thread.start()
+
+    def _on_tracking_config_read_finished(self, payload: dict):
+        if not payload.get("ok"):
+            return
+        t_key = str(payload.get("t_key", "") or "").strip()
+        t_code = str(payload.get("t_code", "") or "").strip()
+        if t_code:
+            self.set_app_setting("sweettracker_t_code", t_code)
+        if t_key:
+            self.set_app_setting("sweettracker_t_key", t_key)
+            if hasattr(self.ui, "lineEdit_sweettracker_key"):
+                w = self.ui.lineEdit_sweettracker_key
+                if w.text().strip() != t_key:
+                    w.blockSignals(True)
+                    w.setText(t_key)
+                    w.blockSignals(False)
+
+    def _cleanup_tracking_config_read_thread(self):
+        self._tracking_config_read_thread = None
 
     def get_app_setting(self, key, default=None):
         """database/app_settings.json 에서 단일 설정값을 읽습니다."""
@@ -2112,15 +2292,10 @@ class MainWindow(QMainWindow):
         if gspread is None:
             QMessageBox.warning(self, "배송추적", "gspread 패키지가 필요합니다. (pip install gspread)")
             return
-        t_key = str(self.get_app_setting("sweettracker_t_key", "") or "").strip()
-        if not t_key:
-            QMessageBox.warning(
-                self, "배송추적",
-                "스마트택배 API 키가 없습니다.\n「환경설정」에서 API 키를 입력해 주세요.",
-            )
-            return
         if self._tracking_refresh_thread is not None:
             return  # 이미 조회 중
+        # 로컬 키가 없어도 진행: 워커가 공유 「설정」 탭에서 회사 공통 키를 자동 조회한다.
+        t_key = str(self.get_app_setting("sweettracker_t_key", "") or "").strip()
         t_code = str(self.get_app_setting("sweettracker_t_code", SWEETTRACKER_KPOST_T_CODE)
                      or SWEETTRACKER_KPOST_T_CODE).strip()
         if hasattr(self.ui, "pushButton_refresh_tracking"):
@@ -2501,6 +2676,9 @@ class MainWindow(QMainWindow):
             self._refresh_google_auth_status_ui()
         if index == 2:
             self._refresh_db_sheet_sync_path_labels()
+        if index == 3:
+            # 배송추적 탭 진입 시 공유 시트의 회사 공통 키를 읽어 자동 반영
+            self._begin_tracking_config_read()
 
     def _on_db_sync_refresh_paths_clicked(self):
         self._refresh_db_sheet_sync_path_labels(reset_manual_overrides=True)
