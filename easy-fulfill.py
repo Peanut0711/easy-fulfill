@@ -506,6 +506,66 @@ def run_tracking_refresh_worker(regkey, progress_cb=None):
         return {"ok": False, "error": str(e)}
 
 
+def run_tracking_refresh_one_worker(regkey, regino):
+    """단일 등기번호만 우체국으로 조회해 「송장추적」 시트의 해당 행만 갱신합니다.
+    반환 dict: ok, regino, status, complete — 또는 ok False, error.
+    """
+    if gspread is None:
+        return {"ok": False, "error": "gspread 패키지가 필요합니다. (pip install gspread)"}
+    try:
+        from google_sheets_oauth import get_authorized_gspread_client
+    except ImportError as e:
+        return {"ok": False, "error": str(e)}
+    try:
+        import kpost_tracker
+    except ImportError as e:
+        return {"ok": False, "error": f"kpost_tracker 모듈을 불러올 수 없습니다: {e}"}
+    regino = str(regino).strip()
+    if not regino:
+        return {"ok": False, "error": "등기번호가 비어 있습니다."}
+    try:
+        gc = get_authorized_gspread_client()
+        if not regkey:
+            try:
+                cfg = _read_config_values_map(_standalone_open_config_ws(gc))
+                regkey = cfg.get(CONFIG_KEY_KPOST_REGKEY, "") or regkey
+            except Exception:
+                pass
+        if not regkey:
+            return {"ok": False, "error": "우체국 OpenAPI 인증키가 없습니다."}
+        ws = _standalone_open_tracking_ws(gc)
+        values = ws.get_all_values()
+        ridx = None
+        for i, row in enumerate(values[1:], start=2):
+            if (row[0] if row else "").strip() == regino:
+                ridx = i
+                break
+        if ridx is None:
+            return {"ok": False, "error": "시트에서 해당 등기번호를 찾지 못했습니다."}
+        s = kpost_tracker.summarize_tracking(regkey, regino)
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        code = (s.get("error_code") or "").upper()
+        if not s.get("ok"):
+            if code == "ERR-001":
+                ws.batch_update([{"range": f"G{ridx}:K{ridx}",
+                                  "values": [["추적정보 없음", "N", "", now, ""]]}],
+                                value_input_option="RAW")
+                return {"ok": True, "regino": regino, "status": "추적정보 없음", "complete": False}
+            ws.batch_update([{"range": f"J{ridx}:K{ridx}",
+                              "values": [[now, s.get("error", "조회 실패")]]}],
+                            value_input_option="RAW")
+            return {"ok": True, "regino": regino, "status": "(조회 실패)",
+                    "complete": False, "note": s.get("error", "")}
+        done_yn = "Y" if s.get("complete") else "N"
+        ws.batch_update([{"range": f"G{ridx}:K{ridx}",
+                          "values": [[s.get("status", ""), done_yn, s.get("where", ""), now, ""]]}],
+                        value_input_option="RAW")
+        return {"ok": True, "regino": regino, "status": s.get("status", ""),
+                "complete": s.get("complete", False)}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 def run_tracking_list_worker():
     """「송장추적」 시트 전체 값을 읽어 표시용으로 반환합니다.
     반환 dict: ok, values(헤더 포함 2차원 리스트) — 또는 ok False, error.
@@ -779,6 +839,20 @@ class TrackingListThread(QThread):
 
     def run(self):
         self.result_ready.emit(run_tracking_list_worker())
+
+
+class TrackingRefreshOneThread(QThread):
+    """단일 등기번호만 우체국으로 조회·갱신(백그라운드)."""
+
+    result_ready = Signal(dict)
+
+    def __init__(self, regkey, regino, parent=None):
+        super().__init__(parent)
+        self._regkey = regkey
+        self._regino = regino
+
+    def run(self):
+        self.result_ready.emit(run_tracking_refresh_one_worker(self._regkey, self._regino))
 
 
 class TrackingConfigReadThread(QThread):
@@ -1260,6 +1334,12 @@ class MainWindow(QMainWindow):
         # 배송추적 목록(표) 뷰
         self._tracking_list_thread = None
         self._tracking_list_values = []  # 시트에서 읽어온 원본(헤더 포함)
+        self._tracking_refresh_one_thread = None
+        # 우체국 등기 웹조회 URL 템플릿
+        self._kpost_trace_web_url = (
+            "https://service.epost.go.kr/trace.RetrieveDomRigiTraceList.comm"
+            "?sid1={regino}&displayHeader=N"
+        )
 
         self.load_ui()
         self.setup_connections()
@@ -1616,6 +1696,66 @@ class MainWindow(QMainWindow):
             header.setStretchLastSection(True)
         if hasattr(self.ui, "label_tracking_count"):
             self.ui.label_tracking_count.setText(f"표시 {len(rows)}건 / 전체 {total}건")
+
+    def _selected_tracking_regino(self):
+        table = getattr(self.ui, "tableWidget_tracking", None)
+        if table is None:
+            return ""
+        r = table.currentRow()
+        if r < 0:
+            return ""
+        item = table.item(r, 0)  # 0열 = 등기번호
+        return item.text().strip() if item is not None else ""
+
+    def _on_tracking_cell_double_clicked(self, row, _col):
+        """행 더블클릭 → 그 등기번호의 우체국 배송조회 웹페이지를 엽니다."""
+        table = getattr(self.ui, "tableWidget_tracking", None)
+        if table is None:
+            return
+        item = table.item(row, 0)
+        regino = item.text().strip() if item is not None else ""
+        if regino:
+            QDesktopServices.openUrl(QUrl(self._kpost_trace_web_url.format(regino=regino)))
+
+    def _on_tracking_refresh_one_clicked(self):
+        """선택한 행의 등기번호 1건만 우체국으로 재조회해 갱신합니다."""
+        if gspread is None:
+            QMessageBox.warning(self, "배송추적", "gspread 패키지가 필요합니다. (pip install gspread)")
+            return
+        if self._tracking_refresh_one_thread is not None:
+            return
+        regino = self._selected_tracking_regino()
+        if not regino:
+            QMessageBox.information(self, "선택 새로고침", "먼저 표에서 행(등기번호)을 선택해 주세요.")
+            return
+        regkey = self._get_kpost_regkey()
+        btn = getattr(self.ui, "pushButton_tracking_refresh_one", None)
+        if btn is not None:
+            btn.setEnabled(False)
+        self._set_tracking_summary(f"{regino} 조회 중…")
+        thread = TrackingRefreshOneThread(regkey, regino, self)
+        self._tracking_refresh_one_thread = thread
+        thread.result_ready.connect(self._on_tracking_refresh_one_finished)
+        thread.finished.connect(self._cleanup_tracking_refresh_one_thread)
+        thread.finished.connect(thread.deleteLater)
+        thread.start()
+
+    def _on_tracking_refresh_one_finished(self, payload: dict):
+        if payload.get("ok"):
+            done = " (배달완료)" if payload.get("complete") else ""
+            self._set_tracking_summary(f"{payload.get('regino', '')}: {payload.get('status', '')}{done}")
+            self._load_tracking_list()
+        else:
+            QMessageBox.warning(
+                self, "선택 새로고침",
+                f"조회하지 못했습니다.\n\n{payload.get('error', '')}",
+            )
+
+    def _cleanup_tracking_refresh_one_thread(self):
+        self._tracking_refresh_one_thread = None
+        btn = getattr(self.ui, "pushButton_tracking_refresh_one", None)
+        if btn is not None:
+            btn.setEnabled(True)
 
     def get_app_setting(self, key, default=None):
         """database/app_settings.json 에서 단일 설정값을 읽습니다."""
@@ -2861,6 +3001,14 @@ class MainWindow(QMainWindow):
             )
         if hasattr(self.ui, "pushButton_tracking_list_reload"):
             self.ui.pushButton_tracking_list_reload.clicked.connect(self._load_tracking_list)
+        if hasattr(self.ui, "pushButton_tracking_refresh_one"):
+            self.ui.pushButton_tracking_refresh_one.clicked.connect(
+                self._on_tracking_refresh_one_clicked
+            )
+        if hasattr(self.ui, "tableWidget_tracking"):
+            self.ui.tableWidget_tracking.cellDoubleClicked.connect(
+                self._on_tracking_cell_double_clicked
+            )
         if hasattr(self.ui, "comboBox_tracking_filter"):
             self.ui.comboBox_tracking_filter.currentIndexChanged.connect(
                 self._populate_tracking_table

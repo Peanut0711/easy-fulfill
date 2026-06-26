@@ -60,13 +60,25 @@ def _parse_error(root):
     return None
 
 
+def _is_admin_receipt(ev):
+    """선구분-후접수 등 '행정상 접수' 이벤트인지. (우체국 웹도 현재상태에서 제외)"""
+    return ev.get("status") == "접수" and (
+        "선구분" in ev.get("reason", "") or "후접수" in ev.get("reason", "")
+    )
+
+
 def parse_tracking(xml_text):
     """종추적 XML → 요약 dict.
-    반환: {ok, error_code, error, complete, status, where, time, recipient}
-    (이벤트는 시간순으로 반복되므로 문서상 마지막 값이 최신 상태)
+
+    실제 구조: <trace> ... <itemlist><item> 안에 sortingdate/eventhms/
+    eventregiponm/tracestatus/nondelivreasnnm 가 단계별로 반복. 최상위 eventnm/
+    eventymd 는 '배달결과' 요약(배달완료 시에만 채워짐).
+
+    반환: {ok, error_code, error, complete, status, where, time, recipient, events}
+      events: [{date, time, where, status, reason} ...] 시간순
     """
     base = {"ok": False, "error_code": "", "error": "", "complete": False,
-            "status": "", "where": "", "time": "", "recipient": ""}
+            "status": "", "where": "", "time": "", "recipient": "", "events": []}
     try:
         root = ET.fromstring(xml_text)
     except ET.ParseError:
@@ -77,34 +89,54 @@ def parse_tracking(xml_text):
         base.update(error_code=err[0], error=err[1])
         return base
 
-    statuses, wheres, ymds, hmss, status_texts = [], [], [], [], []
     recipient = ""
+    top_eventnm = ""
+    events = []
     for el in root.iter():
         ln = _local(el.tag)
-        txt = (el.text or "").strip()
-        if not txt:
-            continue
         if ln == "recevnm" and not recipient:
-            recipient = txt
-        elif ln == "eventnm":
-            statuses.append(txt)
-        elif ln == "eventregiponm":
-            wheres.append(txt)
-        elif ln == "eventymd":
-            ymds.append(txt)
-        elif ln == "eventhms":
-            hmss.append(txt)
-        elif ln in ("tracestatus", "delivrsltnm"):
-            status_texts.append(txt)
+            recipient = (el.text or "").strip()
+        elif ln == "eventnm" and not top_eventnm:
+            top_eventnm = (el.text or "").strip()
+        elif ln == "item":
+            ev = {"date": "", "time": "", "where": "", "status": "", "reason": ""}
+            for ch in el:
+                cln = _local(ch.tag)
+                t = (ch.text or "").strip()
+                if cln == "sortingdate":
+                    ev["date"] = t
+                elif cln == "eventhms":
+                    ev["time"] = t
+                elif cln == "eventregiponm":
+                    ev["where"] = t
+                elif cln == "tracestatus":
+                    ev["status"] = t
+                elif cln == "nondelivreasnnm":
+                    ev["reason"] = t
+            if any(ev.values()):
+                events.append(ev)
 
-    blob = " ".join(statuses + status_texts)
-    complete = any(k in blob for k in COMPLETE_KEYWORDS)
-    status = statuses[-1] if statuses else (status_texts[-1] if status_texts else "")
-    where = wheres[-1] if wheres else ""
-    when = ((ymds[-1] if ymds else "") + " " + (hmss[-1] if hmss else "")).strip()
-    base.update(ok=True, complete=complete,
-                status=status or ("배달완료" if complete else ""),
-                where=where, time=when, recipient=recipient)
+    events.sort(key=lambda e: (e.get("date", ""), e.get("time", "")))
+    statuses = [e["status"] for e in events]
+    complete = any(k in top_eventnm for k in COMPLETE_KEYWORDS) or any(
+        any(k in s for k in COMPLETE_KEYWORDS) for s in statuses
+    )
+
+    if complete:
+        done = next((e for e in reversed(events)
+                     if any(k in e["status"] for k in COMPLETE_KEYWORDS)), None)
+        cur = done or (events[-1] if events else None)
+        status = "배달완료"
+    else:
+        # 현재상태: 선구분-후접수 같은 행정 접수는 제외하고 가장 최신(우체국 웹과 동일)
+        meaningful = [e for e in events if not _is_admin_receipt(e)]
+        cur = meaningful[-1] if meaningful else (events[-1] if events else None)
+        status = cur["status"] if cur else ""
+
+    where = cur["where"] if cur else ""
+    when = ((cur["date"] + " " + cur["time"]).strip()) if cur else ""
+    base.update(ok=True, complete=complete, status=status, where=where,
+                time=when, recipient=recipient, events=events)
     return base
 
 

@@ -1451,6 +1451,16 @@
            </widget>
           </item>
           <item>
+           <widget class="QPushButton" name="pushButton_tracking_refresh_one">
+            <property name="text">
+             <string>선택 새로고침</string>
+            </property>
+            <property name="toolTip">
+             <string>선택한 행의 등기번호 1건만 우체국으로 재조회해 갱신합니다. (더블클릭하면 우체국 웹조회가 열립니다)</string>
+            </property>
+           </widget>
+          </item>
+          <item>
            <widget class="QLabel" name="label_tracking_count">
             <property name="sizePolicy">
              <sizepolicy hsizetype="Expanding" vsizetype="Preferred">
