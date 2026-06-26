@@ -1335,7 +1335,7 @@
           <item>
            <widget class="QLabel" name="label_tracking_filter">
             <property name="text">
-             <string>보기</string>
+             <string>분류</string>
             </property>
            </widget>
           </item>
