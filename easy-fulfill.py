@@ -397,8 +397,9 @@ def run_tracking_upsert_worker(records):
         return {"ok": False, "error": str(e)}
 
 
-def run_tracking_refresh_worker(t_key, t_code):
+def run_tracking_refresh_worker(t_key, t_code, progress_cb=None):
     """「송장추적」 시트의 미완료 행만 골라 스마트택배로 조회하고 상태를 갱신합니다.
+    progress_cb(done, total)이 주어지면 진행 상황을 보고합니다.
     반환 dict: ok, total, complete, progress, failed, checked — 또는 ok False, error.
     """
     if gspread is None:
@@ -447,7 +448,13 @@ def run_tracking_refresh_worker(t_key, t_code):
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         complete = progress = failed = 0
         batch_updates = []
-        for ridx, tno, code in active:
+        total_active = len(active)
+        for done_i, (ridx, tno, code) in enumerate(active, start=1):
+            if progress_cb is not None:
+                try:
+                    progress_cb(done_i, total_active)
+                except Exception:
+                    pass
             payload = smart_tracker.fetch_tracking_info(t_key, code, tno)
             s = smart_tracker.summarize_tracking(payload)
             if not s.get("ok"):
@@ -480,6 +487,24 @@ def run_tracking_refresh_worker(t_key, t_code):
             "failed": failed,
             "checked": len(active),
         }
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+def run_tracking_list_worker():
+    """「송장추적」 시트 전체 값을 읽어 표시용으로 반환합니다.
+    반환 dict: ok, values(헤더 포함 2차원 리스트) — 또는 ok False, error.
+    """
+    if gspread is None:
+        return {"ok": False, "error": "gspread 패키지가 필요합니다. (pip install gspread)"}
+    try:
+        from google_sheets_oauth import get_authorized_gspread_client
+    except ImportError as e:
+        return {"ok": False, "error": str(e)}
+    try:
+        gc = get_authorized_gspread_client()
+        ws = _standalone_open_tracking_ws(gc)
+        return {"ok": True, "values": ws.get_all_values()}
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
@@ -726,6 +751,7 @@ class TrackingRefreshThread(QThread):
     """「송장추적」 시트 미완료 행을 스마트택배로 조회·갱신(백그라운드)."""
 
     result_ready = Signal(dict)
+    progress = Signal(int, int)  # (done, total)
 
     def __init__(self, t_key, t_code, parent=None):
         super().__init__(parent)
@@ -733,7 +759,18 @@ class TrackingRefreshThread(QThread):
         self._t_code = t_code
 
     def run(self):
-        self.result_ready.emit(run_tracking_refresh_worker(self._t_key, self._t_code))
+        self.result_ready.emit(
+            run_tracking_refresh_worker(self._t_key, self._t_code, progress_cb=self.progress.emit)
+        )
+
+
+class TrackingListThread(QThread):
+    """「송장추적」 시트 전체를 백그라운드로 읽어 표 표시용으로 반환합니다."""
+
+    result_ready = Signal(dict)
+
+    def run(self):
+        self.result_ready.emit(run_tracking_list_worker())
 
 
 class TrackingConfigReadThread(QThread):
@@ -1213,6 +1250,9 @@ class MainWindow(QMainWindow):
         self._tracking_key_validate_thread = None
         self._key_validate_mode = "status"
         self._key_validate_pending_key = ""
+        # 배송추적 목록(표) 뷰
+        self._tracking_list_thread = None
+        self._tracking_list_values = []  # 시트에서 읽어온 원본(헤더 포함)
 
         self.load_ui()
         self.setup_connections()
@@ -1502,11 +1542,83 @@ class MainWindow(QMainWindow):
         self._tracking_config_read_thread = None
 
     def _enter_tracking_tab(self):
-        """배송추적 탭 진입: 공유 키를 받아 상태 텍스트를 갱신합니다."""
+        """배송추적 탭 진입: 공유 키 상태 갱신 + 목록(표) 로드."""
         if gspread is not None:
             self._begin_tracking_config_read()  # 완료 후 _refresh_key_status 호출
         else:
             self._refresh_key_status()
+        self._load_tracking_list()
+
+    # ── 배송추적 목록(표) ────────────────────────────────────────────────
+    # 표시 컬럼: (시트 컬럼 인덱스, 헤더 라벨)
+    _TRACKING_TABLE_COLUMNS = [
+        (0, "등기번호"), (4, "수취인명"), (2, "스토어"), (3, "주문번호"),
+        (6, "배송상태"), (7, "완료"), (8, "마지막위치"), (9, "최근조회"), (10, "비고"),
+    ]
+
+    def _load_tracking_list(self):
+        """공유 시트에서 송장추적 목록을 백그라운드로 읽어옵니다."""
+        if gspread is None or self._tracking_list_thread is not None:
+            return
+        if hasattr(self.ui, "label_tracking_count"):
+            self.ui.label_tracking_count.setText("목록 불러오는 중…")
+        thread = TrackingListThread(self)
+        self._tracking_list_thread = thread
+        thread.result_ready.connect(self._on_tracking_list_finished)
+        thread.finished.connect(self._cleanup_tracking_list_thread)
+        thread.finished.connect(thread.deleteLater)
+        thread.start()
+
+    def _on_tracking_list_finished(self, payload: dict):
+        if not payload.get("ok"):
+            if hasattr(self.ui, "label_tracking_count"):
+                self.ui.label_tracking_count.setText("목록 불러오기 실패")
+            return
+        self._tracking_list_values = payload.get("values", []) or []
+        self._populate_tracking_table()
+
+    def _cleanup_tracking_list_thread(self):
+        self._tracking_list_thread = None
+
+    def _populate_tracking_table(self, *_args):
+        table = getattr(self.ui, "tableWidget_tracking", None)
+        if table is None:
+            return
+        values = self._tracking_list_values
+        data_rows = values[1:] if len(values) > 1 else []
+        total = len(data_rows)
+
+        mode = "미완료"
+        if hasattr(self.ui, "comboBox_tracking_filter"):
+            mode = self.ui.comboBox_tracking_filter.currentText()
+        today = date.today().strftime("%Y-%m-%d")
+
+        def _cell(row, idx):
+            return row[idx] if idx < len(row) else ""
+
+        if mode == "오늘":
+            rows = [r for r in data_rows if _cell(r, 1).startswith(today)]
+        elif mode == "전체":
+            rows = list(data_rows)
+        else:  # 미완료
+            rows = [r for r in data_rows if _cell(r, 7).strip().upper() != "Y"]
+
+        cols = self._TRACKING_TABLE_COLUMNS
+        table.setSortingEnabled(False)
+        table.clearContents()
+        table.setColumnCount(len(cols))
+        table.setHorizontalHeaderLabels([label for _, label in cols])
+        table.setRowCount(len(rows))
+        for r, row in enumerate(rows):
+            for c, (src_idx, _label) in enumerate(cols):
+                table.setItem(r, c, QTableWidgetItem(_cell(row, src_idx)))
+        table.setSortingEnabled(True)
+        table.resizeColumnsToContents()
+        header = table.horizontalHeader()
+        if header is not None:
+            header.setStretchLastSection(True)
+        if hasattr(self.ui, "label_tracking_count"):
+            self.ui.label_tracking_count.setText(f"표시 {len(rows)}건 / 전체 {total}건")
 
     def get_app_setting(self, key, default=None):
         """database/app_settings.json 에서 단일 설정값을 읽습니다."""
@@ -2422,10 +2534,14 @@ class MainWindow(QMainWindow):
         self._set_tracking_summary("배송추적 조회 중…")
         thread = TrackingRefreshThread(t_key, t_code, self)
         self._tracking_refresh_thread = thread
+        thread.progress.connect(self._on_tracking_refresh_progress)
         thread.result_ready.connect(self._on_tracking_refresh_finished)
         thread.finished.connect(self._cleanup_tracking_refresh_thread)
         thread.finished.connect(thread.deleteLater)
         thread.start()
+
+    def _on_tracking_refresh_progress(self, done: int, total: int):
+        self._set_tracking_summary(f"배송추적 조회 중… ({done}/{total})")
 
     def _on_tracking_refresh_finished(self, payload: dict):
         if payload.get("ok"):
@@ -2439,6 +2555,8 @@ class MainWindow(QMainWindow):
                     f"진행 {payload.get('progress', 0)} / 실패 {payload.get('failed', 0)} "
                     f"(갱신 {t})"
                 )
+            # 갱신된 상태를 표에 반영
+            self._load_tracking_list()
         else:
             err = payload.get("error", "")
             self._set_tracking_summary("배송추적 조회 실패")
@@ -2742,6 +2860,12 @@ class MainWindow(QMainWindow):
         if hasattr(self.ui, "pushButton_tracking_key_edit"):
             self.ui.pushButton_tracking_key_edit.clicked.connect(
                 self._on_tracking_key_edit_clicked
+            )
+        if hasattr(self.ui, "pushButton_tracking_list_reload"):
+            self.ui.pushButton_tracking_list_reload.clicked.connect(self._load_tracking_list)
+        if hasattr(self.ui, "comboBox_tracking_filter"):
+            self.ui.comboBox_tracking_filter.currentIndexChanged.connect(
+                self._populate_tracking_table
             )
 
         if hasattr(self.ui, "pushButton_google_reauth"):

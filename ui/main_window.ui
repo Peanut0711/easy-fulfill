@@ -1410,17 +1410,79 @@
          </layout>
         </item>
         <item>
-         <spacer name="verticalSpacer_tracking">
-          <property name="orientation">
-           <enum>Qt::Orientation::Vertical</enum>
+         <layout class="QHBoxLayout" name="horizontalLayout_tracking_filter">
+          <property name="spacing">
+           <number>8</number>
           </property>
-          <property name="sizeHint" stdset="0">
-           <size>
-            <width>0</width>
-            <height>0</height>
-           </size>
+          <item>
+           <widget class="QLabel" name="label_tracking_filter">
+            <property name="text">
+             <string>보기</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QComboBox" name="comboBox_tracking_filter">
+            <item>
+             <property name="text">
+              <string>미완료</string>
+             </property>
+            </item>
+            <item>
+             <property name="text">
+              <string>오늘</string>
+             </property>
+            </item>
+            <item>
+             <property name="text">
+              <string>전체</string>
+             </property>
+            </item>
+           </widget>
+          </item>
+          <item>
+           <widget class="QPushButton" name="pushButton_tracking_list_reload">
+            <property name="text">
+             <string>목록 새로고침</string>
+            </property>
+            <property name="toolTip">
+             <string>공유 시트에서 송장추적 목록을 다시 읽어옵니다.</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QLabel" name="label_tracking_count">
+            <property name="sizePolicy">
+             <sizepolicy hsizetype="Expanding" vsizetype="Preferred">
+              <horstretch>1</horstretch>
+              <verstretch>0</verstretch>
+             </sizepolicy>
+            </property>
+            <property name="text">
+             <string/>
+            </property>
+            <property name="alignment">
+             <set>Qt::AlignmentFlag::AlignRight|Qt::AlignmentFlag::AlignVCenter</set>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </item>
+        <item>
+         <widget class="QTableWidget" name="tableWidget_tracking">
+          <property name="editTriggers">
+           <set>QAbstractItemView::EditTrigger::NoEditTriggers</set>
           </property>
-         </spacer>
+          <property name="alternatingRowColors">
+           <bool>true</bool>
+          </property>
+          <property name="selectionBehavior">
+           <enum>QAbstractItemView::SelectionBehavior::SelectRows</enum>
+          </property>
+          <property name="sortingEnabled">
+           <bool>true</bool>
+          </property>
+         </widget>
         </item>
        </layout>
       </widget>
