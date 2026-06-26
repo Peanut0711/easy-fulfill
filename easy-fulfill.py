@@ -672,7 +672,7 @@ def run_tracking_config_write_worker(updates):
 
 
 def run_digest_send_worker(webhook_url, text, today_str):
-    """하루 1회 다이제스트 전송. 공유 「설정」 탭의 digest_last_date 로 4PC 중복 방지.
+    """하루 1회 다이제스트 전송. 공유 「설정」 탭의 digest_last_date 로 중복 방지.
     오늘 이미 보냈으면 전송하지 않는다. 반환 {ok, sent} 또는 {ok False, error}."""
     if gspread is None:
         return {"ok": False, "error": "gspread 패키지가 필요합니다.", "sent": False}
@@ -2065,7 +2065,7 @@ class MainWindow(QMainWindow):
 
     def _maybe_send_daily_digest(self):
         """전체 새로고침 직후, 일일 알림이 켜져 있고 위험 건이 있으면 하루 1통 다이제스트.
-        4PC 중복은 공유 「설정」 탭의 발송 날짜로 방지(오늘 이미 보냈으면 전송 안 함)."""
+        중복은 공유 「설정」 탭의 발송 날짜로 방지(오늘 이미 보냈으면 전송 안 함)."""
         if not bool(self.get_app_setting("slack_auto_notify", False)):
             return
         webhook = str(self.get_app_setting("slack_webhook_url", "") or "").strip()
