@@ -1313,18 +1313,18 @@
            <widget class="QPushButton" name="pushButton_refresh_tracking">
             <property name="minimumSize">
              <size>
-              <width>140</width>
+              <width>90</width>
               <height>36</height>
              </size>
             </property>
             <property name="maximumSize">
              <size>
-              <width>180</width>
+              <width>140</width>
               <height>16777215</height>
              </size>
             </property>
             <property name="text">
-             <string>배송추적 새로고침</string>
+             <string>새로고침</string>
             </property>
             <property name="toolTip">
              <string>공유 시트의 미완료 송장을 우체국 종추적조회로 조회해 배송 상태를 갱신합니다.</string>
@@ -1340,7 +1340,7 @@
              </sizepolicy>
             </property>
             <property name="text">
-             <string>배송추적: 인증키 설정 후 새로고침을 눌러 주세요.</string>
+             <string/>
             </property>
             <property name="wordWrap">
              <bool>true</bool>
