@@ -1773,8 +1773,8 @@ class MainWindow(QMainWindow):
             btn_help.clicked.connect(self._on_tracking_help_clicked)
             btn_close = QPushButton("닫기")
             btn_close.clicked.connect(dlg.accept)
-            bottom.addWidget(btn_help)
             bottom.addStretch(1)
+            bottom.addWidget(btn_help)
             bottom.addWidget(btn_close)
             outer.addLayout(bottom)
             self._tracking_settings_dialog = dlg
