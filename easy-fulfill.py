@@ -69,6 +69,15 @@ ORDER_INDEX_SHEET_TITLE = "일별 주문번호"
 ORDER_INDEX_SHEET_HEADERS = ["날짜", "네이버", "쿠팡", "지마켓"]
 ORDER_INDEX_SHEET_POLL_MS = 150_000  # 2.5분 (2~3분 간격)
 ORDER_INDEX_SHEET_PUSH_DEBOUNCE_MS = 800
+# 송장 배송추적(우체국·스마트택배 API) — 직원 5명 공유용 스프레드시트 탭.
+# 주문 인덱스 탭(고정 인덱스 2)을 깨지 않도록 제목으로 찾고 없으면 맨 끝에 생성한다.
+TRACKING_SHEET_TITLE = "송장추적"
+TRACKING_SHEET_HEADERS = [
+    "등기번호", "등록일시", "스토어", "주문번호", "수취인명",
+    "택배사코드", "배송상태", "완료여부", "마지막위치", "최근조회시각", "비고",
+]
+TRACKING_SHEET_PUSH_DEBOUNCE_MS = 1200
+SWEETTRACKER_KPOST_T_CODE = "04"  # 우체국택배 (companylist로 최종 확정 필요)
 # 시작 시 DB동기화 로딩 바: 약 2초+여유 안에 99%까지 선형 증가, 완료 시 즉시 100%
 STARTUP_SYNC_PROGRESS_CAP_MS = 2200
 STARTUP_SYNC_PROGRESS_TICK_MS = 40
@@ -269,6 +278,196 @@ def run_order_index_write_worker(naver, coupang, gmarket):
         return {"ok": False, "error": str(e)}
 
 
+def _standalone_open_tracking_ws(gc):
+    """백그라운드 스레드용. 제목으로 「송장추적」 탭을 찾고, 없으면 맨 끝에 생성하고
+    헤더를 기록합니다. (주문 인덱스 탭의 고정 인덱스를 깨지 않도록 항상 끝에 추가.)"""
+    spreadsheet = gc.open_by_key(SPREADSHEET_ID)
+    for ws in spreadsheet.worksheets():
+        if ws.title == TRACKING_SHEET_TITLE:
+            return ws
+    ws = spreadsheet.add_worksheet(
+        title=TRACKING_SHEET_TITLE, rows=2000, cols=len(TRACKING_SHEET_HEADERS)
+    )
+    ws.update([list(TRACKING_SHEET_HEADERS)], range_name="A1", value_input_option="RAW")
+    print(f"✓ 스프레드시트에 「{TRACKING_SHEET_TITLE}」 탭을 만들었습니다.")
+    return ws
+
+
+def _normalize_tracking_no(value):
+    """등기번호를 시트 키로 쓰기 위한 문자열 정규화 (소수점·nan·공백 제거)."""
+    if value is None:
+        return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except Exception:
+        pass
+    s = str(value).strip()
+    if not s or s.lower() == "nan":
+        return ""
+    if s.endswith(".0"):
+        s = s[:-2]
+    return s
+
+
+def run_tracking_upsert_worker(records):
+    """UI 비참조. records: [{"등기번호","스토어","주문번호","수취인명"} ...].
+    등기번호를 키로 upsert: 신규는 append, 기존 행은 빈 칸만 채움(배송상태 등 보존).
+    반환 dict: ok, registered, updated — 또는 ok False, error.
+    """
+    if gspread is None:
+        return {"ok": False, "error": "gspread 패키지가 필요합니다. (pip install gspread)"}
+    # 입력 정규화 + 같은 배치 내 중복 등기번호 제거
+    norm = []
+    seen = set()
+    for r in records or []:
+        key = _normalize_tracking_no(r.get("등기번호"))
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        norm.append({
+            "등기번호": key,
+            "스토어": str(r.get("스토어", "") or "").strip(),
+            "주문번호": _normalize_tracking_no(r.get("주문번호")),
+            "수취인명": str(r.get("수취인명", "") or "").strip(),
+        })
+    if not norm:
+        return {"ok": True, "registered": 0, "updated": 0}
+    try:
+        from google_sheets_oauth import get_authorized_gspread_client
+    except ImportError as e:
+        return {"ok": False, "error": str(e)}
+    try:
+        gc = get_authorized_gspread_client()
+        ws = _standalone_open_tracking_ws(gc)
+        values = ws.get_all_values()
+        if not values:
+            ws.update([list(TRACKING_SHEET_HEADERS)], range_name="A1", value_input_option="RAW")
+            values = [list(TRACKING_SHEET_HEADERS)]
+        ncols = len(TRACKING_SHEET_HEADERS)
+        # 등기번호 -> (1-based row, row values). 중복 행은 첫 행만 사용.
+        key_to_row = {}
+        for ridx, row in enumerate(values[1:], start=2):
+            k = (row[0] if row else "").strip()
+            if k and k not in key_to_row:
+                key_to_row[k] = (ridx, row)
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        new_rows = []
+        batch_updates = []
+        registered = 0
+        updated = 0
+        for r in norm:
+            key = r["등기번호"]
+            if key in key_to_row:
+                ridx, row = key_to_row[key]
+                if ridx is None:
+                    continue  # 같은 배치에서 방금 추가된 신규 키
+                merged = list(row) + [""] * (ncols - len(row))
+                changed = False
+                # 빈 칸만 채움: 스토어(C), 주문번호(D), 수취인명(E)
+                for col0, val in ((2, r["스토어"]), (3, r["주문번호"]), (4, r["수취인명"])):
+                    if val and not (merged[col0] or "").strip():
+                        merged[col0] = val
+                        changed = True
+                if changed:
+                    batch_updates.append({
+                        "range": f"C{ridx}:E{ridx}",
+                        "values": [[merged[2], merged[3], merged[4]]],
+                    })
+                    updated += 1
+            else:
+                new_rows.append([
+                    key, now, r["스토어"], r["주문번호"], r["수취인명"],
+                    SWEETTRACKER_KPOST_T_CODE, "", "", "", "", "",
+                ])
+                key_to_row[key] = (None, None)  # 같은 배치 내 재등록 방지
+                registered += 1
+        if new_rows:
+            ws.append_rows(new_rows, value_input_option="RAW")
+        if batch_updates:
+            ws.batch_update(batch_updates, value_input_option="RAW")
+        return {"ok": True, "registered": registered, "updated": updated}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+def run_tracking_refresh_worker(t_key, t_code):
+    """「송장추적」 시트의 미완료 행만 골라 스마트택배로 조회하고 상태를 갱신합니다.
+    반환 dict: ok, total, complete, progress, failed, checked — 또는 ok False, error.
+    """
+    if gspread is None:
+        return {"ok": False, "error": "gspread 패키지가 필요합니다. (pip install gspread)"}
+    if not t_key:
+        return {"ok": False, "error": "스마트택배 API 키가 설정되지 않았습니다. (환경설정에서 입력)"}
+    try:
+        from google_sheets_oauth import get_authorized_gspread_client
+    except ImportError as e:
+        return {"ok": False, "error": str(e)}
+    try:
+        import smart_tracker
+    except ImportError as e:
+        return {"ok": False, "error": f"smart_tracker 모듈을 불러올 수 없습니다: {e}"}
+    try:
+        gc = get_authorized_gspread_client()
+        ws = _standalone_open_tracking_ws(gc)
+        values = ws.get_all_values()
+        if len(values) <= 1:
+            return {"ok": True, "total": 0, "complete": 0, "progress": 0,
+                    "failed": 0, "checked": 0}
+        # 미완료(완료여부 H != "Y") 행만 수집: (1-based row, 등기번호, 택배사코드)
+        active = []
+        for ridx, row in enumerate(values[1:], start=2):
+            tno = (row[0] if len(row) > 0 else "").strip()
+            if not tno:
+                continue
+            done = (row[7] if len(row) > 7 else "").strip().upper()
+            if done == "Y":
+                continue
+            code = (row[5] if len(row) > 5 else "").strip() or t_code
+            active.append((ridx, tno, code))
+        if not active:
+            return {"ok": True, "total": 0, "complete": 0, "progress": 0,
+                    "failed": 0, "checked": 0}
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        complete = progress = failed = 0
+        batch_updates = []
+        for ridx, tno, code in active:
+            payload = smart_tracker.fetch_tracking_info(t_key, code, tno)
+            s = smart_tracker.summarize_tracking(payload)
+            if not s.get("ok"):
+                failed += 1
+                # 비고(K)와 조회시각(J)만 갱신, 상태/완료는 보존
+                batch_updates.append({
+                    "range": f"J{ridx}:K{ridx}",
+                    "values": [[now, s.get("error", "조회 실패")]],
+                })
+                time.sleep(0.25)
+                continue
+            done_yn = "Y" if s.get("complete") else "N"
+            if s.get("complete"):
+                complete += 1
+            else:
+                progress += 1
+            # G:K = 배송상태, 완료여부, 마지막위치, 최근조회시각, 비고
+            batch_updates.append({
+                "range": f"G{ridx}:K{ridx}",
+                "values": [[s.get("status", ""), done_yn, s.get("where", ""), now, ""]],
+            })
+            time.sleep(0.25)
+        if batch_updates:
+            ws.batch_update(batch_updates, value_input_option="RAW")
+        return {
+            "ok": True,
+            "total": len(active),
+            "complete": complete,
+            "progress": progress,
+            "failed": failed,
+            "checked": len(active),
+        }
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 class CircularBusySpinner(QWidget):
     """Google 시트·처리 대기용 무한 회전 링 스피너."""
 
@@ -406,6 +605,33 @@ class OrderIndexWriteThread(QThread):
         self.result_ready.emit(
             run_order_index_write_worker(self._naver, self._coupang, self._gmarket)
         )
+
+
+class TrackingUpsertThread(QThread):
+    """송장 등기번호를 「송장추적」 시트에 백그라운드로 upsert."""
+
+    result_ready = Signal(dict)
+
+    def __init__(self, records, parent=None):
+        super().__init__(parent)
+        self._records = records
+
+    def run(self):
+        self.result_ready.emit(run_tracking_upsert_worker(self._records))
+
+
+class TrackingRefreshThread(QThread):
+    """「송장추적」 시트 미완료 행을 스마트택배로 조회·갱신(백그라운드)."""
+
+    result_ready = Signal(dict)
+
+    def __init__(self, t_key, t_code, parent=None):
+        super().__init__(parent)
+        self._t_key = t_key
+        self._t_code = t_code
+
+    def run(self):
+        self.result_ready.emit(run_tracking_refresh_worker(self._t_key, self._t_code))
 
 
 class DbSheetSyncThread(QThread):
@@ -827,6 +1053,16 @@ class MainWindow(QMainWindow):
         self._db_sync_naver_path_override = None
         self._db_sync_coupang_path_override = None
 
+        # 송장 배송추적: 등기번호 등록을 모아 디바운스 후 백그라운드 upsert
+        self._tracking_op_thread = None
+        self._tracking_pending_records = []
+        self._tracking_inflight_records = []
+        self._tracking_push_timer = QTimer(self)
+        self._tracking_push_timer.setSingleShot(True)
+        self._tracking_push_timer.timeout.connect(self._flush_tracking_records)
+        # 배송추적 새로고침(스마트택배 조회) 단일 실행 추적
+        self._tracking_refresh_thread = None
+
         self.load_ui()
         self.setup_connections()
         self.setup_status_bar()
@@ -954,6 +1190,14 @@ class MainWindow(QMainWindow):
         cb.setChecked(checked)
         cb.blockSignals(False)
 
+        # 스마트택배 API 키를 환경설정 입력란에 채움(있을 때만)
+        if hasattr(self.ui, "lineEdit_sweettracker_key"):
+            saved_key = self.get_app_setting("sweettracker_t_key", "")
+            w = self.ui.lineEdit_sweettracker_key
+            w.blockSignals(True)
+            w.setText(str(saved_key or ""))
+            w.blockSignals(False)
+
     def save_app_settings(self):
         """앱 설정을 database/app_settings.json 에 저장합니다."""
         if not hasattr(self.ui, "checkBox_invoice_load_auto_generate"):
@@ -977,6 +1221,44 @@ class MainWindow(QMainWindow):
             print("✓ 앱 설정 저장 완료")
         except Exception as e:
             print(f"! 앱 설정 저장 중 오류: {e}")
+
+    def _on_sweettracker_key_edited(self):
+        """환경설정의 스마트택배 API 키 입력을 저장합니다."""
+        if not hasattr(self.ui, "lineEdit_sweettracker_key"):
+            return
+        key = self.ui.lineEdit_sweettracker_key.text().strip()
+        self.set_app_setting("sweettracker_t_key", key)
+
+    def get_app_setting(self, key, default=None):
+        """database/app_settings.json 에서 단일 설정값을 읽습니다."""
+        try:
+            if self.app_settings_path.exists() and self.app_settings_path.stat().st_size > 0:
+                with open(self.app_settings_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, dict) and key in data:
+                    return data[key]
+        except Exception as e:
+            print(f"! 앱 설정 읽기 오류({key}): {e}")
+        return default
+
+    def set_app_setting(self, key, value):
+        """database/app_settings.json 에 단일 설정값을 병합 저장합니다."""
+        try:
+            self.app_settings_path.parent.mkdir(parents=True, exist_ok=True)
+            data = {}
+            if self.app_settings_path.exists() and self.app_settings_path.stat().st_size > 0:
+                try:
+                    with open(self.app_settings_path, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                except json.JSONDecodeError:
+                    data = {}
+            if not isinstance(data, dict):
+                data = {}
+            data[key] = value
+            with open(self.app_settings_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"! 앱 설정 저장 오류({key}): {e}")
 
     def load_index_values(self):
         """저장된 인덱스 값을 로드합니다."""
@@ -1776,6 +2058,106 @@ class MainWindow(QMainWindow):
     def _cleanup_index_sheet_op_thread(self):
         self._index_sheet_op_thread = None
 
+    # ── 송장 배송추적: 등기번호 등록(공유 시트 upsert) ──────────────────────
+    def _enqueue_tracking_registration(self, records):
+        """송장 등기번호 등록 요청을 모아 디바운스 후 백그라운드 upsert.
+        gspread 미설치·미인증이어도 앱은 비차단(조용히 보류/스킵)."""
+        if not records:
+            return
+        self._tracking_pending_records.extend(records)
+        self._tracking_push_timer.start(TRACKING_SHEET_PUSH_DEBOUNCE_MS)
+
+    def _flush_tracking_records(self):
+        if gspread is None:
+            return  # 패키지 없으면 보류(레코드 유지). 다음 등록 시 함께 시도.
+        if not self._tracking_pending_records:
+            return
+        if self._tracking_op_thread is not None:
+            # 진행 중인 upsert가 있으면 잠시 후 재시도(유실 방지).
+            self._tracking_push_timer.start(TRACKING_SHEET_PUSH_DEBOUNCE_MS)
+            return
+        records = self._tracking_pending_records
+        self._tracking_pending_records = []
+        self._tracking_inflight_records = records
+        thread = TrackingUpsertThread(records, self)
+        self._tracking_op_thread = thread
+        thread.result_ready.connect(self._on_tracking_upsert_finished)
+        thread.finished.connect(self._cleanup_tracking_op_thread)
+        thread.finished.connect(thread.deleteLater)
+        thread.start()
+
+    def _on_tracking_upsert_finished(self, payload: dict):
+        inflight = self._tracking_inflight_records
+        self._tracking_inflight_records = []
+        if payload.get("ok"):
+            reg = payload.get("registered", 0)
+            upd = payload.get("updated", 0)
+            if reg or upd:
+                print(f"✓ 송장추적 시트 반영: 신규 {reg} / 보강 {upd}")
+        else:
+            # 실패 → 다음 등록 기회에 함께 재시도하도록 되돌림(자동 재폴링은 하지 않음).
+            self._tracking_pending_records = inflight + self._tracking_pending_records
+            print(f"! 송장추적 시트 반영 실패: {payload.get('error', '')}")
+
+    def _cleanup_tracking_op_thread(self):
+        self._tracking_op_thread = None
+
+    # ── 송장 배송추적: 새로고침(스마트택배 조회) ──────────────────────────
+    def _set_tracking_summary(self, text):
+        if hasattr(self.ui, "label_tracking_summary"):
+            self.ui.label_tracking_summary.setText(text)
+
+    def on_refresh_tracking_clicked(self):
+        """미완료 송장만 스마트택배로 조회해 공유 시트의 배송상태를 갱신합니다."""
+        if gspread is None:
+            QMessageBox.warning(self, "배송추적", "gspread 패키지가 필요합니다. (pip install gspread)")
+            return
+        t_key = str(self.get_app_setting("sweettracker_t_key", "") or "").strip()
+        if not t_key:
+            QMessageBox.warning(
+                self, "배송추적",
+                "스마트택배 API 키가 없습니다.\n「환경설정」에서 API 키를 입력해 주세요.",
+            )
+            return
+        if self._tracking_refresh_thread is not None:
+            return  # 이미 조회 중
+        t_code = str(self.get_app_setting("sweettracker_t_code", SWEETTRACKER_KPOST_T_CODE)
+                     or SWEETTRACKER_KPOST_T_CODE).strip()
+        if hasattr(self.ui, "pushButton_refresh_tracking"):
+            self.ui.pushButton_refresh_tracking.setEnabled(False)
+        self._set_tracking_summary("배송추적 조회 중…")
+        thread = TrackingRefreshThread(t_key, t_code, self)
+        self._tracking_refresh_thread = thread
+        thread.result_ready.connect(self._on_tracking_refresh_finished)
+        thread.finished.connect(self._cleanup_tracking_refresh_thread)
+        thread.finished.connect(thread.deleteLater)
+        thread.start()
+
+    def _on_tracking_refresh_finished(self, payload: dict):
+        if payload.get("ok"):
+            total = payload.get("total", 0)
+            if total == 0:
+                self._set_tracking_summary("추적할 미완료 송장이 없습니다.")
+            else:
+                t = datetime.now().strftime("%H:%M:%S")
+                self._set_tracking_summary(
+                    f"총 {total} / 완료 {payload.get('complete', 0)} / "
+                    f"진행 {payload.get('progress', 0)} / 실패 {payload.get('failed', 0)} "
+                    f"(갱신 {t})"
+                )
+        else:
+            err = payload.get("error", "")
+            self._set_tracking_summary("배송추적 조회 실패")
+            QMessageBox.warning(
+                self, "배송추적",
+                f"배송 상태를 조회하지 못했습니다.\n\n{err}\n\n{self._oauth_error_dialog_hint()}",
+            )
+
+    def _cleanup_tracking_refresh_thread(self):
+        self._tracking_refresh_thread = None
+        if hasattr(self.ui, "pushButton_refresh_tracking"):
+            self.ui.pushButton_refresh_tracking.setEnabled(True)
+
     def _index_idx_field_has_focus(self):
         for name in ("lineEdit_idx_naver", "lineEdit_idx_coupang", "lineEdit_idx_gmarket", "lineEdit_idx_11st"):
             w = getattr(self.ui, name, None)
@@ -2060,6 +2442,13 @@ class MainWindow(QMainWindow):
         self.ui.actionOpenExcel.triggered.connect(self.select_excel_file)
         self.ui.actionExit.triggered.connect(self.close)
         self.ui.actionAbout.triggered.connect(self.show_about)
+
+        if hasattr(self.ui, "pushButton_refresh_tracking"):
+            self.ui.pushButton_refresh_tracking.clicked.connect(self.on_refresh_tracking_clicked)
+        if hasattr(self.ui, "lineEdit_sweettracker_key"):
+            self.ui.lineEdit_sweettracker_key.editingFinished.connect(
+                self._on_sweettracker_key_edited
+            )
 
         if hasattr(self.ui, "pushButton_google_reauth"):
             self.ui.pushButton_google_reauth.clicked.connect(self._on_google_reauth_clicked)
@@ -4959,6 +5348,23 @@ class MainWindow(QMainWindow):
                 print("✓ 송장 파일이 성공적으로 선택되었습니다.")
                 self.is_invoice_file_valid = True  # 파일 처리 성공 시 플래그 설정
 
+                # 하이브리드 추적: 송장 파일의 모든 등기번호를 공유 시트에 등록
+                # (스토어·주문번호는 이후 매칭 시 보강). 실패해도 발송 흐름은 계속.
+                try:
+                    reg_records = []
+                    for _, r in df.iterrows():
+                        tno = _normalize_tracking_no(r[required_columns['등기번호']])
+                        if not tno:
+                            continue
+                        rname = r[required_columns['수취인명']]
+                        rname = "" if pd.isna(rname) else str(rname).strip()
+                        reg_records.append({
+                            "등기번호": tno, "스토어": "", "주문번호": "", "수취인명": rname,
+                        })
+                    self._enqueue_tracking_registration(reg_records)
+                except Exception as e:
+                    print(f"! 송장추적 등록(전체 등기번호) 준비 중 오류: {e}")
+
                 if hasattr(self.ui, "checkBox_invoice_load_auto_generate"):
                     if self.ui.checkBox_invoice_load_auto_generate.isChecked():
                         self.generate_invoice_file()
@@ -5146,7 +5552,8 @@ class MainWindow(QMainWindow):
             # 6. 매칭된 주문 정보 출력 및 운송장번호 업데이트
             print("\n[매칭된 주문 정보]")
             matched_count = 0
-            
+            naver_matched_records = []
+
             for idx, invoice_row in invoice_df.iterrows():
                 invoice_name = _normalize_value(invoice_row[column_mapping['invoice']['수취인명']])
                 invoice_phone = _normalize_value(invoice_row[column_mapping['invoice']['수취인 이동통신']])
@@ -5174,12 +5581,22 @@ class MainWindow(QMainWindow):
                     # 운송장번호 업데이트
                     order_df.loc[matching_rows.index, '송장번호'] = invoice_number
                     print(f"✓ 송장번호 업데이트 완료")
-            
+
+                    naver_matched_records.append({
+                        "등기번호": invoice_number,
+                        "스토어": "naver",
+                        "주문번호": invoice_order_number,
+                        "수취인명": invoice_name,
+                    })
+
             print(f"\n✓ 총 {matched_count}개의 주문이 매칭되었습니다.")
-            
+
             # 7. 결과 파일 저장
             self._save_invoice_file(order_df)
-            
+
+            # 매칭된 건의 스토어·주문번호·수취인명을 공유 추적 시트에 보강
+            self._enqueue_tracking_registration(naver_matched_records)
+
             # 8. 임시 파일 정리
             decrypted_order_file.unlink()
             
@@ -5320,7 +5737,8 @@ class MainWindow(QMainWindow):
             # 매칭 카운터
             matched_count = 0
             unmatched_invoice = 0
-            
+            coupang_matched_records = []
+
             # 각 송장 행에 대해 매칭 시도
             for idx, invoice_row in invoice_df.iterrows():
                 invoice_number = str(invoice_row[required_invoice_columns['등기번호']])
@@ -5343,6 +5761,16 @@ class MainWindow(QMainWindow):
                     
                     order_df.loc[matching_rows.index, '운송장번호'] = invoice_number
                     print(f"✓ 송장번호 업데이트 완료")
+
+                    onum = ""
+                    if '주문번호' in order_df.columns:
+                        onum = str(matching_rows['주문번호'].iloc[0]).strip()
+                    coupang_matched_records.append({
+                        "등기번호": invoice_number,
+                        "스토어": "coupang",
+                        "주문번호": onum,
+                        "수취인명": invoice_name,
+                    })
                 else:
                     unmatched_invoice += 1
                     why = _coupang_explain_invoice_unmatched(order_df, invoice_name, invoice_phone)
@@ -5366,7 +5794,10 @@ class MainWindow(QMainWindow):
             
             # 4. 결과 파일 저장
             self._save_invoice_file(order_df)
-            
+
+            # 매칭된 건의 스토어·주문번호·수취인명을 공유 추적 시트에 보강
+            self._enqueue_tracking_registration(coupang_matched_records)
+
         except Exception as e:
             error_msg = str(e)
             traceback.print_exc()
