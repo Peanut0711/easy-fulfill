@@ -2022,26 +2022,8 @@ class MainWindow(QMainWindow):
         return self._gspread_client
 
     def load_app_settings(self):
-        """앱 설정(체크박스 등)을 로드합니다."""
-        key = "auto_generate_after_invoice_load"
-        default_checked = True
-        if not hasattr(self.ui, "checkBox_invoice_load_auto_generate"):
-            return
-        cb = self.ui.checkBox_invoice_load_auto_generate
-        checked = default_checked
-        try:
-            if self.app_settings_path.exists() and self.app_settings_path.stat().st_size > 0:
-                with open(self.app_settings_path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                if isinstance(data, dict) and key in data:
-                    checked = bool(data[key])
-        except Exception as e:
-            print(f"! 앱 설정 로드 중 오류: {e}")
-        cb.blockSignals(True)
-        cb.setChecked(checked)
-        cb.blockSignals(False)
-
-        # 슬랙 상태 텍스트 갱신(자동 알림·정체기준은 설정 팝업에서 로드)
+        """앱 설정 로드. (일괄 발송 자동 생성은 상시 ON으로 고정 — 설정 항목 없음)"""
+        # 슬랙 상태 텍스트 갱신(자동 알림·정체기준은 관리자 탭에서 로드)
         self._refresh_slack_status()
 
     def _stale_threshold(self, category):
@@ -2145,30 +2127,6 @@ class MainWindow(QMainWindow):
             thread.finished.connect(self._cleanup_tracking_config_write_thread)
             thread.finished.connect(thread.deleteLater)
             thread.start()
-
-    def save_app_settings(self):
-        """앱 설정을 database/app_settings.json 에 저장합니다."""
-        if not hasattr(self.ui, "checkBox_invoice_load_auto_generate"):
-            return
-        try:
-            self.app_settings_path.parent.mkdir(parents=True, exist_ok=True)
-            data = {}
-            if self.app_settings_path.exists() and self.app_settings_path.stat().st_size > 0:
-                try:
-                    with open(self.app_settings_path, "r", encoding="utf-8") as f:
-                        data = json.load(f)
-                except json.JSONDecodeError:
-                    data = {}
-            if not isinstance(data, dict):
-                data = {}
-            data["auto_generate_after_invoice_load"] = (
-                self.ui.checkBox_invoice_load_auto_generate.isChecked()
-            )
-            with open(self.app_settings_path, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-            print("✓ 앱 설정 저장 완료")
-        except Exception as e:
-            print(f"! 앱 설정 저장 중 오류: {e}")
 
     def _set_key_status_text(self, text):
         t = (text or "").strip()
@@ -4330,36 +4288,6 @@ class MainWindow(QMainWindow):
             self._elide_status_label(obj)
         return super().eventFilter(obj, event)
 
-    # 주문/송장 유효성 플래그를 property 로 감싸 「생성」 버튼 활성화를 자동 동기화.
-    @property
-    def is_order_file_valid(self):
-        return getattr(self, "_is_order_file_valid", False)
-
-    @is_order_file_valid.setter
-    def is_order_file_valid(self, value):
-        self._is_order_file_valid = bool(value)
-        self._update_generate_button_state()
-
-    @property
-    def is_invoice_file_valid(self):
-        return getattr(self, "_is_invoice_file_valid", False)
-
-    @is_invoice_file_valid.setter
-    def is_invoice_file_valid(self, value):
-        self._is_invoice_file_valid = bool(value)
-        self._update_generate_button_state()
-
-    def _update_generate_button_state(self):
-        """주문 정보와 송장 정보가 모두 유효할 때만 「생성」 버튼을 활성화한다.
-        (자동화 옵션이 켜져 있으면 송장 로드 시 자동 생성되므로, 버튼은 수동 보조 수단)."""
-        btn = getattr(getattr(self, "ui", None), "pushButton_generate_invoice", None)
-        if btn is None:
-            return
-        enabled = self.is_order_file_valid and self.is_invoice_file_valid
-        btn.setEnabled(enabled)
-        btn.setToolTip(
-            "" if enabled else "주문 정보와 송장 정보를 모두 불러오면 활성화됩니다.")
-
     _STORE_NAMES = {"naver": "네이버", "coupang": "쿠팡",
                     "gmarket": "지마켓", "11st": "11번가"}
 
@@ -4441,8 +4369,8 @@ class MainWindow(QMainWindow):
         # 주문·발송 탭 버튼 연결
         self.ui.pushButton_load_order.clicked.connect(self.select_excel_file)
         self.ui.pushButton_load_invoice.clicked.connect(self.load_invoice_file)
-        self.ui.pushButton_generate_invoice.clicked.connect(self.generate_invoice_file)
-        
+        # 「생성」 버튼/체크박스 제거: 송장 로드 성공 시 자동 생성(상시).
+
         # 환경설정 탭 버튼 연결
         # 사은품 UI(groupBox_2): main_window.ui에서 제거함. 복구 시 위젯·로직 재연결.
         # 신규 DB 반영 UI·로직 제거(2026-04). (pushButton_database_* / load·apply_database_* 삭제)
@@ -4486,11 +4414,6 @@ class MainWindow(QMainWindow):
         if hasattr(self.ui, 'lineEdit_idx_11st'):
             self.ui.lineEdit_idx_11st.textChanged.connect(self.on_11st_index_changed)
 
-        if hasattr(self.ui, 'checkBox_invoice_load_auto_generate'):
-            self.ui.checkBox_invoice_load_auto_generate.stateChanged.connect(
-                self.save_app_settings
-            )
-        
         # 메뉴 동작 연결
         self.ui.actionOpenExcel.triggered.connect(self.select_excel_file)
         self.ui.actionExit.triggered.connect(self.close)
@@ -4504,8 +4427,6 @@ class MainWindow(QMainWindow):
         self._reset_idle_logo()
         self._set_status_label(self.ui.filePathLabel, "주문 정보가 없습니다.")
         self._set_status_label(self.ui.label_invoice, "송장 정보가 없습니다.")
-        self._set_status_label(self.ui.label_generate_invoice, "생성 버튼을 누르세요.")
-        self._update_generate_button_state()
         if hasattr(self.ui, "tableWidget_tracking"):
             # 마우스 올릴 때 생기는 파란 호버 하이라이트 제거(위험행 색칠·선택은 유지).
             # 프록시 스타일은 파이썬 참조가 사라지면 GC 되므로 self 에 보관한다.
@@ -6881,7 +6802,6 @@ class MainWindow(QMainWindow):
 
         # 송장 미리보기(주문·발송 탭) 텍스트 초기화
         self._set_status_label(self.ui.label_invoice, "송장 정보가 없습니다.")
-        self._set_status_label(self.ui.label_generate_invoice, "생성 버튼을 누르세요.")
         self.ui.plainTextEdit_invoice.setPlainText("")
         
         # 상태바 메시지 업데이트
@@ -7404,9 +7324,8 @@ class MainWindow(QMainWindow):
                 except Exception as e:
                     print(f"! 송장추적 등록(전체 등기번호) 준비 중 오류: {e}")
 
-                if hasattr(self.ui, "checkBox_invoice_load_auto_generate"):
-                    if self.ui.checkBox_invoice_load_auto_generate.isChecked():
-                        self.generate_invoice_file()
+                # 일괄 발송 파일 자동 생성(상시). 주문 미로드 시엔 generate_invoice_file이 안내.
+                self.generate_invoice_file()
                 
             except Exception as e:
                 self.is_invoice_file_valid = False
@@ -7441,17 +7360,21 @@ class MainWindow(QMainWindow):
                 self._process_naver_invoice(temp_order_file, temp_invoice_file)
             elif self.store_type == "coupang":
                 self._process_coupang_invoice(temp_order_file, temp_invoice_file)
+            # 생성 결과를 송장 상태줄에 통합 표기(전용 라인 제거됨)
+            _inv = os.path.basename(self.invoice_file_path) if self.invoice_file_path else "송장"
             self._set_status_label(
-                self.ui.label_generate_invoice, "발송 파일 생성 완료 ✓", ok=True)
+                self.ui.label_invoice, f"{_inv} · 발송 생성 완료 ✓", ok=True)
 
             # 임시 파일 정리
             temp_order_file.unlink()
             temp_invoice_file.unlink()
             temp_dir.rmdir()
-            
+
         except Exception as e:
             error_msg = str(e)
             print(f"❌ 일괄 발송 파일 생성 중 오류 발생: {error_msg}")
+            _inv = os.path.basename(self.invoice_file_path) if self.invoice_file_path else "송장"
+            self._set_status_label(self.ui.label_invoice, f"{_inv} · 발송 생성 실패", ok=False)
             QMessageBox.critical(
                 self,
                 "오류",

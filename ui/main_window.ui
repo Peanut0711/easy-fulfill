@@ -316,76 +316,6 @@
              </layout>
             </item>
             <item>
-             <layout class="QHBoxLayout" name="horizontalLayout_ship_row2">
-              <property name="spacing">
-               <number>8</number>
-              </property>
-              <item>
-               <widget class="QLabel" name="label_2">
-                <property name="minimumSize">
-                 <size>
-                  <width>72</width>
-                  <height>40</height>
-                 </size>
-                </property>
-                <property name="alignment">
-                 <set>Qt::AlignmentFlag::AlignCenter</set>
-                </property>
-                <property name="text">
-                 <string>일괄 발송</string>
-                </property>
-                <property name="wordWrap">
-                 <bool>true</bool>
-                </property>
-               </widget>
-              </item>
-              <item>
-               <widget class="QLabel" name="label_generate_invoice">
-                <property name="minimumSize">
-                 <size>
-                  <width>180</width>
-                  <height>40</height>
-                 </size>
-                </property>
-                <property name="sizePolicy">
-                 <sizepolicy hsizetype="Expanding" vsizetype="Preferred">
-                  <horstretch>1</horstretch>
-                  <verstretch>0</verstretch>
-                 </sizepolicy>
-                </property>
-                <property name="text">
-                 <string>생성 버튼을 누르세요.</string>
-                </property>
-                <property name="alignment">
-                 <set>Qt::AlignmentFlag::AlignCenter</set>
-                </property>
-               </widget>
-              </item>
-              <item>
-               <widget class="QPushButton" name="pushButton_generate_invoice">
-               <property name="styleSheet">
-                <string>QPushButton { background-color: #1a73e8; color: white; border: none; border-radius: 4px; font-weight: 600; } QPushButton:hover { background-color: #1666c1; } QPushButton:disabled { background-color: #b9c7da; color: #eef; }</string>
-               </property>
-                <property name="minimumSize">
-                 <size>
-                  <width>100</width>
-                  <height>40</height>
-                 </size>
-                </property>
-                <property name="maximumSize">
-                 <size>
-                  <width>120</width>
-                  <height>44</height>
-                 </size>
-                </property>
-                <property name="text">
-                 <string>생성</string>
-                </property>
-               </widget>
-              </item>
-             </layout>
-            </item>
-            <item>
              <widget class="QPlainTextEdit" name="plainTextEdit_invoice">
               <property name="sizePolicy">
                <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
@@ -544,25 +474,6 @@
                 </property>
                 <property name="styleSheet">
                  <string>color: #888;</string>
-                </property>
-               </widget>
-              </item>
-             </layout>
-            </widget>
-           </item>
-           <item>
-            <widget class="QGroupBox" name="groupBox_batch_ship">
-             <property name="title">
-              <string>자동화 옵션</string>
-             </property>
-             <layout class="QVBoxLayout" name="verticalLayout_batch_ship">
-              <item>
-               <widget class="QCheckBox" name="checkBox_invoice_load_auto_generate">
-                <property name="text">
-                 <string>송장 불러오기 성공 시 일괄 발송 파일 자동 생성</string>
-                </property>
-                <property name="checked">
-                 <bool>true</bool>
                 </property>
                </widget>
               </item>
