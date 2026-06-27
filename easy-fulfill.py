@@ -33,6 +33,7 @@ from PySide6.QtCore import (
     QPropertyAnimation,
     QEasingCurve,
     QRectF,
+    QEvent,
 )
 from PySide6.QtGui import (
     QPixmap,
@@ -4298,13 +4299,36 @@ class MainWindow(QMainWindow):
         
     def _set_status_label(self, label, text, ok=False):
         """주문·발송 탭 상태 라벨 텍스트+색. ok=True 초록(완료/불러옴), 기본 회색(대기/없음).
-        좌측 정렬로 폭이 모자라도 앞글자가 잘리지 않게 한다(긴 파일명은 뒤가 잘림)."""
+        가운데 정렬 + 폭에 맞춰 긴 파일명은 끝을 '…'로 줄인다(전체는 툴팁)."""
         if label is None:
             return
-        label.setText(text)
-        label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+        label.setProperty("_full_text", text)
+        label.setAlignment(Qt.AlignCenter)
         label.setStyleSheet(
             "color: #2e7d32; font-weight: 600;" if ok else "color: #888888;")
+        # 리사이즈 시 다시 줄이도록 이벤트 필터 1회 등록
+        if not hasattr(self, "_elide_labels"):
+            self._elide_labels = set()
+        if label not in self._elide_labels:
+            self._elide_labels.add(label)
+            label.installEventFilter(self)
+        self._elide_status_label(label)
+
+    def _elide_status_label(self, label):
+        """라벨의 현재 폭에 맞춰 보관된 전체 텍스트를 끝 생략(…)으로 표시."""
+        full = label.property("_full_text")
+        if full is None:
+            return
+        elided = label.fontMetrics().elidedText(
+            full, Qt.TextElideMode.ElideRight, max(0, label.width() - 8))
+        label.setText(elided)
+        label.setToolTip(full if elided != full else "")
+
+    def eventFilter(self, obj, event):
+        """상태 라벨 리사이즈 시 끝 생략(…) 재계산."""
+        if event.type() == QEvent.Type.Resize and obj in getattr(self, "_elide_labels", ()):
+            self._elide_status_label(obj)
+        return super().eventFilter(obj, event)
 
     def _reset_idle_logo(self):
         """주문 미로드 시 스토어 로고 자리에 앱 로고를 표시(없으면 비움). 'image' 텍스트 대체."""
