@@ -412,195 +412,18 @@
        </layout>
       </widget>
       <widget class="QWidget" name="tab_2">
-       <attribute name="title">
-        <string>환경설정</string>
-       </attribute>
+       <attribute name="title"><string>환경설정</string></attribute>
        <layout class="QHBoxLayout" name="horizontalLayout_settings_outer">
         <item>
          <widget class="QWidget" name="widget_settings_content" native="true">
           <property name="maximumSize">
-           <size>
-            <width>470</width>
-            <height>16777215</height>
-           </size>
+           <size><width>470</width><height>16777215</height></size>
           </property>
           <layout class="QVBoxLayout" name="verticalLayout_settings">
-           <property name="leftMargin">
-            <number>0</number>
-           </property>
-           <property name="topMargin">
-            <number>0</number>
-           </property>
-           <property name="rightMargin">
-            <number>0</number>
-           </property>
-           <property name="bottomMargin">
-            <number>0</number>
-           </property>
-           <item>
-            <widget class="QGroupBox" name="groupBox_google_sheets">
-             <property name="title">
-              <string>연동 · Google Sheets</string>
-             </property>
-             <layout class="QVBoxLayout" name="verticalLayout_google_sheets">
-              <item>
-               <widget class="QLabel" name="label_google_auth_status">
-                <property name="text">
-                 <string>상태를 불러오는 중…</string>
-                </property>
-                <property name="wordWrap">
-                 <bool>true</bool>
-                </property>
-                <property name="alignment">
-                 <set>Qt::AlignmentFlag::AlignLeft|Qt::AlignmentFlag::AlignTop</set>
-                </property>
-               </widget>
-              </item>
-              <item>
-               <layout class="QHBoxLayout" name="horizontalLayout_google_buttons">
-                <item>
-                 <widget class="QPushButton" name="pushButton_google_reauth">
-                  <property name="text">
-                   <string>재인증</string>
-                  </property>
-                  <property name="toolTip">
-                   <string>저장된 로그인을 지우고 브라우저에서 다시 Google 계정 연결</string>
-                  </property>
-                 </widget>
-                </item>
-                <item>
-                 <widget class="QPushButton" name="pushButton_google_disconnect">
-                  <property name="text">
-                   <string>연결 해제</string>
-                  </property>
-                  <property name="toolTip">
-                   <string>이 PC의 token.json만 삭제합니다. (계정 비밀번호 변경과는 별개)</string>
-                  </property>
-                 </widget>
-                </item>
-                <item>
-                 <widget class="QPushButton" name="pushButton_google_open_oauth_folder">
-                  <property name="text">
-                   <string>google-oauth 폴더 열기</string>
-                  </property>
-                 </widget>
-                </item>
-                <item>
-                 <spacer name="horizontalSpacer_google_buttons">
-                  <property name="orientation">
-                   <enum>Qt::Orientation::Horizontal</enum>
-                  </property>
-                  <property name="sizeHint" stdset="0">
-                   <size>
-                    <width>10</width>
-                    <height>20</height>
-                   </size>
-                  </property>
-                 </spacer>
-                </item>
-               </layout>
-              </item>
-              <item>
-               <widget class="QLabel" name="label_google_auth_tip">
-                <property name="font">
-                 <font>
-                  <family>맑은 고딕</family>
-                  <pointsize>8</pointsize>
-                 </font>
-                </property>
-                <property name="text">
-                 <string>invalid_scope 등 Google 인증 오류가 나면 「연결 해제」 후 「재인증」을 눌러 주세요. (google-oauth 폴더의 token.json 갱신)</string>
-                </property>
-                <property name="wordWrap">
-                 <bool>true</bool>
-                </property>
-                <property name="styleSheet">
-                 <string>color: #888;</string>
-                </property>
-               </widget>
-              </item>
-             </layout>
-            </widget>
-           </item>
-           <item>
-            <widget class="QGroupBox" name="groupBox_api_keys">
-             <property name="title">
-              <string>연동 · API 키 (관리자)</string>
-             </property>
-             <layout class="QVBoxLayout" name="verticalLayout_api_keys">
-              <item>
-               <widget class="QLabel" name="label_settings_api_status">
-                <property name="text">
-                 <string>상태 확인 중…</string>
-                </property>
-                <property name="wordWrap">
-                 <bool>true</bool>
-                </property>
-                <property name="styleSheet">
-                 <string>color: #888;</string>
-                </property>
-               </widget>
-              </item>
-              <item>
-               <layout class="QHBoxLayout" name="horizontalLayout_api_keys">
-                <item>
-                 <widget class="QPushButton" name="pushButton_cfg_kpost_key">
-                  <property name="text">
-                   <string>우체국 인증키</string>
-                  </property>
-                  <property name="toolTip">
-                   <string>관리자용: 공유 우체국 OpenAPI 인증키(regkey) 변경. 전원 적용.</string>
-                  </property>
-                 </widget>
-                </item>
-                <item>
-                 <widget class="QPushButton" name="pushButton_cfg_slack_webhook">
-                  <property name="text">
-                   <string>슬랙 Webhook</string>
-                  </property>
-                  <property name="toolTip">
-                   <string>관리자용: 슬랙 알림 Webhook URL 설정(전원 공유).</string>
-                  </property>
-                 </widget>
-                </item>
-                <item>
-                 <widget class="QPushButton" name="pushButton_cfg_naver_key">
-                  <property name="text">
-                   <string>네이버 키</string>
-                  </property>
-                  <property name="toolTip">
-                   <string>관리자용: 네이버 커머스API client_id/secret 입력(검증 후 전원 공유).</string>
-                  </property>
-                 </widget>
-                </item>
-                <item>
-                 <widget class="QPushButton" name="pushButton_cfg_coupang_key">
-                  <property name="text">
-                   <string>쿠팡 키</string>
-                  </property>
-                  <property name="toolTip">
-                   <string>관리자용: 쿠팡 WING OpenAPI vendorId/accessKey/secretKey 입력(검증 후 전원 공유).</string>
-                  </property>
-                 </widget>
-                </item>
-                <item>
-                 <spacer name="horizontalSpacer_api_keys">
-                  <property name="orientation">
-                   <enum>Qt::Orientation::Horizontal</enum>
-                  </property>
-                  <property name="sizeHint" stdset="0">
-                   <size>
-                    <width>10</width>
-                    <height>20</height>
-                   </size>
-                  </property>
-                 </spacer>
-                </item>
-               </layout>
-              </item>
-             </layout>
-            </widget>
-           </item>
+           <property name="leftMargin"><number>0</number></property>
+           <property name="topMargin"><number>0</number></property>
+           <property name="rightMargin"><number>0</number></property>
+           <property name="bottomMargin"><number>0</number></property>
            <item>
             <widget class="QGroupBox" name="groupBox_order_index">
              <property name="title">
@@ -745,25 +568,14 @@
             <layout class="QHBoxLayout" name="horizontalLayout_settings_tools">
              <item>
               <widget class="QPushButton" name="pushButton_open_quick_excel">
-               <property name="text">
-                <string>수동 주문 추가…</string>
-               </property>
-               <property name="toolTip">
-                <string>클립보드 단건 주문 또는 직접 입력으로 발송 엑셀을 만듭니다.</string>
-               </property>
+               <property name="text"><string>수동 주문 추가…</string></property>
+               <property name="toolTip"><string>클립보드 단건 주문 또는 직접 입력으로 발송 엑셀을 만듭니다.</string></property>
               </widget>
              </item>
              <item>
               <spacer name="horizontalSpacer_settings_tools">
-               <property name="orientation">
-                <enum>Qt::Orientation::Horizontal</enum>
-               </property>
-               <property name="sizeHint" stdset="0">
-                <size>
-                 <width>10</width>
-                 <height>20</height>
-                </size>
-               </property>
+               <property name="orientation"><enum>Qt::Orientation::Horizontal</enum></property>
+               <property name="sizeHint" stdset="0"><size><width>10</width><height>20</height></size></property>
               </spacer>
              </item>
             </layout>
@@ -774,10 +586,7 @@
               <enum>Qt::Orientation::Vertical</enum>
              </property>
              <property name="sizeHint" stdset="0">
-              <size>
-               <width>20</width>
-               <height>40</height>
-              </size>
+              <size><width>20</width><height>40</height></size>
              </property>
             </spacer>
            </item>
@@ -786,15 +595,8 @@
         </item>
         <item>
          <spacer name="horizontalSpacer_settings_outer">
-          <property name="orientation">
-           <enum>Qt::Orientation::Horizontal</enum>
-          </property>
-          <property name="sizeHint" stdset="0">
-           <size>
-            <width>40</width>
-            <height>20</height>
-           </size>
-          </property>
+          <property name="orientation"><enum>Qt::Orientation::Horizontal</enum></property>
+          <property name="sizeHint" stdset="0"><size><width>40</width><height>20</height></size></property>
          </spacer>
         </item>
        </layout>
@@ -1112,6 +914,204 @@
          </property>
         </widget>
        </widget>
+      </widget>
+      <widget class="QWidget" name="tab_admin">
+       <attribute name="title"><string>관리자</string></attribute>
+       <layout class="QHBoxLayout" name="horizontalLayout_admin_outer">
+        <item>
+         <widget class="QWidget" name="widget_admin_content" native="true">
+          <property name="maximumSize">
+           <size><width>470</width><height>16777215</height></size>
+          </property>
+          <layout class="QVBoxLayout" name="verticalLayout_admin">
+           <property name="leftMargin"><number>0</number></property>
+           <property name="topMargin"><number>0</number></property>
+           <property name="rightMargin"><number>0</number></property>
+           <property name="bottomMargin"><number>0</number></property>
+           <item>
+            <widget class="QGroupBox" name="groupBox_google_sheets">
+             <property name="title">
+              <string>연동 · Google Sheets</string>
+             </property>
+             <layout class="QVBoxLayout" name="verticalLayout_google_sheets">
+              <item>
+               <widget class="QLabel" name="label_google_auth_status">
+                <property name="text">
+                 <string>상태를 불러오는 중…</string>
+                </property>
+                <property name="wordWrap">
+                 <bool>true</bool>
+                </property>
+                <property name="alignment">
+                 <set>Qt::AlignmentFlag::AlignLeft|Qt::AlignmentFlag::AlignTop</set>
+                </property>
+               </widget>
+              </item>
+              <item>
+               <layout class="QHBoxLayout" name="horizontalLayout_google_buttons">
+                <item>
+                 <widget class="QPushButton" name="pushButton_google_reauth">
+                  <property name="text">
+                   <string>재인증</string>
+                  </property>
+                  <property name="toolTip">
+                   <string>저장된 로그인을 지우고 브라우저에서 다시 Google 계정 연결</string>
+                  </property>
+                 </widget>
+                </item>
+                <item>
+                 <widget class="QPushButton" name="pushButton_google_disconnect">
+                  <property name="text">
+                   <string>연결 해제</string>
+                  </property>
+                  <property name="toolTip">
+                   <string>이 PC의 token.json만 삭제합니다. (계정 비밀번호 변경과는 별개)</string>
+                  </property>
+                 </widget>
+                </item>
+                <item>
+                 <widget class="QPushButton" name="pushButton_google_open_oauth_folder">
+                  <property name="text">
+                   <string>google-oauth 폴더 열기</string>
+                  </property>
+                 </widget>
+                </item>
+                <item>
+                 <spacer name="horizontalSpacer_google_buttons">
+                  <property name="orientation">
+                   <enum>Qt::Orientation::Horizontal</enum>
+                  </property>
+                  <property name="sizeHint" stdset="0">
+                   <size>
+                    <width>10</width>
+                    <height>20</height>
+                   </size>
+                  </property>
+                 </spacer>
+                </item>
+               </layout>
+              </item>
+              <item>
+               <widget class="QLabel" name="label_google_auth_tip">
+                <property name="font">
+                 <font>
+                  <family>맑은 고딕</family>
+                  <pointsize>8</pointsize>
+                 </font>
+                </property>
+                <property name="text">
+                 <string>invalid_scope 등 Google 인증 오류가 나면 「연결 해제」 후 「재인증」을 눌러 주세요. (google-oauth 폴더의 token.json 갱신)</string>
+                </property>
+                <property name="wordWrap">
+                 <bool>true</bool>
+                </property>
+                <property name="styleSheet">
+                 <string>color: #888;</string>
+                </property>
+               </widget>
+              </item>
+             </layout>
+            </widget>
+           </item>
+           <item>
+            <widget class="QGroupBox" name="groupBox_api_keys">
+             <property name="title">
+              <string>연동 · API 키 (관리자)</string>
+             </property>
+             <layout class="QVBoxLayout" name="verticalLayout_api_keys">
+              <item>
+               <widget class="QLabel" name="label_settings_api_status">
+                <property name="text">
+                 <string>상태 확인 중…</string>
+                </property>
+                <property name="wordWrap">
+                 <bool>true</bool>
+                </property>
+                <property name="styleSheet">
+                 <string>color: #888;</string>
+                </property>
+               </widget>
+              </item>
+              <item>
+               <layout class="QHBoxLayout" name="horizontalLayout_api_keys">
+                <item>
+                 <widget class="QPushButton" name="pushButton_cfg_kpost_key">
+                  <property name="text">
+                   <string>우체국 인증키</string>
+                  </property>
+                  <property name="toolTip">
+                   <string>관리자용: 공유 우체국 OpenAPI 인증키(regkey) 변경. 전원 적용.</string>
+                  </property>
+                 </widget>
+                </item>
+                <item>
+                 <widget class="QPushButton" name="pushButton_cfg_slack_webhook">
+                  <property name="text">
+                   <string>슬랙 Webhook</string>
+                  </property>
+                  <property name="toolTip">
+                   <string>관리자용: 슬랙 알림 Webhook URL 설정(전원 공유).</string>
+                  </property>
+                 </widget>
+                </item>
+                <item>
+                 <widget class="QPushButton" name="pushButton_cfg_naver_key">
+                  <property name="text">
+                   <string>네이버 키</string>
+                  </property>
+                  <property name="toolTip">
+                   <string>관리자용: 네이버 커머스API client_id/secret 입력(검증 후 전원 공유).</string>
+                  </property>
+                 </widget>
+                </item>
+                <item>
+                 <widget class="QPushButton" name="pushButton_cfg_coupang_key">
+                  <property name="text">
+                   <string>쿠팡 키</string>
+                  </property>
+                  <property name="toolTip">
+                   <string>관리자용: 쿠팡 WING OpenAPI vendorId/accessKey/secretKey 입력(검증 후 전원 공유).</string>
+                  </property>
+                 </widget>
+                </item>
+                <item>
+                 <spacer name="horizontalSpacer_api_keys">
+                  <property name="orientation">
+                   <enum>Qt::Orientation::Horizontal</enum>
+                  </property>
+                  <property name="sizeHint" stdset="0">
+                   <size>
+                    <width>10</width>
+                    <height>20</height>
+                   </size>
+                  </property>
+                 </spacer>
+                </item>
+               </layout>
+              </item>
+             </layout>
+            </widget>
+           </item>
+           <item>
+            <spacer name="verticalSpacer_admin">
+             <property name="orientation">
+              <enum>Qt::Orientation::Vertical</enum>
+             </property>
+             <property name="sizeHint" stdset="0">
+              <size><width>20</width><height>40</height></size>
+             </property>
+            </spacer>
+           </item>
+          </layout>
+         </widget>
+        </item>
+        <item>
+         <spacer name="horizontalSpacer_admin_outer">
+          <property name="orientation"><enum>Qt::Orientation::Horizontal</enum></property>
+          <property name="sizeHint" stdset="0"><size><width>40</width><height>20</height></size></property>
+         </spacer>
+        </item>
+       </layout>
       </widget>
       <widget class="QWidget" name="tab_db_sheet_sync">
        <attribute name="title">

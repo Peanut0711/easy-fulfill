@@ -2230,7 +2230,7 @@ class MainWindow(QMainWindow):
             self._dlg_key_status = QLabel(f"인증키: {self._key_status_text}")
             self._dlg_key_status.setWordWrap(True)
             kl.addWidget(self._dlg_key_status)
-            _key_moved = QLabel("키 변경은 「환경설정」 탭 → 「연동 · API 키」에서 합니다.")
+            _key_moved = QLabel("키 변경은 「관리자」 탭 → 「연동 · API 키」에서 합니다.")
             _key_moved.setStyleSheet("color: #888;")
             _key_moved.setWordWrap(True)
             kl.addWidget(_key_moved)
@@ -2248,7 +2248,7 @@ class MainWindow(QMainWindow):
             )
             self._dlg_slack_auto.stateChanged.connect(self._on_slack_auto_toggled)
             btn_test = QPushButton("테스트")
-            btn_test.setToolTip("Webhook 설정은 「환경설정」 탭 → 「연동 · API 키」에서 합니다.")
+            btn_test.setToolTip("Webhook 설정은 「관리자」 탭 → 「연동 · API 키」에서 합니다.")
             btn_test.clicked.connect(self._on_slack_test_clicked)
             srow.addWidget(self._dlg_slack_auto)
             srow.addStretch(1)
@@ -2276,7 +2276,7 @@ class MainWindow(QMainWindow):
             btn_npoll = QPushButton("지금 확인")
             btn_npoll.setToolTip(
                 "토글과 무관하게 지금 한 번 조회합니다. "
-                "네이버·쿠팡 키 입력은 「환경설정」 탭 → 「연동 · API 키」에서 합니다.")
+                "네이버·쿠팡 키 입력은 「관리자」 탭 → 「연동 · API 키」에서 합니다.")
             btn_npoll.clicked.connect(self._on_naver_inquiry_manual_poll)
             nrow.addWidget(self._dlg_naver_enable)
             nrow.addStretch(1)
@@ -3584,12 +3584,12 @@ class MainWindow(QMainWindow):
         self._order_ship_splitter_initialized = False
 
     def _apply_tab_order(self):
-        """탭을 주문·발송 / 배송추적 / DB동기화 / 환경설정 순으로 재배치합니다.
+        """탭을 주문·발송 / 배송추적 / DB동기화 / 환경설정 / 관리자 순으로 재배치합니다.
         (UI 파일의 정의 순서와 무관하게 런타임에서 보장)"""
         tw = getattr(self.ui, "tabWidget", None)
         if tw is None:
             return
-        desired = ["tab", "tab_tracking", "tab_db_sheet_sync", "tab_2"]
+        desired = ["tab", "tab_tracking", "tab_db_sheet_sync", "tab_2", "tab_admin"]
         bar = tw.tabBar()
         for target in range(len(desired)):
             name = desired[target]
