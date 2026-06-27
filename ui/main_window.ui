@@ -450,6 +450,16 @@
                  </widget>
                 </item>
                 <item>
+                 <widget class="QPushButton" name="pushButton_index_undo">
+                  <property name="text">
+                   <string>마지막 변경 되돌리기</string>
+                  </property>
+                  <property name="toolTip">
+                   <string>오늘 마지막 인덱스 변경(실수로 올라간 값 등)을 직전 값으로 1클릭 복구합니다. 전원 적용.</string>
+                  </property>
+                 </widget>
+                </item>
+                <item>
                  <spacer name="horizontalSpacer_index_refresh">
                   <property name="orientation">
                    <enum>Qt::Orientation::Horizontal</enum>

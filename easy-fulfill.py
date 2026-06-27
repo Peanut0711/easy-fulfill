@@ -73,6 +73,11 @@ ORDER_INDEX_SHEET_TITLE = "일별 주문번호"
 ORDER_INDEX_SHEET_HEADERS = ["날짜", "네이버", "쿠팡", "지마켓"]
 ORDER_INDEX_SHEET_POLL_MS = 150_000  # 2.5분 (2~3분 간격)
 ORDER_INDEX_SHEET_PUSH_DEBOUNCE_MS = 800
+# 주문번호 인덱스 변경이력(공유) — 누가·언제·이전값→새값을 남겨 실수 시 1클릭 되돌리기.
+ORDER_INDEX_LOG_SHEET_TITLE = "주문번호 변경이력"
+ORDER_INDEX_LOG_HEADERS = ["시각", "사용자", "스토어", "이전값", "새값", "사유"]
+_ORDER_STORE_KO = {"naver": "네이버", "coupang": "쿠팡", "gmarket": "지마켓"}
+_ORDER_STORE_FROM_KO = {v: k for k, v in _ORDER_STORE_KO.items()}
 # 송장 배송추적(우체국·스마트택배 API) — 직원 5명 공유용 스프레드시트 탭.
 # 주문 인덱스 탭(고정 인덱스 2)을 깨지 않도록 제목으로 찾고 없으면 맨 끝에 생성한다.
 TRACKING_SHEET_TITLE = "송장추적"
@@ -360,10 +365,47 @@ def run_order_index_read_sync_worker():
         return {"ok": False, "error": str(e)}
 
 
-def run_order_index_write_worker(naver, coupang, gmarket):
+def _current_actor():
+    """변경이력에 남길 사용자 식별(로컬 로그인명@호스트). 사무실 PC별로 사람 구분용."""
+    try:
+        import getpass
+        import socket
+        return f"{getpass.getuser()}@{socket.gethostname()}"
+    except Exception:
+        return "unknown"
+
+
+def _standalone_open_order_index_log_ws(spreadsheet):
+    """주문번호 변경이력 워크시트를 제목으로 찾고, 없으면 맨 끝에 생성+헤더 기록."""
+    for ws in spreadsheet.worksheets():
+        if ws.title == ORDER_INDEX_LOG_SHEET_TITLE:
+            return ws
+    ws = spreadsheet.add_worksheet(title=ORDER_INDEX_LOG_SHEET_TITLE, rows=2000, cols=6)
+    ws.update([ORDER_INDEX_LOG_HEADERS], range_name="A1:F1")
+    return ws
+
+
+def _append_order_index_log(gc, changed, reason):
+    """changed: [(store_key, old, new), ...] 중 값이 바뀐 항목만 이력 시트에 추가."""
+    rows = []
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    actor = _current_actor()
+    for store, old, new in changed:
+        if str(old) == str(new):
+            continue
+        rows.append([now, actor, _ORDER_STORE_KO.get(store, store),
+                     "" if old is None else old, new, reason])
+    if not rows:
+        return
+    log_ws = _standalone_open_order_index_log_ws(gc.open_by_key(SPREADSHEET_ID))
+    log_ws.append_rows(rows, value_input_option="USER_ENTERED")
+
+
+def run_order_index_write_worker(naver, coupang, gmarket, reason="변경"):
     """
     UI 스레드가 아닌 곳에서 호출. 오늘 날짜 행에 인덱스 3종을 기록합니다.
     시트 전체 읽기는 한 번만 수행하고 그 값을 그대로 재사용합니다.
+    변경된 스토어는 「주문번호 변경이력」에 누가·언제·이전값→새값으로 남깁니다.
     반환 dict: ok — 또는 ok False, error
     """
     if gspread is None:
@@ -377,8 +419,75 @@ def run_order_index_write_worker(naver, coupang, gmarket):
         ws = _standalone_open_order_index_ws(gc)
         values = ws.get_all_values()  # 쓰기 위치 판단용 단일 읽기
         values = _standalone_normalize_order_index_values(ws, values)
+        old = _standalone_read_today_order_indices_from_values(values) or {}
         _standalone_write_order_indices_ws(ws, naver, coupang, gmarket, values=values)
+        new = {"naver": naver, "coupang": coupang, "gmarket": gmarket}
+        changed = [(k, old.get(k), new[k]) for k in ("naver", "coupang", "gmarket")
+                   if str(old.get(k)) != str(new[k])]
+        if changed:
+            try:
+                _append_order_index_log(gc, changed, reason)
+            except Exception as le:
+                print(f"! 인덱스 변경이력 기록 실패: {le}")
         return {"ok": True}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+def run_order_index_undo_worker():
+    """오늘자 '되돌리기'가 아닌 마지막 인덱스 변경을, 그 변경의 이전값으로 복구합니다.
+    반환: ok, reverted(bool), store_ko, frm, to — 또는 ok False, error."""
+    if gspread is None:
+        return {"ok": False, "error": "gspread 패키지가 필요합니다. (pip install gspread)"}
+    try:
+        from google_sheets_oauth import get_authorized_gspread_client
+    except ImportError as e:
+        return {"ok": False, "error": str(e)}
+    try:
+        gc = get_authorized_gspread_client()
+        ss = gc.open_by_key(SPREADSHEET_ID)
+        log_ws = _standalone_open_order_index_log_ws(ss)
+        log = log_ws.get_all_values()
+        today = date.today().strftime("%Y-%m-%d")
+        rows = log[1:] if (log and log[0] and log[0][0] == "시각") else log
+        target = None
+        for row in reversed(rows):
+            r = list(row) + [""] * 6
+            ts, actor, store_ko, oldv, newv, reason = r[:6]
+            if not str(ts).startswith(today):
+                continue
+            if reason == "되돌리기":
+                continue
+            if store_ko not in _ORDER_STORE_FROM_KO:
+                continue
+            target = (store_ko, oldv)
+            break
+        if target is None:
+            return {"ok": True, "reverted": False}
+        store_ko, oldv = target
+        store = _ORDER_STORE_FROM_KO[store_ko]
+        ws = _standalone_open_order_index_ws(gc)
+        values = ws.get_all_values()
+        values = _standalone_normalize_order_index_values(ws, values)
+        cur = _standalone_read_today_order_indices_from_values(values) or {
+            "naver": 1, "coupang": 1, "gmarket": 1}
+        cur_val = cur.get(store)
+        try:
+            old_int = int(oldv)
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "이전값을 해석할 수 없습니다."}
+        if str(cur_val) == str(old_int):
+            return {"ok": True, "reverted": False, "store_ko": store_ko}
+        new_vals = dict(cur)
+        new_vals[store] = old_int
+        _standalone_write_order_indices_ws(
+            ws, new_vals["naver"], new_vals["coupang"], new_vals["gmarket"], values=values)
+        try:
+            _append_order_index_log(gc, [(store, cur_val, old_int)], "되돌리기")
+        except Exception as le:
+            print(f"! 되돌리기 이력 기록 실패: {le}")
+        return {"ok": True, "reverted": True, "store_ko": store_ko,
+                "frm": cur_val, "to": old_int}
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
@@ -1238,16 +1347,27 @@ class OrderIndexWriteThread(QThread):
 
     result_ready = Signal(dict)
 
-    def __init__(self, naver, coupang, gmarket, parent=None):
+    def __init__(self, naver, coupang, gmarket, parent=None, reason="변경"):
         super().__init__(parent)
         self._naver = naver
         self._coupang = coupang
         self._gmarket = gmarket
+        self._reason = reason
 
     def run(self):
         self.result_ready.emit(
-            run_order_index_write_worker(self._naver, self._coupang, self._gmarket)
+            run_order_index_write_worker(
+                self._naver, self._coupang, self._gmarket, reason=self._reason)
         )
+
+
+class OrderIndexUndoThread(QThread):
+    """오늘 마지막 인덱스 변경을 직전 값으로 되돌리는 백그라운드 작업."""
+
+    result_ready = Signal(dict)
+
+    def run(self):
+        self.result_ready.emit(run_order_index_undo_worker())
 
 
 class TrackingUpsertThread(QThread):
@@ -1846,6 +1966,7 @@ class MainWindow(QMainWindow):
         self._startup_sync_thread = None
         # 폴링(읽기)·인덱스 쓰기 백그라운드 작업 단일 실행 추적 (None이면 유휴)
         self._index_sheet_op_thread = None
+        self._index_undo_thread = None  # 인덱스 되돌리기 단일 실행 추적
         # 진행 중인 백그라운드 읽기의 결과 처리 방식 (대화형 여부 / 완료 후 콜백)
         self._index_sheet_read_interactive = False
         self._index_sheet_read_on_applied = None
@@ -3241,8 +3362,11 @@ class MainWindow(QMainWindow):
         print(f"  - 쿠팡: {self.current_idx_coupang}")
         print(f"  - 11번가: {self.current_idx_11st}")
 
-    def save_index_values(self, push_sheet=True):
-        """현재 인덱스 값을 저장합니다. 로컬 JSON 후 스프레드시트 반영은 디바운스됩니다."""
+    def save_index_values(self, push_sheet=True, reason="변경"):
+        """현재 인덱스 값을 저장합니다. 로컬 JSON 후 스프레드시트 반영은 디바운스됩니다.
+        reason 은 변경이력에 남길 사유(주문 로드/수동 변경 등)."""
+        if push_sheet:
+            self._pending_index_reason = reason
         try:
             self._persist_index_values_to_json()
         except Exception as e:
@@ -3298,7 +3422,8 @@ class MainWindow(QMainWindow):
             self._update_index_sheet_sync_label()
             return
         n, c, g = self.current_idx_naver, self.current_idx_coupang, self.current_idx_gmarket
-        thread = OrderIndexWriteThread(n, c, g, self)
+        reason = getattr(self, "_pending_index_reason", "변경")
+        thread = OrderIndexWriteThread(n, c, g, self, reason=reason)
         self._index_sheet_op_thread = thread
         thread.result_ready.connect(self._on_order_index_write_finished)
         thread.finished.connect(self._cleanup_index_sheet_op_thread)
@@ -3426,6 +3551,47 @@ class MainWindow(QMainWindow):
         )
         self._begin_order_index_read(interactive=True, on_applied=None, defer_if_busy=True)
 
+    def _on_order_index_undo_clicked(self):
+        """오늘 마지막 인덱스 변경(실수 포함)을 직전 값으로 1클릭 복구."""
+        if gspread is None:
+            QMessageBox.warning(self, "되돌리기", "Google Sheets 연동이 필요합니다.")
+            return
+        if self._index_undo_thread is not None:
+            return
+        if QMessageBox.question(
+            self, "마지막 변경 되돌리기",
+            "오늘 마지막으로 기록된 주문번호 인덱스 변경을 직전 값으로 되돌립니다.\n"
+            "(전원에게 적용됩니다.) 진행할까요?",
+        ) != QMessageBox.StandardButton.Yes:
+            return
+        self._show_busy_processing_overlay(
+            "되돌리는 중…", "마지막 인덱스 변경을 복구하고 있습니다.")
+        thread = OrderIndexUndoThread(self)
+        self._index_undo_thread = thread
+        thread.result_ready.connect(self._on_order_index_undo_finished)
+        thread.finished.connect(self._cleanup_index_undo_thread)
+        thread.finished.connect(thread.deleteLater)
+        thread.start()
+
+    def _cleanup_index_undo_thread(self):
+        self._index_undo_thread = None
+
+    def _on_order_index_undo_finished(self, payload: dict):
+        self._hide_busy_processing_overlay()
+        if not payload.get("ok"):
+            QMessageBox.warning(
+                self, "되돌리기", f"되돌리기에 실패했습니다.\n\n{payload.get('error', '')}")
+            return
+        if not payload.get("reverted"):
+            QMessageBox.information(self, "되돌리기", "오늘 되돌릴 변경이 없습니다.")
+            return
+        store = payload.get("store_ko", "")
+        QMessageBox.information(
+            self, "되돌리기 완료",
+            f"{store} 인덱스를 {payload.get('frm')} → {payload.get('to')} 로 되돌렸습니다.")
+        # 시트 최신값으로 UI 갱신
+        self._begin_order_index_read(interactive=False, on_applied=None, defer_if_busy=False)
+
     def update_naver_index(self):
         """네이버 인덱스 값을 업데이트하고 저장합니다."""
         self.current_idx_naver += 1
@@ -3436,7 +3602,7 @@ class MainWindow(QMainWindow):
                 w.setText(str(self.current_idx_naver))
             finally:
                 w.blockSignals(False)
-        self.save_index_values()
+        self.save_index_values(reason="주문 로드")
 
     def update_coupang_index(self):
         """쿠팡 인덱스 값을 업데이트하고 저장합니다."""
@@ -3448,7 +3614,7 @@ class MainWindow(QMainWindow):
                 w.setText(str(self.current_idx_coupang))
             finally:
                 w.blockSignals(False)
-        self.save_index_values()
+        self.save_index_values(reason="주문 로드")
 
     def update_gmarket_index(self):
         """지마켓 인덱스 값을 업데이트하고 저장합니다."""
@@ -3460,7 +3626,7 @@ class MainWindow(QMainWindow):
                 w.setText(str(self.current_idx_gmarket))
             finally:
                 w.blockSignals(False)
-        self.save_index_values()
+        self.save_index_values(reason="주문 로드")
 
     def update_11st_index(self):
         """11번가 인덱스 값을 업데이트하고 저장합니다(로컬 JSON만, 스프레드시트 푸시 없음)."""
@@ -4469,6 +4635,10 @@ class MainWindow(QMainWindow):
             self.ui.pushButton_index_sheet_refresh.clicked.connect(
                 self._on_push_button_index_sheet_refresh_clicked
             )
+        if hasattr(self.ui, "pushButton_index_undo"):
+            self.ui.pushButton_index_undo.clicked.connect(
+                self._on_order_index_undo_clicked
+            )
         if hasattr(self.ui, "pushButton_db_sync_refresh_paths"):
             self.ui.pushButton_db_sync_refresh_paths.clicked.connect(
                 self._on_db_sync_refresh_paths_clicked
@@ -5474,7 +5644,7 @@ class MainWindow(QMainWindow):
         try:
             if text.strip() and text.strip().isdigit():
                 self.current_idx_naver = int(text.strip())
-                self.save_index_values()
+                self.save_index_values(reason="수동 변경")
                 print(f"✓ 네이버 인덱스 수동 변경: {self.current_idx_naver}")
         except Exception as e:
             print(f"! 네이버 인덱스 변경 중 오류 발생: {str(e)}")
@@ -5484,7 +5654,7 @@ class MainWindow(QMainWindow):
         try:
             if text.strip() and text.strip().isdigit():
                 self.current_idx_coupang = int(text.strip())
-                self.save_index_values()
+                self.save_index_values(reason="수동 변경")
                 print(f"✓ 쿠팡 인덱스 수동 변경: {self.current_idx_coupang}")
         except Exception as e:
             print(f"! 쿠팡 인덱스 변경 중 오류 발생: {str(e)}")
@@ -5495,7 +5665,7 @@ class MainWindow(QMainWindow):
         try:
             if text.strip() and text.strip().isdigit():
                 self.current_idx_gmarket = int(text.strip())
-                self.save_index_values()
+                self.save_index_values(reason="수동 변경")
                 print(f"✓ 지마켓 인덱스 수동 변경: {self.current_idx_gmarket}")
         except Exception as e:
             print(f"! 지마켓 인덱스 변경 중 오류 발생: {str(e)}")
