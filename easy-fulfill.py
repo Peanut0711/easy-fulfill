@@ -1788,6 +1788,16 @@ class ImageDialog(QDialog):
     
     def closeEvent(self, event):
         """창이 닫힐 때 호출되는 이벤트"""
+        # 종료 중 새 백그라운드 작업(폴링·푸시)이 뜨지 않도록 타이머 정지
+        for _tname in ("_index_sheet_push_timer", "_index_sheet_poll_timer",
+                       "_tracking_list_timer", "_tracking_push_timer",
+                       "_naver_inquiry_timer", "_timer"):
+            _t = getattr(self, _tname, None)
+            try:
+                if _t is not None:
+                    _t.stop()
+            except Exception:
+                pass
         # 소분류 값 업데이트
         self.update_subcategory()
         
@@ -8423,7 +8433,15 @@ def main():
     window = MainWindow()
     window.show()
     print("메인 윈도우 표시")
-    sys.exit(app.exec())
+    ret = app.exec()
+    # 창을 닫으면 즉시 종료. 백그라운드 QThread 파괴로 인한 종료 크래시
+    # (QThread: Destroyed while thread is still running)를 피하려고 Qt/파이썬 정리
+    # 단계를 건너뛴다. 인덱스 등 로컬 저장은 변경 시 이미 동기로 기록된다.
+    try:
+        sys.stdout.flush()
+    except Exception:
+        pass
+    os._exit(ret if isinstance(ret, int) and ret >= 0 else 0)
 
 if __name__ == "__main__":
     main() 
