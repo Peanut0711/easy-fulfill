@@ -88,7 +88,16 @@ CONFIG_SHEET_TITLE = "설정"
 CONFIG_SHEET_HEADERS = ["키", "값"]
 CONFIG_KEY_KPOST_REGKEY = "kpost_regkey"
 CONFIG_KEY_SLACK_WEBHOOK = "slack_webhook_url"
-CONFIG_KEY_STALE_HOURS = "stale_hours"  # 정체 판정 기준 시간(전원 공유)
+CONFIG_KEY_STALE_HOURS = "stale_hours"  # (구) 단일 정체 기준 — 분류별 기준으로 대체(미사용, 호환 보존)
+# 분류별 정체 판정 기준 시간(영업시간, 전원 공유). 허브는 분실·사고 의심이라 가장 짧게,
+# 이동정체는 정상 배송도 며칠 걸리므로 가장 길게 둔다.
+CONFIG_KEY_STALE_HUB = "stale_hub_hours"        # 허브정체 기준
+CONFIG_KEY_STALE_PICKUP = "stale_pickup_hours"  # 수거누락 기준
+CONFIG_KEY_STALE_TRANSIT = "stale_transit_hours"  # 이동정체 기준
+STALE_DEFAULTS = {"허브정체": 12, "수거누락": 24, "이동정체": 48}
+STALE_CONFIG_KEYS = {"허브정체": CONFIG_KEY_STALE_HUB,
+                     "수거누락": CONFIG_KEY_STALE_PICKUP,
+                     "이동정체": CONFIG_KEY_STALE_TRANSIT}
 CONFIG_KEY_INQUIRY_WORK_START = "inquiry_work_start_hour"  # 문의 알림 허용 시작시각(전원 공유)
 CONFIG_KEY_INQUIRY_WORK_END = "inquiry_work_end_hour"      # 문의 알림 허용 종료시각(전원 공유)
 CONFIG_KEY_DIGEST_DATE = "digest_last_date"  # 일일 다이제스트 발송 날짜(전원 중복 방지)
@@ -744,7 +753,9 @@ def run_tracking_config_read_worker():
             "ok": True,
             "regkey": cfg.get(CONFIG_KEY_KPOST_REGKEY, ""),
             "slack_webhook": cfg.get(CONFIG_KEY_SLACK_WEBHOOK, ""),
-            "stale_hours": cfg.get(CONFIG_KEY_STALE_HOURS, ""),
+            "stale_hub": cfg.get(CONFIG_KEY_STALE_HUB, ""),
+            "stale_pickup": cfg.get(CONFIG_KEY_STALE_PICKUP, ""),
+            "stale_transit": cfg.get(CONFIG_KEY_STALE_TRANSIT, ""),
             "inquiry_work_start": cfg.get(CONFIG_KEY_INQUIRY_WORK_START, ""),
             "inquiry_work_end": cfg.get(CONFIG_KEY_INQUIRY_WORK_END, ""),
         }
@@ -1871,7 +1882,7 @@ class MainWindow(QMainWindow):
         self._dlg_slack_status = None
         self._dlg_slack_auto = None
         self._dlg_key_btn = None
-        self._dlg_stale_hours = None
+        self._dlg_stale_boxes = {}
         self._dlg_inquiry_start = None
         self._dlg_inquiry_end = None
         self._key_status_text = "확인 중…"
@@ -2025,25 +2036,37 @@ class MainWindow(QMainWindow):
         # 슬랙 상태 텍스트 갱신(자동 알림·정체기준은 설정 팝업에서 로드)
         self._refresh_slack_status()
 
-    def _stale_hours(self):
-        """정체 판정 기준 시간(공유 설정에서 동기화된 로컬 값). 기본 12."""
+    def _stale_threshold(self, category):
+        """분류별 정체 판정 기준 시간(영업시간, 공유 설정 동기화된 로컬 값).
+        값이 없으면 STALE_DEFAULTS(허브 12 / 수거누락 24 / 이동 48)."""
+        default = STALE_DEFAULTS.get(category, 12)
         try:
-            return int(self.get_app_setting("stale_hours", 12) or 12)
-        except (TypeError, ValueError):
-            return 12
+            v = self.get_app_setting(STALE_CONFIG_KEYS[category], "")
+            if str(v).strip():
+                return int(v)
+        except (KeyError, TypeError, ValueError):
+            pass
+        return default
 
-    def _on_stale_hours_changed(self, value):
-        """설정 팝업의 정체기준 변경 → 로컬 저장 + 공유 「설정」 탭 반영 + 표 갱신."""
+    def _on_stale_threshold_changed(self, category, value):
+        """설정 팝업의 분류별 정체기준 변경 → 로컬 저장 + 공유 「설정」 탭 반영 + 표 갱신."""
         v = int(value)
-        self.set_app_setting("stale_hours", v)
+        self.set_app_setting(STALE_CONFIG_KEYS[category], v)
         self._populate_tracking_table()
         if gspread is not None and self._tracking_config_write_thread is None:
-            thread = TrackingConfigWriteThread({CONFIG_KEY_STALE_HOURS: str(v)}, self)
+            thread = TrackingConfigWriteThread({STALE_CONFIG_KEYS[category]: str(v)}, self)
             self._tracking_config_write_thread = thread
             thread.result_ready.connect(self._on_tracking_config_write_finished)
             thread.finished.connect(self._cleanup_tracking_config_write_thread)
             thread.finished.connect(thread.deleteLater)
             thread.start()
+
+    def _sync_stale_threshold_spinboxes(self):
+        """설정 팝업의 분류별 정체기준 스핀박스를 현재 값으로 갱신(시그널 차단)."""
+        for cat, sb in self._dlg_stale_boxes.items():
+            sb.blockSignals(True)
+            sb.setValue(self._stale_threshold(cat))
+            sb.blockSignals(False)
 
     def _inquiry_work_hours(self):
         """문의 알림 허용 시작/종료 시각(공유 설정 동기화된 로컬 값). 기본 (10, 19)."""
@@ -2265,19 +2288,24 @@ class MainWindow(QMainWindow):
             ndl.addLayout(hrow)
             outer.addWidget(gb_naver)
 
-            gb_risk = QGroupBox("위험 판정 기준")
+            gb_risk = QGroupBox("위험 판정 기준 (분류별 정체시간, 영업시간)")
             rl = QHBoxLayout(gb_risk)
-            rl.addWidget(QLabel("정체기준(시간):"))
-            self._dlg_stale_hours = QSpinBox()
-            self._dlg_stale_hours.setMinimum(1)
-            self._dlg_stale_hours.setMaximum(168)
-            self._dlg_stale_hours.setValue(self._stale_hours())
-            self._dlg_stale_hours.setToolTip(
-                "미완료 송장이 이 시간 이상 우체국 이벤트가 없으면 '정체'로 표시합니다. "
-                "변경 시 공유 시트에 저장되어 전원에게 적용됩니다."
-            )
-            self._dlg_stale_hours.valueChanged.connect(self._on_stale_hours_changed)
-            rl.addWidget(self._dlg_stale_hours)
+            _risk_tip = ("미완료 송장이 이 시간 이상 우체국 이벤트가 없으면 '정체'로 표시합니다. "
+                         "토·일은 제외한 영업시간 기준이며, 변경 시 공유 시트에 저장되어 "
+                         "전원에게 적용됩니다.")
+            self._dlg_stale_boxes = {}
+            for cat, cap in (("허브정체", "허브"), ("수거누락", "수거누락"), ("이동정체", "이동")):
+                rl.addWidget(QLabel(f"{cap}:"))
+                sb = QSpinBox()
+                sb.setMinimum(1)
+                sb.setMaximum(168)
+                sb.setValue(self._stale_threshold(cat))
+                sb.setSuffix("h")
+                sb.setToolTip(_risk_tip)
+                sb.valueChanged.connect(
+                    lambda v, c=cat: self._on_stale_threshold_changed(c, v))
+                rl.addWidget(sb)
+                self._dlg_stale_boxes[cat] = sb
             rl.addStretch(1)
             outer.addWidget(gb_risk)
 
@@ -2298,10 +2326,7 @@ class MainWindow(QMainWindow):
             self._dlg_slack_auto.blockSignals(True)
             self._dlg_slack_auto.setChecked(bool(self.get_app_setting("slack_auto_notify", False)))
             self._dlg_slack_auto.blockSignals(False)
-        if self._dlg_stale_hours is not None:
-            self._dlg_stale_hours.blockSignals(True)
-            self._dlg_stale_hours.setValue(self._stale_hours())
-            self._dlg_stale_hours.blockSignals(False)
+        self._sync_stale_threshold_spinboxes()
         self._sync_inquiry_hours_spinboxes()
         if self._dlg_naver_enable is not None:
             self._dlg_naver_enable.blockSignals(True)
@@ -2429,12 +2454,15 @@ class MainWindow(QMainWindow):
             slack = str(payload.get("slack_webhook", "") or "").strip()
             if slack:
                 self.set_app_setting("slack_webhook_url", slack)
-            sh = str(payload.get("stale_hours", "") or "").strip()
-            if sh:
-                try:
-                    self.set_app_setting("stale_hours", int(sh))
-                except (TypeError, ValueError):
-                    pass
+            for pkey, akey in (("stale_hub", CONFIG_KEY_STALE_HUB),
+                               ("stale_pickup", CONFIG_KEY_STALE_PICKUP),
+                               ("stale_transit", CONFIG_KEY_STALE_TRANSIT)):
+                sv = str(payload.get(pkey, "") or "").strip()
+                if sv:
+                    try:
+                        self.set_app_setting(akey, int(sv))
+                    except (TypeError, ValueError):
+                        pass
             for pkey, akey in (("inquiry_work_start", "inquiry_work_start_hour"),
                                ("inquiry_work_end", "inquiry_work_end_hour")):
                 hv = str(payload.get(pkey, "") or "").strip()
@@ -2448,10 +2476,7 @@ class MainWindow(QMainWindow):
         # 공유 설정 수신 후 상태 텍스트·정체기준·알림시간대·표 갱신
         self._refresh_key_status()
         self._refresh_slack_status()
-        if self._dlg_stale_hours is not None:
-            self._dlg_stale_hours.blockSignals(True)
-            self._dlg_stale_hours.setValue(self._stale_hours())
-            self._dlg_stale_hours.blockSignals(False)
+        self._sync_stale_threshold_spinboxes()
         self._sync_inquiry_hours_spinboxes()
         self._populate_tracking_table()
 
@@ -2479,9 +2504,11 @@ class MainWindow(QMainWindow):
     # 정상으로 보아 위험 판정에서 제외하는 상태
     _RISK_EXCLUDE_STATUS = ("배달준비",)
 
-    def _classify_risk(self, status, where, is_stale, done):
-        """위험 분류. 반환: None(정상) / '허브정체' / '수거누락' / '이동정체'."""
-        if done or not is_stale:
+    def _risk_bucket(self, status, where, done):
+        """잠재 위험 분류(정체 여부는 미반영). 완료/제외면 None.
+        반환: None / '허브정체' / '수거누락' / '이동정체'. 분류별로 정체 기준이 달라
+        (_stale_threshold) 정체 판정 전에 먼저 어느 버킷인지부터 가린다."""
+        if done:
             return None
         status = (status or "").strip()
         if status in self._RISK_EXCLUDE_STATUS:
@@ -2491,6 +2518,17 @@ class MainWindow(QMainWindow):
         if any(h in (where or "") for h in self._RISK_HUB_KEYWORDS):
             return "허브정체"  # 물류센터/허브에서 정지 → 분실·사고 의심(최우선)
         return "이동정체"
+
+    def _evaluate_risk(self, status, where, done, ref, now_dt):
+        """버킷 분류 + 분류별 영업시간 기준 정체 판정을 합쳐 (risk, elapsed_h) 반환.
+        risk None 이면 정상(또는 기준 미달). elapsed_h 는 영업일 기준 무이동 시간."""
+        bucket = self._risk_bucket(status, where, done)
+        if bucket is None or ref is None:
+            return None, 0.0
+        elapsed_h = _business_elapsed_hours(ref, now_dt)
+        if elapsed_h > self._stale_threshold(bucket):
+            return bucket, elapsed_h
+        return None, elapsed_h
 
     def _on_tracking_list_poll(self):
         """주기 타이머: 배송추적 탭을 보고 있을 때만 목록을 자동 재로딩."""
@@ -2574,8 +2612,7 @@ class MainWindow(QMainWindow):
         else:  # 배송중(=미완료): 완료여부 != Y
             rows = [r for r in data_rows if _cell(r, 7).strip().upper() != "Y"]
 
-        # 위험 판정 기준(시간). 미완료 + 마지막 이벤트(없으면 등록) 후 N시간 무이동.
-        stale_hours = self._stale_hours()
+        # 위험 판정: 미완료 + 마지막 이벤트(없으면 등록) 후 분류별 기준(영업시간) 무이동.
         now_dt = datetime.now()
         bg_hub = QColor("#ffb3b3")      # 허브 정체 = 빨강(위험)
         bg_warn = QColor("#ffe0b3")     # 수거누락·이동정체 = 주황(주의)
@@ -2591,11 +2628,8 @@ class MainWindow(QMainWindow):
         for r, row in enumerate(rows):
             done = _cell(row, 7).strip().upper() == "Y"
             ref = self._parse_event_dt(_cell(row, 11)) or self._parse_event_dt(_cell(row, 1))
-            is_stale = (
-                ref is not None
-                and _business_elapsed_hours(ref, now_dt) > stale_hours
-            )
-            risk = self._classify_risk(_cell(row, 6), _cell(row, 8), is_stale, done)
+            risk, _elapsed = self._evaluate_risk(
+                _cell(row, 6), _cell(row, 8), done, ref, now_dt)
             if risk:
                 counts[risk] += 1
             bg = bg_hub if risk == "허브정체" else (bg_warn if risk else None)
@@ -2772,10 +2806,9 @@ class MainWindow(QMainWindow):
 
     def _collect_risk_rows(self):
         """현재 목록에서 위험 건(상태별)을 모읍니다.
-        반환: (list[dict], hours). dict: regino,name,status,where,event_time,elapsed_h,category."""
+        반환: list[dict]. dict: regino,name,status,where,event_time,elapsed_h,category."""
         values = self._tracking_list_values
         data = values[1:] if len(values) > 1 else []
-        hours = self._stale_hours()
         now_dt = datetime.now()
 
         def _cell(row, idx):
@@ -2786,9 +2819,8 @@ class MainWindow(QMainWindow):
             done = _cell(row, 7).strip().upper() == "Y"
             ev = self._parse_event_dt(_cell(row, 11))
             ref = ev or self._parse_event_dt(_cell(row, 1))
-            elapsed_h = _business_elapsed_hours(ref, now_dt) if ref is not None else 0.0
-            is_stale = ref is not None and elapsed_h > hours
-            risk = self._classify_risk(_cell(row, 6), _cell(row, 8), is_stale, done)
+            risk, elapsed_h = self._evaluate_risk(
+                _cell(row, 6), _cell(row, 8), done, ref, now_dt)
             if not risk:
                 continue
             out.append({
@@ -2803,7 +2835,7 @@ class MainWindow(QMainWindow):
         # 위험도 순서: 허브정체 → 수거누락 → 이동정체
         order = {"허브정체": 0, "수거누락": 1, "이동정체": 2}
         out.sort(key=lambda it: (order.get(it["category"], 9), -it["elapsed_h"]))
-        return out, hours
+        return out
 
     @staticmethod
     def _risk_signature(risks):
@@ -2814,12 +2846,12 @@ class MainWindow(QMainWindow):
         )
         return hashlib.md5("\n".join(keys).encode("utf-8")).hexdigest()
 
-    def _build_risk_digest_text(self, risks, hours):
+    def _build_risk_digest_text(self, risks):
         t = datetime.now().strftime("%Y-%m-%d %H:%M")
         label = {"허브정체": "🔴 허브 정체(분실·사고 의심)",
                  "수거누락": "🟠 수거 누락 의심",
                  "이동정체": "🟠 이동 정체"}
-        lines = [f"⚠️ 배송 위험 {len(risks)}건 (기준 평일 {hours}시간 무이동 · {t})"]
+        lines = [f"⚠️ 배송 위험 {len(risks)}건 (평일 기준 무이동 · {t})"]
         cur = None
         shown = 0
         for it in risks:
@@ -2828,7 +2860,9 @@ class MainWindow(QMainWindow):
                 break
             if it["category"] != cur:
                 cur = it["category"]
-                lines.append(f"[{label.get(cur, cur)}]")
+                # 분류별 정체 기준(영업시간)을 섹션 머리에 함께 표기
+                thr = self._stale_threshold(cur)
+                lines.append(f"[{label.get(cur, cur)} · 기준 {thr}h+]")
             elapsed = f"{it['elapsed_h']:.0f}시간째"
             where = it["where"] or "위치미상"
             last = f", 마지막 {it['event_time']}" if it["event_time"] else ""
@@ -2849,10 +2883,10 @@ class MainWindow(QMainWindow):
         webhook = str(self.get_app_setting("slack_webhook_url", "") or "").strip()
         if not webhook or self._digest_thread is not None:
             return
-        risks, hours = self._collect_risk_rows()
+        risks = self._collect_risk_rows()
         if not risks:
             return
-        text = self._build_risk_digest_text(risks, hours)
+        text = self._build_risk_digest_text(risks)
         sig = self._risk_signature(risks)
         today = datetime.now().strftime("%Y-%m-%d")
         thread = DigestSendThread(webhook, text, today, sig, self)
