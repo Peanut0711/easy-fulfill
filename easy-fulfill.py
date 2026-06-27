@@ -2191,7 +2191,7 @@ class MainWindow(QMainWindow):
         return t
 
     def _update_status_displays(self):
-        """밖(작은 한 줄)·팝업 라벨을 함께 갱신."""
+        """밖(작은 한 줄)·팝업 라벨·환경설정 탭 API키 상태를 함께 갱신."""
         if hasattr(self.ui, "label_tracking_status_compact"):
             self.ui.label_tracking_status_compact.setText(
                 f"우체국 API: {self._key_status_short()}  ·  슬랙: {self._slack_status_text}"
@@ -2200,6 +2200,12 @@ class MainWindow(QMainWindow):
             self._dlg_key_status.setText(f"인증키: {self._key_status_text}")
         if self._dlg_slack_status is not None:
             self._dlg_slack_status.setText(f"슬랙 알림: {self._slack_status_text}")
+        if hasattr(self.ui, "label_settings_api_status"):
+            self.ui.label_settings_api_status.setText(
+                f"우체국 인증키: {self._key_status_short()}  ·  "
+                f"슬랙 Webhook: {self._slack_status_text}  ·  "
+                f"문의 키: {self._naver_inquiry_status_text}"
+            )
 
     def _on_tracking_help_clicked(self):
         """[?] 버튼 — 배송추적 사용 안내를 팝업으로 보여줍니다(평소엔 숨김)."""
@@ -2220,15 +2226,14 @@ class MainWindow(QMainWindow):
             outer = QVBoxLayout(dlg)
 
             gb_key = QGroupBox("우체국 OpenAPI 인증키")
-            kl = QHBoxLayout(gb_key)
+            kl = QVBoxLayout(gb_key)
             self._dlg_key_status = QLabel(f"인증키: {self._key_status_text}")
             self._dlg_key_status.setWordWrap(True)
-            btn_key = QPushButton("키 변경")
-            btn_key.setToolTip("관리자용: 공유 우체국 인증키(regkey)를 변경합니다. 전원 적용.")
-            btn_key.clicked.connect(self._on_tracking_key_edit_clicked)
-            self._dlg_key_btn = btn_key
-            kl.addWidget(self._dlg_key_status, 1)
-            kl.addWidget(btn_key)
+            kl.addWidget(self._dlg_key_status)
+            _key_moved = QLabel("키 변경은 「환경설정」 탭 → 「연동 · API 키」에서 합니다.")
+            _key_moved.setStyleSheet("color: #888;")
+            _key_moved.setWordWrap(True)
+            kl.addWidget(_key_moved)
             outer.addWidget(gb_key)
 
             gb_slack = QGroupBox("슬랙 알림")
@@ -2242,13 +2247,11 @@ class MainWindow(QMainWindow):
                 "전체 새로고침 시 위험 건이 있으면 하루 1통만 슬랙으로 보냅니다(중복 방지)."
             )
             self._dlg_slack_auto.stateChanged.connect(self._on_slack_auto_toggled)
-            btn_cfg = QPushButton("슬랙 설정")
-            btn_cfg.clicked.connect(self._on_slack_config_clicked)
             btn_test = QPushButton("테스트")
+            btn_test.setToolTip("Webhook 설정은 「환경설정」 탭 → 「연동 · API 키」에서 합니다.")
             btn_test.clicked.connect(self._on_slack_test_clicked)
             srow.addWidget(self._dlg_slack_auto)
             srow.addStretch(1)
-            srow.addWidget(btn_cfg)
             srow.addWidget(btn_test)
             sl.addLayout(srow)
             outer.addWidget(gb_slack)
@@ -2270,24 +2273,13 @@ class MainWindow(QMainWindow):
                 "여러 대를 동시에 켜둬도 됩니다(호출을 줄이려면 일부만 켜도 무방)."
             )
             self._dlg_naver_enable.stateChanged.connect(self._on_naver_inquiry_toggled)
-            btn_ncfg = QPushButton("네이버 키")
-            btn_ncfg.setToolTip(
-                "관리자용: 네이버 커머스API client_id/secret 입력(검증 후 전원 공유 시트에 저장)."
-            )
-            btn_ncfg.clicked.connect(self._on_naver_creds_edit_clicked)
-            btn_cpcfg = QPushButton("쿠팡 키")
-            btn_cpcfg.setToolTip(
-                "관리자용: 쿠팡 WING OpenAPI vendorId/accessKey/secretKey 입력"
-                "(검증 후 전원 공유 시트에 저장)."
-            )
-            btn_cpcfg.clicked.connect(self._on_coupang_creds_edit_clicked)
             btn_npoll = QPushButton("지금 확인")
-            btn_npoll.setToolTip("토글과 무관하게 지금 한 번 조회합니다.")
+            btn_npoll.setToolTip(
+                "토글과 무관하게 지금 한 번 조회합니다. "
+                "네이버·쿠팡 키 입력은 「환경설정」 탭 → 「연동 · API 키」에서 합니다.")
             btn_npoll.clicked.connect(self._on_naver_inquiry_manual_poll)
             nrow.addWidget(self._dlg_naver_enable)
             nrow.addStretch(1)
-            nrow.addWidget(btn_ncfg)
-            nrow.addWidget(btn_cpcfg)
             nrow.addWidget(btn_npoll)
             ndl.addLayout(nrow)
             # 알림 허용 시간대(평일, 시작~종료 시각). 변경 시 전원 공유.
@@ -3042,6 +3034,9 @@ class MainWindow(QMainWindow):
     def _update_naver_inquiry_status_label(self):
         if self._dlg_naver_status is not None:
             self._dlg_naver_status.setText(f"문의 알림: {self._naver_inquiry_status_text}")
+        # 환경설정 탭 API키 상태 줄에도 문의 키 상태를 반영
+        if hasattr(self.ui, "label_settings_api_status"):
+            self._update_status_displays()
 
     def _on_naver_creds_edit_clicked(self):
         """관리자용: client_id/secret 을 입력받아 토큰 발급으로 검증 후 공유 시트에 저장."""
@@ -4403,6 +4398,16 @@ class MainWindow(QMainWindow):
         if hasattr(self.ui, "pushButton_open_quick_excel"):
             self._ensure_quick_excel_dialog()
             self.ui.pushButton_open_quick_excel.clicked.connect(self._open_quick_excel_dialog)
+        # 연동·API 키(관리자): 배송추적 팝업에서 환경설정 탭으로 이동. 기존 핸들러 재사용.
+        for _bn, _h in (("pushButton_cfg_kpost_key", self._on_tracking_key_edit_clicked),
+                        ("pushButton_cfg_slack_webhook", self._on_slack_config_clicked),
+                        ("pushButton_cfg_naver_key", self._on_naver_creds_edit_clicked),
+                        ("pushButton_cfg_coupang_key", self._on_coupang_creds_edit_clicked)):
+            if hasattr(self.ui, _bn):
+                getattr(self.ui, _bn).clicked.connect(_h)
+        # 키 검증 중 비활성화 대상 버튼을 환경설정 탭 버튼으로 지정
+        if hasattr(self.ui, "pushButton_cfg_kpost_key"):
+            self._dlg_key_btn = self.ui.pushButton_cfg_kpost_key
         if hasattr(self.ui, 'comboBox_store_select'):
             self.ui.comboBox_store_select.currentIndexChanged.connect(
                 self._refresh_quick_excel_manual_ui

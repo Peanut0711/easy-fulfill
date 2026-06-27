@@ -523,6 +523,85 @@
             </widget>
            </item>
            <item>
+            <widget class="QGroupBox" name="groupBox_api_keys">
+             <property name="title">
+              <string>연동 · API 키 (관리자)</string>
+             </property>
+             <layout class="QVBoxLayout" name="verticalLayout_api_keys">
+              <item>
+               <widget class="QLabel" name="label_settings_api_status">
+                <property name="text">
+                 <string>상태 확인 중…</string>
+                </property>
+                <property name="wordWrap">
+                 <bool>true</bool>
+                </property>
+                <property name="styleSheet">
+                 <string>color: #888;</string>
+                </property>
+               </widget>
+              </item>
+              <item>
+               <layout class="QHBoxLayout" name="horizontalLayout_api_keys">
+                <item>
+                 <widget class="QPushButton" name="pushButton_cfg_kpost_key">
+                  <property name="text">
+                   <string>우체국 인증키</string>
+                  </property>
+                  <property name="toolTip">
+                   <string>관리자용: 공유 우체국 OpenAPI 인증키(regkey) 변경. 전원 적용.</string>
+                  </property>
+                 </widget>
+                </item>
+                <item>
+                 <widget class="QPushButton" name="pushButton_cfg_slack_webhook">
+                  <property name="text">
+                   <string>슬랙 Webhook</string>
+                  </property>
+                  <property name="toolTip">
+                   <string>관리자용: 슬랙 알림 Webhook URL 설정(전원 공유).</string>
+                  </property>
+                 </widget>
+                </item>
+                <item>
+                 <widget class="QPushButton" name="pushButton_cfg_naver_key">
+                  <property name="text">
+                   <string>네이버 키</string>
+                  </property>
+                  <property name="toolTip">
+                   <string>관리자용: 네이버 커머스API client_id/secret 입력(검증 후 전원 공유).</string>
+                  </property>
+                 </widget>
+                </item>
+                <item>
+                 <widget class="QPushButton" name="pushButton_cfg_coupang_key">
+                  <property name="text">
+                   <string>쿠팡 키</string>
+                  </property>
+                  <property name="toolTip">
+                   <string>관리자용: 쿠팡 WING OpenAPI vendorId/accessKey/secretKey 입력(검증 후 전원 공유).</string>
+                  </property>
+                 </widget>
+                </item>
+                <item>
+                 <spacer name="horizontalSpacer_api_keys">
+                  <property name="orientation">
+                   <enum>Qt::Orientation::Horizontal</enum>
+                  </property>
+                  <property name="sizeHint" stdset="0">
+                   <size>
+                    <width>10</width>
+                    <height>20</height>
+                   </size>
+                  </property>
+                 </spacer>
+                </item>
+               </layout>
+              </item>
+             </layout>
+            </widget>
+           </item>
+           <item>
             <widget class="QGroupBox" name="groupBox_order_index">
              <property name="title">
               <string>주문번호 시작값 (스토어별)</string>
