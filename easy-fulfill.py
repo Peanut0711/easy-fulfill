@@ -4297,10 +4297,12 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "오류", f"복사 중 오류가 발생했습니다: {str(e)}")
         
     def _set_status_label(self, label, text, ok=False):
-        """주문·발송 탭 상태 라벨 텍스트+색. ok=True 초록(완료/불러옴), 기본 회색(대기/없음)."""
+        """주문·발송 탭 상태 라벨 텍스트+색. ok=True 초록(완료/불러옴), 기본 회색(대기/없음).
+        좌측 정렬로 폭이 모자라도 앞글자가 잘리지 않게 한다(긴 파일명은 뒤가 잘림)."""
         if label is None:
             return
         label.setText(text)
+        label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
         label.setStyleSheet(
             "color: #2e7d32; font-weight: 600;" if ok else "color: #888888;")
 
@@ -4439,7 +4441,7 @@ class MainWindow(QMainWindow):
         self._build_admin_tracking_settings()
         # 주문·발송 탭 초기 상태: 앱 로고 + 회색 상태 텍스트
         self._reset_idle_logo()
-        self._set_status_label(self.ui.filePathLabel, "주문 정보가 없습니다. ( Ctrl + O )")
+        self._set_status_label(self.ui.filePathLabel, "주문 정보가 없습니다.")
         self._set_status_label(self.ui.label_invoice, "송장 정보가 없습니다.")
         self._set_status_label(self.ui.label_generate_invoice, "생성 버튼을 누르세요.")
         if hasattr(self.ui, "tableWidget_tracking"):
@@ -5668,7 +5670,7 @@ class MainWindow(QMainWindow):
                     "쿠팡 스토어: DeliveryList(YYYY-MM-DD)_(0).xlsx"
                 )
                 self.selected_file_path = None
-                self._set_status_label(self.ui.filePathLabel, "주문 정보가 없습니다. ( Ctrl + O )")
+                self._set_status_label(self.ui.filePathLabel, "주문 정보가 없습니다.")
                 self.statusBar().showMessage("잘못된 파일명")
                 print("❌ 파일 선택이 취소되었습니다.")
         else:
@@ -6833,7 +6835,7 @@ class MainWindow(QMainWindow):
         self.store_type = None
         
         # UI 요소 초기화
-        self._set_status_label(self.ui.filePathLabel, "주문 정보가 없습니다. ( Ctrl + O )")
+        self._set_status_label(self.ui.filePathLabel, "주문 정보가 없습니다.")
         self.ui.plainTextEdit.setPlainText("")
 
         # 로고 초기화(앱 로고로)
