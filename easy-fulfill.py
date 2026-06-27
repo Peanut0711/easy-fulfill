@@ -4330,6 +4330,36 @@ class MainWindow(QMainWindow):
             self._elide_status_label(obj)
         return super().eventFilter(obj, event)
 
+    # 주문/송장 유효성 플래그를 property 로 감싸 「생성」 버튼 활성화를 자동 동기화.
+    @property
+    def is_order_file_valid(self):
+        return getattr(self, "_is_order_file_valid", False)
+
+    @is_order_file_valid.setter
+    def is_order_file_valid(self, value):
+        self._is_order_file_valid = bool(value)
+        self._update_generate_button_state()
+
+    @property
+    def is_invoice_file_valid(self):
+        return getattr(self, "_is_invoice_file_valid", False)
+
+    @is_invoice_file_valid.setter
+    def is_invoice_file_valid(self, value):
+        self._is_invoice_file_valid = bool(value)
+        self._update_generate_button_state()
+
+    def _update_generate_button_state(self):
+        """주문 정보와 송장 정보가 모두 유효할 때만 「생성」 버튼을 활성화한다.
+        (자동화 옵션이 켜져 있으면 송장 로드 시 자동 생성되므로, 버튼은 수동 보조 수단)."""
+        btn = getattr(getattr(self, "ui", None), "pushButton_generate_invoice", None)
+        if btn is None:
+            return
+        enabled = self.is_order_file_valid and self.is_invoice_file_valid
+        btn.setEnabled(enabled)
+        btn.setToolTip(
+            "" if enabled else "주문 정보와 송장 정보를 모두 불러오면 활성화됩니다.")
+
     def _reset_idle_logo(self):
         """주문 미로드 시 스토어 로고 자리에 앱 로고를 표시(없으면 비움). 'image' 텍스트 대체."""
         lbl = getattr(self.ui, "label_logo", None)
@@ -4463,11 +4493,12 @@ class MainWindow(QMainWindow):
             self.ui.pushButton_refresh_tracking.clicked.connect(self.on_refresh_tracking_clicked)
         # 배송추적 설정은 「관리자」 탭에 상시 구성(팝업·설정 버튼 제거). 시작 시 1회 빌드.
         self._build_admin_tracking_settings()
-        # 주문·발송 탭 초기 상태: 앱 로고 + 회색 상태 텍스트
+        # 주문·발송 탭 초기 상태: 앱 로고 + 회색 상태 텍스트 + 생성 버튼 비활성
         self._reset_idle_logo()
         self._set_status_label(self.ui.filePathLabel, "주문 정보가 없습니다.")
         self._set_status_label(self.ui.label_invoice, "송장 정보가 없습니다.")
         self._set_status_label(self.ui.label_generate_invoice, "생성 버튼을 누르세요.")
+        self._update_generate_button_state()
         if hasattr(self.ui, "tableWidget_tracking"):
             # 마우스 올릴 때 생기는 파란 호버 하이라이트 제거(위험행 색칠·선택은 유지).
             # 프록시 스타일은 파이썬 참조가 사라지면 GC 되므로 self 에 보관한다.
