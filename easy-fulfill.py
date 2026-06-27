@@ -98,6 +98,10 @@ STALE_DEFAULTS = {"허브정체": 12, "수거누락": 24, "이동정체": 48}
 STALE_CONFIG_KEYS = {"허브정체": CONFIG_KEY_STALE_HUB,
                      "수거누락": CONFIG_KEY_STALE_PICKUP,
                      "이동정체": CONFIG_KEY_STALE_TRANSIT}
+# 도서산간 가산: 종추적 API엔 목적지가 없어, '마지막위치'(우체국명) 텍스트에 제주·울릉 등
+# 지역명이 보이면 정상 배송도 더 걸리므로 이동정체 기준에 N시간을 더해 오탐을 줄인다.
+CONFIG_KEY_STALE_REMOTE_BONUS = "stale_remote_bonus_hours"
+STALE_REMOTE_BONUS_DEFAULT = 24
 CONFIG_KEY_INQUIRY_WORK_START = "inquiry_work_start_hour"  # 문의 알림 허용 시작시각(전원 공유)
 CONFIG_KEY_INQUIRY_WORK_END = "inquiry_work_end_hour"      # 문의 알림 허용 종료시각(전원 공유)
 CONFIG_KEY_DIGEST_DATE = "digest_last_date"  # 일일 다이제스트 발송 날짜(전원 중복 방지)
@@ -756,6 +760,7 @@ def run_tracking_config_read_worker():
             "stale_hub": cfg.get(CONFIG_KEY_STALE_HUB, ""),
             "stale_pickup": cfg.get(CONFIG_KEY_STALE_PICKUP, ""),
             "stale_transit": cfg.get(CONFIG_KEY_STALE_TRANSIT, ""),
+            "stale_remote_bonus": cfg.get(CONFIG_KEY_STALE_REMOTE_BONUS, ""),
             "inquiry_work_start": cfg.get(CONFIG_KEY_INQUIRY_WORK_START, ""),
             "inquiry_work_end": cfg.get(CONFIG_KEY_INQUIRY_WORK_END, ""),
         }
@@ -1883,6 +1888,7 @@ class MainWindow(QMainWindow):
         self._dlg_slack_auto = None
         self._dlg_key_btn = None
         self._dlg_stale_boxes = {}
+        self._dlg_remote_bonus = None
         self._dlg_inquiry_start = None
         self._dlg_inquiry_end = None
         self._key_status_text = "확인 중…"
@@ -2048,25 +2054,46 @@ class MainWindow(QMainWindow):
             pass
         return default
 
-    def _on_stale_threshold_changed(self, category, value):
-        """설정 팝업의 분류별 정체기준 변경 → 로컬 저장 + 공유 「설정」 탭 반영 + 표 갱신."""
-        v = int(value)
-        self.set_app_setting(STALE_CONFIG_KEYS[category], v)
+    def _remote_bonus_hours(self):
+        """도서산간 가산시간(영업시간, 공유 설정 동기화된 로컬 값). 기본 24."""
+        try:
+            v = self.get_app_setting(CONFIG_KEY_STALE_REMOTE_BONUS, "")
+            if str(v).strip():
+                return int(v)
+        except (TypeError, ValueError):
+            pass
+        return STALE_REMOTE_BONUS_DEFAULT
+
+    def _push_tracking_config(self, key, value):
+        """설정 1건을 로컬 저장 + 표 갱신 + 공유 「설정」 탭에 반영."""
+        self.set_app_setting(key, value)
         self._populate_tracking_table()
         if gspread is not None and self._tracking_config_write_thread is None:
-            thread = TrackingConfigWriteThread({STALE_CONFIG_KEYS[category]: str(v)}, self)
+            thread = TrackingConfigWriteThread({key: str(value)}, self)
             self._tracking_config_write_thread = thread
             thread.result_ready.connect(self._on_tracking_config_write_finished)
             thread.finished.connect(self._cleanup_tracking_config_write_thread)
             thread.finished.connect(thread.deleteLater)
             thread.start()
 
+    def _on_stale_threshold_changed(self, category, value):
+        """설정 팝업의 분류별 정체기준 변경 → 로컬 저장 + 공유 「설정」 탭 반영 + 표 갱신."""
+        self._push_tracking_config(STALE_CONFIG_KEYS[category], int(value))
+
+    def _on_remote_bonus_changed(self, value):
+        """설정 팝업의 도서산간 가산시간 변경 → 로컬 저장 + 공유 「설정」 탭 반영 + 표 갱신."""
+        self._push_tracking_config(CONFIG_KEY_STALE_REMOTE_BONUS, int(value))
+
     def _sync_stale_threshold_spinboxes(self):
-        """설정 팝업의 분류별 정체기준 스핀박스를 현재 값으로 갱신(시그널 차단)."""
+        """설정 팝업의 분류별 정체기준·도서산간 가산 스핀박스를 현재 값으로 갱신(시그널 차단)."""
         for cat, sb in self._dlg_stale_boxes.items():
             sb.blockSignals(True)
             sb.setValue(self._stale_threshold(cat))
             sb.blockSignals(False)
+        if self._dlg_remote_bonus is not None:
+            self._dlg_remote_bonus.blockSignals(True)
+            self._dlg_remote_bonus.setValue(self._remote_bonus_hours())
+            self._dlg_remote_bonus.blockSignals(False)
 
     def _inquiry_work_hours(self):
         """문의 알림 허용 시작/종료 시각(공유 설정 동기화된 로컬 값). 기본 (10, 19)."""
@@ -2306,6 +2333,18 @@ class MainWindow(QMainWindow):
                     lambda v, c=cat: self._on_stale_threshold_changed(c, v))
                 rl.addWidget(sb)
                 self._dlg_stale_boxes[cat] = sb
+            rl.addSpacing(12)
+            rl.addWidget(QLabel("도서산간 가산:"))
+            self._dlg_remote_bonus = QSpinBox()
+            self._dlg_remote_bonus.setMinimum(0)
+            self._dlg_remote_bonus.setMaximum(168)
+            self._dlg_remote_bonus.setValue(self._remote_bonus_hours())
+            self._dlg_remote_bonus.setSuffix("h")
+            self._dlg_remote_bonus.setToolTip(
+                "마지막위치가 제주·울릉 등 도서산간이면 이동정체 기준에 이 시간을 더합니다. "
+                "(종추적 API엔 목적지가 없어 현재 위치 텍스트로 판별) 0이면 가산 없음.")
+            self._dlg_remote_bonus.valueChanged.connect(self._on_remote_bonus_changed)
+            rl.addWidget(self._dlg_remote_bonus)
             rl.addStretch(1)
             outer.addWidget(gb_risk)
 
@@ -2456,7 +2495,8 @@ class MainWindow(QMainWindow):
                 self.set_app_setting("slack_webhook_url", slack)
             for pkey, akey in (("stale_hub", CONFIG_KEY_STALE_HUB),
                                ("stale_pickup", CONFIG_KEY_STALE_PICKUP),
-                               ("stale_transit", CONFIG_KEY_STALE_TRANSIT)):
+                               ("stale_transit", CONFIG_KEY_STALE_TRANSIT),
+                               ("stale_remote_bonus", CONFIG_KEY_STALE_REMOTE_BONUS)):
                 sv = str(payload.get(pkey, "") or "").strip()
                 if sv:
                     try:
@@ -2503,6 +2543,14 @@ class MainWindow(QMainWindow):
     _RISK_HUB_KEYWORDS = ("물류", "허브", "터미널", "집중국", "교환센터")
     # 정상으로 보아 위험 판정에서 제외하는 상태
     _RISK_EXCLUDE_STATUS = ("배달준비",)
+    # 도서산간(배송 지연 잦은 지역) 판별 키워드 — '마지막위치' 우체국명에 부분일치.
+    # 목적지를 API로 못 받으므로 현재 위치 텍스트를 프록시로 쓴다(해당 지역 도착 후에만 인지).
+    _RISK_REMOTE_KEYWORDS = ("제주", "서귀포", "울릉", "백령", "연평", "흑산", "추자", "거문")
+
+    def _is_remote_location(self, where):
+        """마지막위치가 도서산간 지역이면 True(이동정체 기준에 가산 적용)."""
+        w = where or ""
+        return any(k in w for k in self._RISK_REMOTE_KEYWORDS)
 
     def _risk_bucket(self, status, where, done):
         """잠재 위험 분류(정체 여부는 미반영). 완료/제외면 None.
@@ -2519,14 +2567,23 @@ class MainWindow(QMainWindow):
             return "허브정체"  # 물류센터/허브에서 정지 → 분실·사고 의심(최우선)
         return "이동정체"
 
+    def _effective_threshold(self, bucket, where):
+        """분류 기준 + 도서산간 가산. 이동정체이면서 마지막위치가 도서산간이면
+        정상 배송도 더 걸리므로 가산시간을 더해 오탐을 줄인다."""
+        thr = self._stale_threshold(bucket)
+        if bucket == "이동정체" and self._is_remote_location(where):
+            thr += self._remote_bonus_hours()
+        return thr
+
     def _evaluate_risk(self, status, where, done, ref, now_dt):
-        """버킷 분류 + 분류별 영업시간 기준 정체 판정을 합쳐 (risk, elapsed_h) 반환.
-        risk None 이면 정상(또는 기준 미달). elapsed_h 는 영업일 기준 무이동 시간."""
+        """버킷 분류 + 분류별 영업시간 기준(도서산간 가산 포함) 정체 판정을 합쳐
+        (risk, elapsed_h) 반환. risk None 이면 정상(또는 기준 미달).
+        elapsed_h 는 영업일 기준 무이동 시간."""
         bucket = self._risk_bucket(status, where, done)
         if bucket is None or ref is None:
             return None, 0.0
         elapsed_h = _business_elapsed_hours(ref, now_dt)
-        if elapsed_h > self._stale_threshold(bucket):
+        if elapsed_h > self._effective_threshold(bucket, where):
             return bucket, elapsed_h
         return None, elapsed_h
 
@@ -2865,9 +2922,12 @@ class MainWindow(QMainWindow):
                 lines.append(f"[{label.get(cur, cur)} · 기준 {thr}h+]")
             elapsed = f"{it['elapsed_h']:.0f}시간째"
             where = it["where"] or "위치미상"
+            # 도서산간(가산 기준 적용)이면 표시해 elapsed-기준 차이를 알 수 있게 한다
+            tag = " 🏝️도서산간" if (cur == "이동정체"
+                                  and self._is_remote_location(it["where"])) else ""
             last = f", 마지막 {it['event_time']}" if it["event_time"] else ""
             lines.append(
-                f"• {it['regino']} {it['name']} — {it['status']} @ {where} ({elapsed} 무이동{last})"
+                f"• {it['regino']} {it['name']} — {it['status']} @ {where}{tag} ({elapsed} 무이동{last})"
             )
             shown += 1
         return "\n".join(lines)
