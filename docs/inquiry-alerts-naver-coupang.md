@@ -24,7 +24,7 @@
 
 ### 근무시간 게이트 (사용자 설정 가능)
 - 알림은 **평일 시작시각~종료시각** 에만 발송(`_inquiry_alerts_allowed(now, start, end)`). 기본 10~19시.
-- **설정 팝업 "미답변 문의 알림" 그룹의 "알림 시간대(평일)" 스핀박스**로 시작/종료 시각을 바꿀 수
+- **「관리자」 탭 "미답변 문의 알림" 그룹의 "알림 시간대(평일)" 스핀박스**로 시작/종료 시각을 바꿀 수
   있고, 공유 「설정」 탭(`inquiry_work_start_hour`/`inquiry_work_end_hour`)에 저장돼 **전원 적용**된다.
   종료는 시작보다 최소 1시간 뒤로 자동 보정. 워커는 매 폴링마다 공유 cfg에서 시각을 읽으므로
   한 명이 바꾸면 다음 폴링(최대 5분)에 모든 PC에 반영.
@@ -84,7 +84,7 @@
   키와 동일 패턴.
 - config keys: `naver_client_id`, `naver_client_secret`, `coupang_vendor_id`,
   `coupang_access_key`, `coupang_secret_key`.
-- 설정 팝업 그룹 "미답변 문의 알림 (네이버·쿠팡 → 슬랙)":
+- 「관리자」 탭 그룹 "미답변 문의 알림 (네이버·쿠팡 → 슬랙)":
   - **[네이버 키]** — client_id/secret 입력→토큰 발급 검증→저장.
   - **[쿠팡 키]** — vendorId/accessKey/secretKey 3종 입력→1일치 조회 검증→저장.
   - **[지금 확인]** — 토글과 무관하게 즉시 1회 조회.
@@ -99,7 +99,7 @@
   - `run_naver_inquiry_poll_worker()` — 네이버+쿠팡 통합 조회·리마인더·근무시간 게이트(이름은
     네이버지만 쿠팡도 처리. 향후 `monitoring.py`로 추출 예정 — TODO).
   - `NaverInquiryPollThread`, `CoupangCredsValidateThread`(신규), `NaverCredsValidateThread`.
-  - 설정 팝업(`_open_tracking_settings_dialog`)·`_on_coupang_creds_edit_clicked`/`_validated`.
+  - 「관리자」 탭(`_build_admin_tracking_settings`)·`_on_coupang_creds_edit_clicked`/`_validated`.
   - 상수: `NAVER_INQUIRY_REMIND_MIN=60`, `LOOKBACK_DAYS=30`, 근무시간 10~19시, `CONFIG_KEY_COUPANG_*`.
 
 ## 결정사항 (사용자 확정)

@@ -1882,7 +1882,7 @@ class MainWindow(QMainWindow):
         self._digest_thread = None
         self._slack_notify_after_reload = False
         # API·알림 설정 팝업(작업자에겐 숨기고 작은 버튼으로만 노출)
-        self._tracking_settings_dialog = None
+        self._admin_tracking_built = False
         self._quick_excel_dialog = None
         self._dlg_key_status = None
         self._dlg_slack_status = None
@@ -2217,157 +2217,127 @@ class MainWindow(QMainWindow):
             "※ 표에서 행을 더블클릭하면 해당 등기번호의 우체국 배송조회(상세) 웹페이지가 열립니다.",
         )
 
-    def _open_tracking_settings_dialog(self):
-        """우체국 인증키·슬랙 설정 팝업을 엽니다(작은 버튼에서 호출)."""
-        if self._tracking_settings_dialog is None:
-            dlg = QDialog(self)
-            dlg.setWindowTitle("우체국 API · 슬랙 알림 설정")
-            dlg.setMinimumWidth(440)
-            outer = QVBoxLayout(dlg)
+    def _build_admin_tracking_settings(self):
+        """배송추적 운영 토글·알림·위험 판정 기준을 「관리자」 탭에 구성(기존 팝업 대체).
+        시작 시 1회 호출. PC별 토글은 '이 PC' 라벨로 구분, 공유 튜닝값은 전원 적용."""
+        host = getattr(self.ui, "widget_admin_tracking", None)
+        if host is None or host.layout() is None or self._admin_tracking_built:
+            return
+        outer = host.layout()
+        self._admin_tracking_built = True
 
-            gb_key = QGroupBox("우체국 OpenAPI 인증키")
-            kl = QVBoxLayout(gb_key)
-            self._dlg_key_status = QLabel(f"인증키: {self._key_status_text}")
-            self._dlg_key_status.setWordWrap(True)
-            kl.addWidget(self._dlg_key_status)
-            _key_moved = QLabel("키 변경은 「관리자」 탭 → 「연동 · API 키」에서 합니다.")
-            _key_moved.setStyleSheet("color: #888;")
-            _key_moved.setWordWrap(True)
-            kl.addWidget(_key_moved)
-            outer.addWidget(gb_key)
+        # 슬랙 위험 알림(체크는 PC별, Webhook 설정은 「연동 · API 키」에 있음)
+        gb_slack = QGroupBox("슬랙 위험 알림")
+        sl = QVBoxLayout(gb_slack)
+        srow = QHBoxLayout()
+        self._dlg_slack_auto = QCheckBox("이 PC에서 위험 일일 알림(하루 1통)")
+        self._dlg_slack_auto.setChecked(bool(self.get_app_setting("slack_auto_notify", False)))
+        self._dlg_slack_auto.setToolTip(
+            "이 PC에서 전체 새로고침 시 위험 건이 있으면 하루 1통만 슬랙으로 보냅니다(중복 방지)."
+        )
+        self._dlg_slack_auto.stateChanged.connect(self._on_slack_auto_toggled)
+        btn_test = QPushButton("테스트")
+        btn_test.setToolTip("슬랙 Webhook으로 테스트 메시지를 보냅니다.")
+        btn_test.clicked.connect(self._on_slack_test_clicked)
+        srow.addWidget(self._dlg_slack_auto)
+        srow.addStretch(1)
+        srow.addWidget(btn_test)
+        sl.addLayout(srow)
+        outer.addWidget(gb_slack)
 
-            gb_slack = QGroupBox("슬랙 알림")
-            sl = QVBoxLayout(gb_slack)
-            self._dlg_slack_status = QLabel(f"슬랙 알림: {self._slack_status_text}")
-            sl.addWidget(self._dlg_slack_status)
-            srow = QHBoxLayout()
-            self._dlg_slack_auto = QCheckBox("위험 일일 알림(하루 1통)")
-            self._dlg_slack_auto.setChecked(bool(self.get_app_setting("slack_auto_notify", False)))
-            self._dlg_slack_auto.setToolTip(
-                "전체 새로고침 시 위험 건이 있으면 하루 1통만 슬랙으로 보냅니다(중복 방지)."
-            )
-            self._dlg_slack_auto.stateChanged.connect(self._on_slack_auto_toggled)
-            btn_test = QPushButton("테스트")
-            btn_test.setToolTip("Webhook 설정은 「관리자」 탭 → 「연동 · API 키」에서 합니다.")
-            btn_test.clicked.connect(self._on_slack_test_clicked)
-            srow.addWidget(self._dlg_slack_auto)
-            srow.addStretch(1)
-            srow.addWidget(btn_test)
-            sl.addLayout(srow)
-            outer.addWidget(gb_slack)
+        # 미답변 문의 알림(자동조회 토글은 PC별, 알림 시간대는 전원 공유)
+        gb_naver = QGroupBox("미답변 문의 알림 (네이버·쿠팡 → 슬랙)")
+        ndl = QVBoxLayout(gb_naver)
+        self._dlg_naver_status = QLabel(f"문의 알림: {self._naver_inquiry_status_text}")
+        self._dlg_naver_status.setWordWrap(True)
+        ndl.addWidget(self._dlg_naver_status)
+        nrow = QHBoxLayout()
+        self._dlg_naver_enable = QCheckBox("이 PC에서 자동 조회(5분)")
+        self._dlg_naver_enable.setChecked(bool(self.get_app_setting("naver_inquiry_notify", False)))
+        _ws, _we = self._inquiry_work_hours()
+        self._dlg_naver_enable.setToolTip(
+            "켜면 이 PC가 5분마다 네이버·쿠팡 상품·고객문의(미답변)를 조회합니다.\n"
+            f"새 미답변은 즉시, 처리 안 된 건은 60분마다 다시 슬랙으로 알립니다"
+            f"(평일 {_ws}~{_we}시, 아래에서 변경).\n"
+            "누군가 답변하면 자동으로 멈춥니다. 전원 공유 시트(「문의알림」)로 중복을 막으니\n"
+            "여러 대를 동시에 켜둬도 됩니다(호출을 줄이려면 일부만 켜도 무방)."
+        )
+        self._dlg_naver_enable.stateChanged.connect(self._on_naver_inquiry_toggled)
+        btn_npoll = QPushButton("지금 확인")
+        btn_npoll.setToolTip(
+            "토글과 무관하게 지금 한 번 조회합니다. "
+            "네이버·쿠팡 키 입력은 위 「연동 · API 키」에서 합니다.")
+        btn_npoll.clicked.connect(self._on_naver_inquiry_manual_poll)
+        nrow.addWidget(self._dlg_naver_enable)
+        nrow.addStretch(1)
+        nrow.addWidget(btn_npoll)
+        ndl.addLayout(nrow)
+        # 알림 허용 시간대(평일, 시작~종료 시각). 변경 시 전원 공유.
+        hrow = QHBoxLayout()
+        hrow.addWidget(QLabel("알림 시간대(평일):"))
+        _ih_start, _ih_end = self._inquiry_work_hours()
+        self._dlg_inquiry_start = QSpinBox()
+        self._dlg_inquiry_start.setRange(0, 23)
+        self._dlg_inquiry_start.setSuffix("시")
+        self._dlg_inquiry_start.setValue(_ih_start)
+        self._dlg_inquiry_end = QSpinBox()
+        self._dlg_inquiry_end.setRange(0, 23)
+        self._dlg_inquiry_end.setSuffix("시")
+        self._dlg_inquiry_end.setValue(_ih_end)
+        _ih_tip = ("이 시간대(평일)에만 미답변 문의 알림을 보냅니다. 그 외 시간/주말은 "
+                   "조용히 누적했다가 다음 근무 시작 시각에 한 번에 환기합니다. "
+                   "변경 시 공유 시트에 저장되어 전원에게 적용됩니다. 기본 10~19시.")
+        self._dlg_inquiry_start.setToolTip(_ih_tip)
+        self._dlg_inquiry_end.setToolTip(_ih_tip)
+        self._dlg_inquiry_start.valueChanged.connect(self._on_inquiry_work_hours_changed)
+        self._dlg_inquiry_end.valueChanged.connect(self._on_inquiry_work_hours_changed)
+        hrow.addWidget(self._dlg_inquiry_start)
+        hrow.addWidget(QLabel("~"))
+        hrow.addWidget(self._dlg_inquiry_end)
+        hrow.addStretch(1)
+        ndl.addLayout(hrow)
+        outer.addWidget(gb_naver)
 
-            gb_naver = QGroupBox("미답변 문의 알림 (네이버·쿠팡 → 슬랙)")
-            ndl = QVBoxLayout(gb_naver)
-            self._dlg_naver_status = QLabel(f"문의 알림: {self._naver_inquiry_status_text}")
-            self._dlg_naver_status.setWordWrap(True)
-            ndl.addWidget(self._dlg_naver_status)
-            nrow = QHBoxLayout()
-            self._dlg_naver_enable = QCheckBox("이 PC에서 자동 조회(5분)")
-            self._dlg_naver_enable.setChecked(bool(self.get_app_setting("naver_inquiry_notify", False)))
-            _ws, _we = self._inquiry_work_hours()
-            self._dlg_naver_enable.setToolTip(
-                "켜면 이 PC가 5분마다 네이버·쿠팡 상품·고객문의(미답변)를 조회합니다.\n"
-                f"새 미답변은 즉시, 처리 안 된 건은 60분마다 다시 슬랙으로 알립니다"
-                f"(평일 {_ws}~{_we}시, 아래에서 변경).\n"
-                "누군가 답변하면 자동으로 멈춥니다. 전원 공유 시트(「문의알림」)로 중복을 막으니\n"
-                "여러 대를 동시에 켜둬도 됩니다(호출을 줄이려면 일부만 켜도 무방)."
-            )
-            self._dlg_naver_enable.stateChanged.connect(self._on_naver_inquiry_toggled)
-            btn_npoll = QPushButton("지금 확인")
-            btn_npoll.setToolTip(
-                "토글과 무관하게 지금 한 번 조회합니다. "
-                "네이버·쿠팡 키 입력은 「관리자」 탭 → 「연동 · API 키」에서 합니다.")
-            btn_npoll.clicked.connect(self._on_naver_inquiry_manual_poll)
-            nrow.addWidget(self._dlg_naver_enable)
-            nrow.addStretch(1)
-            nrow.addWidget(btn_npoll)
-            ndl.addLayout(nrow)
-            # 알림 허용 시간대(평일, 시작~종료 시각). 변경 시 전원 공유.
-            hrow = QHBoxLayout()
-            hrow.addWidget(QLabel("알림 시간대(평일):"))
-            _ih_start, _ih_end = self._inquiry_work_hours()
-            self._dlg_inquiry_start = QSpinBox()
-            self._dlg_inquiry_start.setRange(0, 23)
-            self._dlg_inquiry_start.setSuffix("시")
-            self._dlg_inquiry_start.setValue(_ih_start)
-            self._dlg_inquiry_end = QSpinBox()
-            self._dlg_inquiry_end.setRange(0, 23)
-            self._dlg_inquiry_end.setSuffix("시")
-            self._dlg_inquiry_end.setValue(_ih_end)
-            _ih_tip = ("이 시간대(평일)에만 미답변 문의 알림을 보냅니다. 그 외 시간/주말은 "
-                       "조용히 누적했다가 다음 근무 시작 시각에 한 번에 환기합니다. "
-                       "변경 시 공유 시트에 저장되어 전원에게 적용됩니다. 기본 10~19시.")
-            self._dlg_inquiry_start.setToolTip(_ih_tip)
-            self._dlg_inquiry_end.setToolTip(_ih_tip)
-            self._dlg_inquiry_start.valueChanged.connect(self._on_inquiry_work_hours_changed)
-            self._dlg_inquiry_end.valueChanged.connect(self._on_inquiry_work_hours_changed)
-            hrow.addWidget(self._dlg_inquiry_start)
-            hrow.addWidget(QLabel("~"))
-            hrow.addWidget(self._dlg_inquiry_end)
-            hrow.addStretch(1)
-            ndl.addLayout(hrow)
-            outer.addWidget(gb_naver)
+        # 위험 판정 기준(전원 공유). 좁은 컬럼이라 2행으로: 정체기준 3종 / 도서산간 가산.
+        gb_risk = QGroupBox("위험 판정 기준 (분류별 정체시간, 영업시간)")
+        rv = QVBoxLayout(gb_risk)
+        _risk_tip = ("미완료 송장이 이 시간 이상 우체국 이벤트가 없으면 '정체'로 표시합니다. "
+                     "토·일은 제외한 영업시간 기준이며, 변경 시 공유 시트에 저장되어 "
+                     "전원에게 적용됩니다.")
+        rrow = QHBoxLayout()
+        self._dlg_stale_boxes = {}
+        for cat, cap in (("허브정체", "허브"), ("수거누락", "수거누락"), ("이동정체", "이동")):
+            rrow.addWidget(QLabel(f"{cap}:"))
+            sb = QSpinBox()
+            sb.setMinimum(1)
+            sb.setMaximum(168)
+            sb.setValue(self._stale_threshold(cat))
+            sb.setSuffix("h")
+            sb.setToolTip(_risk_tip)
+            sb.valueChanged.connect(
+                lambda v, c=cat: self._on_stale_threshold_changed(c, v))
+            rrow.addWidget(sb)
+            self._dlg_stale_boxes[cat] = sb
+        rrow.addStretch(1)
+        rv.addLayout(rrow)
+        brow = QHBoxLayout()
+        brow.addWidget(QLabel("도서산간 가산:"))
+        self._dlg_remote_bonus = QSpinBox()
+        self._dlg_remote_bonus.setMinimum(0)
+        self._dlg_remote_bonus.setMaximum(168)
+        self._dlg_remote_bonus.setValue(self._remote_bonus_hours())
+        self._dlg_remote_bonus.setSuffix("h")
+        self._dlg_remote_bonus.setToolTip(
+            "마지막위치가 제주·울릉 등 도서산간이면 이동정체 기준에 이 시간을 더합니다. "
+            "(종추적 API엔 목적지가 없어 현재 위치 텍스트로 판별) 0이면 가산 없음.")
+        self._dlg_remote_bonus.valueChanged.connect(self._on_remote_bonus_changed)
+        brow.addWidget(self._dlg_remote_bonus)
+        brow.addStretch(1)
+        rv.addLayout(brow)
+        outer.addWidget(gb_risk)
 
-            gb_risk = QGroupBox("위험 판정 기준 (분류별 정체시간, 영업시간)")
-            rl = QHBoxLayout(gb_risk)
-            _risk_tip = ("미완료 송장이 이 시간 이상 우체국 이벤트가 없으면 '정체'로 표시합니다. "
-                         "토·일은 제외한 영업시간 기준이며, 변경 시 공유 시트에 저장되어 "
-                         "전원에게 적용됩니다.")
-            self._dlg_stale_boxes = {}
-            for cat, cap in (("허브정체", "허브"), ("수거누락", "수거누락"), ("이동정체", "이동")):
-                rl.addWidget(QLabel(f"{cap}:"))
-                sb = QSpinBox()
-                sb.setMinimum(1)
-                sb.setMaximum(168)
-                sb.setValue(self._stale_threshold(cat))
-                sb.setSuffix("h")
-                sb.setToolTip(_risk_tip)
-                sb.valueChanged.connect(
-                    lambda v, c=cat: self._on_stale_threshold_changed(c, v))
-                rl.addWidget(sb)
-                self._dlg_stale_boxes[cat] = sb
-            rl.addSpacing(12)
-            rl.addWidget(QLabel("도서산간 가산:"))
-            self._dlg_remote_bonus = QSpinBox()
-            self._dlg_remote_bonus.setMinimum(0)
-            self._dlg_remote_bonus.setMaximum(168)
-            self._dlg_remote_bonus.setValue(self._remote_bonus_hours())
-            self._dlg_remote_bonus.setSuffix("h")
-            self._dlg_remote_bonus.setToolTip(
-                "마지막위치가 제주·울릉 등 도서산간이면 이동정체 기준에 이 시간을 더합니다. "
-                "(종추적 API엔 목적지가 없어 현재 위치 텍스트로 판별) 0이면 가산 없음.")
-            self._dlg_remote_bonus.valueChanged.connect(self._on_remote_bonus_changed)
-            rl.addWidget(self._dlg_remote_bonus)
-            rl.addStretch(1)
-            outer.addWidget(gb_risk)
-
-            bottom = QHBoxLayout()
-            btn_help = QPushButton("도움말")
-            btn_help.setToolTip("배송추적 사용 안내 보기")
-            btn_help.clicked.connect(self._on_tracking_help_clicked)
-            btn_close = QPushButton("닫기")
-            btn_close.clicked.connect(dlg.accept)
-            bottom.addStretch(1)
-            bottom.addWidget(btn_help)
-            bottom.addWidget(btn_close)
-            outer.addLayout(bottom)
-            self._tracking_settings_dialog = dlg
-
-        self._update_status_displays()
-        if self._dlg_slack_auto is not None:
-            self._dlg_slack_auto.blockSignals(True)
-            self._dlg_slack_auto.setChecked(bool(self.get_app_setting("slack_auto_notify", False)))
-            self._dlg_slack_auto.blockSignals(False)
-        self._sync_stale_threshold_spinboxes()
-        self._sync_inquiry_hours_spinboxes()
-        if self._dlg_naver_enable is not None:
-            self._dlg_naver_enable.blockSignals(True)
-            self._dlg_naver_enable.setChecked(bool(self.get_app_setting("naver_inquiry_notify", False)))
-            self._dlg_naver_enable.blockSignals(False)
         self._update_naver_inquiry_status_label()
-        self._tracking_settings_dialog.show()
-        self._tracking_settings_dialog.raise_()
-        self._tracking_settings_dialog.activateWindow()
+        self._update_status_displays()
 
     def _refresh_key_status(self):
         """저장된 우체국 인증키의 유효성을 백그라운드로 확인해 상태 텍스트만 갱신합니다."""
@@ -4444,10 +4414,8 @@ class MainWindow(QMainWindow):
 
         if hasattr(self.ui, "pushButton_refresh_tracking"):
             self.ui.pushButton_refresh_tracking.clicked.connect(self.on_refresh_tracking_clicked)
-        if hasattr(self.ui, "pushButton_tracking_settings"):
-            self.ui.pushButton_tracking_settings.clicked.connect(
-                self._open_tracking_settings_dialog
-            )
+        # 배송추적 설정은 「관리자」 탭에 상시 구성(팝업·설정 버튼 제거). 시작 시 1회 빌드.
+        self._build_admin_tracking_settings()
         if hasattr(self.ui, "tableWidget_tracking"):
             # 마우스 올릴 때 생기는 파란 호버 하이라이트 제거(위험행 색칠·선택은 유지).
             # 프록시 스타일은 파이썬 참조가 사라지면 GC 되므로 self 에 보관한다.
