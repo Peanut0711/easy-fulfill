@@ -415,207 +415,305 @@
        <attribute name="title">
         <string>환경설정</string>
        </attribute>
-       <layout class="QVBoxLayout" name="verticalLayout_settings">
+       <layout class="QHBoxLayout" name="horizontalLayout_settings_outer">
         <item>
-         <widget class="QGroupBox" name="groupBox_google_sheets">
-          <property name="title">
-           <string>연동 · Google Sheets</string>
+         <widget class="QWidget" name="widget_settings_content" native="true">
+          <property name="maximumSize">
+           <size>
+            <width>470</width>
+            <height>16777215</height>
+           </size>
           </property>
-          <layout class="QVBoxLayout" name="verticalLayout_google_sheets">
+          <layout class="QVBoxLayout" name="verticalLayout_settings">
+           <property name="leftMargin">
+            <number>0</number>
+           </property>
+           <property name="topMargin">
+            <number>0</number>
+           </property>
+           <property name="rightMargin">
+            <number>0</number>
+           </property>
+           <property name="bottomMargin">
+            <number>0</number>
+           </property>
            <item>
-            <widget class="QLabel" name="label_google_auth_status">
-             <property name="text">
-              <string>상태를 불러오는 중…</string>
+            <widget class="QGroupBox" name="groupBox_google_sheets">
+             <property name="title">
+              <string>연동 · Google Sheets</string>
              </property>
-             <property name="wordWrap">
-              <bool>true</bool>
-             </property>
-             <property name="alignment">
-              <set>Qt::AlignmentFlag::AlignLeft|Qt::AlignmentFlag::AlignTop</set>
-             </property>
+             <layout class="QVBoxLayout" name="verticalLayout_google_sheets">
+              <item>
+               <widget class="QLabel" name="label_google_auth_status">
+                <property name="text">
+                 <string>상태를 불러오는 중…</string>
+                </property>
+                <property name="wordWrap">
+                 <bool>true</bool>
+                </property>
+                <property name="alignment">
+                 <set>Qt::AlignmentFlag::AlignLeft|Qt::AlignmentFlag::AlignTop</set>
+                </property>
+               </widget>
+              </item>
+              <item>
+               <layout class="QHBoxLayout" name="horizontalLayout_google_buttons">
+                <item>
+                 <widget class="QPushButton" name="pushButton_google_reauth">
+                  <property name="text">
+                   <string>재인증</string>
+                  </property>
+                  <property name="toolTip">
+                   <string>저장된 로그인을 지우고 브라우저에서 다시 Google 계정 연결</string>
+                  </property>
+                 </widget>
+                </item>
+                <item>
+                 <widget class="QPushButton" name="pushButton_google_disconnect">
+                  <property name="text">
+                   <string>연결 해제</string>
+                  </property>
+                  <property name="toolTip">
+                   <string>이 PC의 token.json만 삭제합니다. (계정 비밀번호 변경과는 별개)</string>
+                  </property>
+                 </widget>
+                </item>
+                <item>
+                 <widget class="QPushButton" name="pushButton_google_open_oauth_folder">
+                  <property name="text">
+                   <string>google-oauth 폴더 열기</string>
+                  </property>
+                 </widget>
+                </item>
+                <item>
+                 <spacer name="horizontalSpacer_google_buttons">
+                  <property name="orientation">
+                   <enum>Qt::Orientation::Horizontal</enum>
+                  </property>
+                  <property name="sizeHint" stdset="0">
+                   <size>
+                    <width>10</width>
+                    <height>20</height>
+                   </size>
+                  </property>
+                 </spacer>
+                </item>
+               </layout>
+              </item>
+              <item>
+               <widget class="QLabel" name="label_google_auth_tip">
+                <property name="font">
+                 <font>
+                  <family>맑은 고딕</family>
+                  <pointsize>8</pointsize>
+                 </font>
+                </property>
+                <property name="text">
+                 <string>invalid_scope 등 Google 인증 오류가 나면 「연결 해제」 후 「재인증」을 눌러 주세요. (google-oauth 폴더의 token.json 갱신)</string>
+                </property>
+                <property name="wordWrap">
+                 <bool>true</bool>
+                </property>
+                <property name="styleSheet">
+                 <string>color: #888;</string>
+                </property>
+               </widget>
+              </item>
+             </layout>
             </widget>
            </item>
            <item>
-            <layout class="QHBoxLayout" name="horizontalLayout_google_buttons">
+            <widget class="QGroupBox" name="groupBox_order_index">
+             <property name="title">
+              <string>주문번호 시작값 (스토어별)</string>
+             </property>
+             <layout class="QVBoxLayout" name="verticalLayout_order_index">
+              <item>
+               <layout class="QFormLayout" name="formLayout_order_index">
+                <property name="fieldGrowthPolicy">
+                 <enum>QFormLayout::FieldGrowthPolicy::FieldsStayAtSizeHint</enum>
+                </property>
+                <item row="0" column="0">
+                 <widget class="QLabel" name="label_3">
+                  <property name="text">
+                   <string>네이버</string>
+                  </property>
+                 </widget>
+                </item>
+                <item row="0" column="1">
+                 <widget class="QLineEdit" name="lineEdit_idx_naver">
+                  <property name="maximumSize">
+                   <size>
+                    <width>140</width>
+                    <height>16777215</height>
+                   </size>
+                  </property>
+                 </widget>
+                </item>
+                <item row="1" column="0">
+                 <widget class="QLabel" name="label_4">
+                  <property name="text">
+                   <string>쿠팡</string>
+                  </property>
+                 </widget>
+                </item>
+                <item row="1" column="1">
+                 <widget class="QLineEdit" name="lineEdit_idx_coupang">
+                  <property name="maximumSize">
+                   <size>
+                    <width>140</width>
+                    <height>16777215</height>
+                   </size>
+                  </property>
+                 </widget>
+                </item>
+                <item row="2" column="0">
+                 <widget class="QLabel" name="label_5">
+                  <property name="text">
+                   <string>지마켓</string>
+                  </property>
+                 </widget>
+                </item>
+                <item row="2" column="1">
+                 <widget class="QLineEdit" name="lineEdit_idx_gmarket">
+                  <property name="maximumSize">
+                   <size>
+                    <width>140</width>
+                    <height>16777215</height>
+                   </size>
+                  </property>
+                 </widget>
+                </item>
+                <item row="3" column="0">
+                 <widget class="QLabel" name="label_idx_11st">
+                  <property name="text">
+                   <string>11번가</string>
+                  </property>
+                 </widget>
+                </item>
+                <item row="3" column="1">
+                 <widget class="QLineEdit" name="lineEdit_idx_11st">
+                  <property name="maximumSize">
+                   <size>
+                    <width>140</width>
+                    <height>16777215</height>
+                   </size>
+                  </property>
+                 </widget>
+                </item>
+               </layout>
+              </item>
+              <item>
+               <layout class="QHBoxLayout" name="horizontalLayout_index_refresh">
+                <item>
+                 <widget class="QPushButton" name="pushButton_index_sheet_refresh">
+                  <property name="text">
+                   <string>스프레드시트에서 다시 읽기</string>
+                  </property>
+                 </widget>
+                </item>
+                <item>
+                 <spacer name="horizontalSpacer_index_refresh">
+                  <property name="orientation">
+                   <enum>Qt::Orientation::Horizontal</enum>
+                  </property>
+                  <property name="sizeHint" stdset="0">
+                   <size>
+                    <width>10</width>
+                    <height>20</height>
+                   </size>
+                  </property>
+                 </spacer>
+                </item>
+               </layout>
+              </item>
+              <item>
+               <widget class="QLabel" name="label_index_sheet_sync">
+                <property name="text">
+                 <string>스프레드시트 동기화 상태</string>
+                </property>
+                <property name="wordWrap">
+                 <bool>true</bool>
+                </property>
+                <property name="styleSheet">
+                 <string>color: #888;</string>
+                </property>
+               </widget>
+              </item>
+             </layout>
+            </widget>
+           </item>
+           <item>
+            <widget class="QGroupBox" name="groupBox_batch_ship">
+             <property name="title">
+              <string>자동화 옵션</string>
+             </property>
+             <layout class="QVBoxLayout" name="verticalLayout_batch_ship">
+              <item>
+               <widget class="QCheckBox" name="checkBox_invoice_load_auto_generate">
+                <property name="text">
+                 <string>송장 불러오기 성공 시 일괄 발송 파일 자동 생성</string>
+                </property>
+                <property name="checked">
+                 <bool>true</bool>
+                </property>
+               </widget>
+              </item>
+             </layout>
+            </widget>
+           </item>
+           <item>
+            <layout class="QHBoxLayout" name="horizontalLayout_settings_tools">
              <item>
-              <widget class="QPushButton" name="pushButton_google_reauth">
+              <widget class="QPushButton" name="pushButton_open_quick_excel">
                <property name="text">
-                <string>재인증</string>
+                <string>수동 주문 추가…</string>
                </property>
                <property name="toolTip">
-                <string>저장된 로그인을 지우고 브라우저에서 다시 Google 계정 연결</string>
+                <string>클립보드 단건 주문 또는 직접 입력으로 발송 엑셀을 만듭니다.</string>
                </property>
               </widget>
              </item>
              <item>
-              <widget class="QPushButton" name="pushButton_google_disconnect">
-               <property name="text">
-                <string>연결 해제</string>
+              <spacer name="horizontalSpacer_settings_tools">
+               <property name="orientation">
+                <enum>Qt::Orientation::Horizontal</enum>
                </property>
-               <property name="toolTip">
-                <string>이 PC의 token.json만 삭제합니다. (계정 비밀번호 변경과는 별개)</string>
+               <property name="sizeHint" stdset="0">
+                <size>
+                 <width>10</width>
+                 <height>20</height>
+                </size>
                </property>
-              </widget>
+              </spacer>
              </item>
             </layout>
            </item>
            <item>
-            <widget class="QPushButton" name="pushButton_google_open_oauth_folder">
-             <property name="text">
-              <string>google-oauth 폴더 열기</string>
+            <spacer name="verticalSpacer_settings">
+             <property name="orientation">
+              <enum>Qt::Orientation::Vertical</enum>
              </property>
-            </widget>
-           </item>
-           <item>
-            <widget class="QLabel" name="label_google_auth_tip">
-             <property name="font">
-              <font>
-               <family>맑은 고딕</family>
-               <pointsize>8</pointsize>
-              </font>
+             <property name="sizeHint" stdset="0">
+              <size>
+               <width>20</width>
+               <height>40</height>
+              </size>
              </property>
-             <property name="text">
-              <string>invalid_scope 등 Google 인증 오류가 나면 「연결 해제」 후 「재인증」을 눌러 주세요. (google-oauth 폴더의 token.json 갱신)</string>
-             </property>
-             <property name="wordWrap">
-              <bool>true</bool>
-             </property>
-             <property name="styleSheet">
-              <string>color: #888;</string>
-             </property>
-            </widget>
+            </spacer>
            </item>
           </layout>
          </widget>
         </item>
         <item>
-         <widget class="QGroupBox" name="groupBox_order_index">
-          <property name="title">
-           <string>주문번호 시작값 (스토어별)</string>
-          </property>
-          <layout class="QVBoxLayout" name="verticalLayout_order_index">
-           <item>
-            <layout class="QFormLayout" name="formLayout_order_index">
-             <item row="0" column="0">
-              <widget class="QLabel" name="label_3">
-               <property name="text">
-                <string>네이버</string>
-               </property>
-              </widget>
-             </item>
-             <item row="0" column="1">
-              <widget class="QLineEdit" name="lineEdit_idx_naver"/>
-             </item>
-             <item row="1" column="0">
-              <widget class="QLabel" name="label_4">
-               <property name="text">
-                <string>쿠팡</string>
-               </property>
-              </widget>
-             </item>
-             <item row="1" column="1">
-              <widget class="QLineEdit" name="lineEdit_idx_coupang"/>
-             </item>
-             <item row="2" column="0">
-              <widget class="QLabel" name="label_5">
-               <property name="text">
-                <string>지마켓</string>
-               </property>
-              </widget>
-             </item>
-             <item row="2" column="1">
-              <widget class="QLineEdit" name="lineEdit_idx_gmarket"/>
-             </item>
-             <item row="3" column="0">
-              <widget class="QLabel" name="label_idx_11st">
-               <property name="text">
-                <string>11번가</string>
-               </property>
-              </widget>
-             </item>
-             <item row="3" column="1">
-              <widget class="QLineEdit" name="lineEdit_idx_11st"/>
-             </item>
-            </layout>
-           </item>
-           <item>
-            <widget class="QPushButton" name="pushButton_index_sheet_refresh">
-             <property name="text">
-              <string>스프레드시트에서 다시 읽기</string>
-             </property>
-            </widget>
-           </item>
-           <item>
-            <widget class="QLabel" name="label_index_sheet_sync">
-             <property name="text">
-              <string>스프레드시트 동기화 상태</string>
-             </property>
-             <property name="wordWrap">
-              <bool>true</bool>
-             </property>
-             <property name="styleSheet">
-              <string>color: #888;</string>
-             </property>
-            </widget>
-           </item>
-          </layout>
-         </widget>
-        </item>
-        <item>
-         <widget class="QGroupBox" name="groupBox_batch_ship">
-          <property name="title">
-           <string>자동화 옵션</string>
-          </property>
-          <layout class="QVBoxLayout" name="verticalLayout_batch_ship">
-           <item>
-            <widget class="QCheckBox" name="checkBox_invoice_load_auto_generate">
-             <property name="text">
-              <string>송장 불러오기 성공 시 일괄 발송 파일 자동 생성</string>
-             </property>
-             <property name="checked">
-              <bool>true</bool>
-             </property>
-            </widget>
-           </item>
-          </layout>
-         </widget>
-        </item>
-        <item>
-         <layout class="QHBoxLayout" name="horizontalLayout_settings_tools">
-          <item>
-           <widget class="QPushButton" name="pushButton_open_quick_excel">
-            <property name="text">
-             <string>수동 주문 추가…</string>
-            </property>
-            <property name="toolTip">
-             <string>클립보드 단건 주문 또는 직접 입력으로 발송 엑셀을 만듭니다.</string>
-            </property>
-           </widget>
-          </item>
-          <item>
-           <spacer name="horizontalSpacer_settings_tools">
-            <property name="orientation">
-             <enum>Qt::Orientation::Horizontal</enum>
-            </property>
-            <property name="sizeHint" stdset="0">
-             <size>
-              <width>40</width>
-              <height>20</height>
-             </size>
-            </property>
-           </spacer>
-          </item>
-         </layout>
-        </item>
-        <item>
-         <spacer name="verticalSpacer_settings">
+         <spacer name="horizontalSpacer_settings_outer">
           <property name="orientation">
-           <enum>Qt::Orientation::Vertical</enum>
+           <enum>Qt::Orientation::Horizontal</enum>
           </property>
           <property name="sizeHint" stdset="0">
            <size>
-            <width>20</width>
-            <height>40</height>
+            <width>40</width>
+            <height>20</height>
            </size>
           </property>
          </spacer>
