@@ -121,10 +121,15 @@ NAVER_INQUIRY_WORK_START_HOUR = 10
 NAVER_INQUIRY_WORK_END_HOUR = 19
 
 
+def _is_weekday(now_dt=None):
+    """월~금이면 True, 토·일이면 False. 슬랙 자동 알림은 주말엔 보내지 않는다."""
+    return (now_dt or datetime.now()).weekday() < 5
+
+
 def _inquiry_alerts_allowed(now_dt, start_hour=NAVER_INQUIRY_WORK_START_HOUR,
                             end_hour=NAVER_INQUIRY_WORK_END_HOUR):
     """평일(월~금) 근무시간(start_hour:00~end_hour:00) 안이면 True."""
-    return now_dt.weekday() < 5 and start_hour <= now_dt.hour < end_hour
+    return _is_weekday(now_dt) and start_hour <= now_dt.hour < end_hour
 
 
 def _read_inquiry_work_hours(cfg):
@@ -2714,6 +2719,9 @@ class MainWindow(QMainWindow):
         self._send_slack_async(f"✅ Easy Fulfill 배송모니터링 테스트 메시지입니다. ({t})", is_test=True)
 
     def _send_slack_async(self, text, is_test=False):
+        # 자동 알림은 토·일 미발송(평일 월~금만). 수동 테스트 버튼은 주말에도 허용.
+        if not is_test and not _is_weekday():
+            return
         url = str(self.get_app_setting("slack_webhook_url", "") or "").strip()
         if not url or self._slack_send_thread is not None:
             return
@@ -2811,8 +2819,11 @@ class MainWindow(QMainWindow):
 
     def _maybe_send_daily_digest(self):
         """전체 새로고침 직후, 일일 알림이 켜져 있고 위험 건이 있으면 하루 1통 다이제스트.
-        중복은 공유 「설정」 탭의 발송 날짜로 방지(오늘 이미 보냈으면 전송 안 함)."""
+        중복은 공유 「설정」 탭의 발송 날짜로 방지(오늘 이미 보냈으면 전송 안 함).
+        토·일은 발송하지 않는다(평일 월~금만)."""
         if not bool(self.get_app_setting("slack_auto_notify", False)):
+            return
+        if not _is_weekday():  # 토·일은 자동 알림 미발송(평일 월~금만)
             return
         webhook = str(self.get_app_setting("slack_webhook_url", "") or "").strip()
         if not webhook or self._digest_thread is not None:
