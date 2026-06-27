@@ -4360,20 +4360,27 @@ class MainWindow(QMainWindow):
         btn.setToolTip(
             "" if enabled else "주문 정보와 송장 정보를 모두 불러오면 활성화됩니다.")
 
-    def _reset_idle_logo(self):
-        """주문 미로드 시 스토어 로고 자리에 앱 로고를 표시(없으면 비움). 'image' 텍스트 대체."""
+    _STORE_NAMES = {"naver": "네이버", "coupang": "쿠팡",
+                    "gmarket": "지마켓", "11st": "11번가"}
+
+    def _set_store_label(self, store_type):
+        """주문 스토어를 텍스트로 표시(이미지 대신). 미로드/미지원이면 옅은 '스토어'."""
         lbl = getattr(self.ui, "label_logo", None)
         if lbl is None:
             return
-        path = "image/easy-fulfill-logo.png"
-        if os.path.exists(path):
-            pm = QPixmap(path).scaled(
-                QSize(150, 44), Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            lbl.setPixmap(pm)
-            lbl.setAlignment(Qt.AlignCenter)
+        name = self._STORE_NAMES.get(store_type or "", "")
+        lbl.clear()  # 이전 픽스맵 제거
+        if name:
+            lbl.setText(name)
+            lbl.setStyleSheet("font-weight: 700; font-size: 12pt; color: #1a73e8;")
         else:
-            lbl.clear()
-            lbl.setText("")
+            lbl.setText("스토어")
+            lbl.setStyleSheet("color: #bbbbbb;")
+        lbl.setAlignment(Qt.AlignCenter)
+
+    def _reset_idle_logo(self):
+        """주문 미로드 시 스토어 라벨을 옅은 기본값으로 되돌림."""
+        self._set_store_label(None)
 
     def setup_status_bar(self):
         """상태바를 초기화하고 기본 메시지를 설정합니다."""
@@ -5736,32 +5743,8 @@ class MainWindow(QMainWindow):
         """백그라운드 인덱스 동기화 완료 후 로고 표시 + 파일 처리로 이어갑니다."""
         order_processing_async = False
         try:
-            # 스토어 타입에 따라 로고 표시
-            logo_path = None
-            logo_size = None
-            if self.store_type == "naver":
-                logo_path = "image/naver-logo.png"
-                logo_size = QSize(120, 40)  # 네이버 로고 크기
-            elif self.store_type == "coupang":
-                logo_path = "image/coupang-logo.png"
-                logo_size = QSize(120, 40)  # 쿠팡 로고 크기
-            elif self.store_type == "gmarket":
-                logo_path = "image/gmarket-logo.png"
-                logo_size = QSize(120, 40)  # 지마켓 로고 크기
-            elif self.store_type == "11st":
-                logo_path = "image/11st-logo.png"
-                logo_size = QSize(120, 40)  # 11번가 로고 크기
-
-            # 로고 이미지 로드 및 표시
-            if logo_path and os.path.exists(logo_path):
-                pixmap = QPixmap(logo_path)
-                scaled_pixmap = pixmap.scaled(
-                    logo_size, Qt.KeepAspectRatio, Qt.SmoothTransformation
-                )
-                self.ui.label_logo.setPixmap(scaled_pixmap)
-                self.ui.label_logo.setAlignment(Qt.AlignCenter)
-            elif logo_path:
-                print(f"! 로고 파일을 찾을 수 없습니다: {logo_path}")
+            # 스토어 이름을 텍스트로 표시(이미지 대신)
+            self._set_store_label(self.store_type)
 
             # 스토어 타입에 따라 다른 처리 메서드 호출
             try:
