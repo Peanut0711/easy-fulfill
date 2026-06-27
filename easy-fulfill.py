@@ -1945,6 +1945,8 @@ class MainWindow(QMainWindow):
         
         # 인덱스 파일 경로 설정
         self.index_file_path = Path("database") / "order_index.json"
+        # 오늘 불러온 주문 파일 해시(로컬·PC별) — 같은 파일 중복 로드 경고용
+        self._loaded_files_path = Path("database") / "loaded_orders.json"
         self.app_settings_path = Path("database") / "app_settings.json"
         
         # 인덱스 값 초기화
@@ -5778,6 +5780,52 @@ class MainWindow(QMainWindow):
             print(f"! 파일 열기 실패: {str(e)}")
             return False
             
+    def _file_sha1(self, file_path):
+        """파일 내용 SHA1(중복 로드 판별용). 실패 시 None."""
+        try:
+            h = hashlib.sha1()
+            with open(file_path, "rb") as f:
+                for chunk in iter(lambda: f.read(65536), b""):
+                    h.update(chunk)
+            return h.hexdigest()
+        except Exception as e:
+            print(f"! 파일 해시 계산 실패: {e}")
+            return None
+
+    def _todays_loaded_hashes(self):
+        """오늘 불러온 주문 파일 해시 집합(로컬). 과거 날짜는 무시."""
+        today = date.today().strftime("%Y-%m-%d")
+        try:
+            p = self._loaded_files_path
+            if p.exists() and p.stat().st_size > 0:
+                data = json.load(open(p, encoding="utf-8"))
+                if isinstance(data, dict):
+                    return today, set(data.get(today, []))
+        except Exception as e:
+            print(f"! 불러온 파일 기록 읽기 실패: {e}")
+        return today, set()
+
+    def _is_duplicate_order_file(self, file_path):
+        h = self._file_sha1(file_path)
+        if not h:
+            return False
+        _, todays = self._todays_loaded_hashes()
+        return h in todays
+
+    def _record_loaded_order(self, file_path):
+        """오늘 불러온 파일 해시를 로컬에 기록(오늘 것만 보존 → 자동 정리)."""
+        h = self._file_sha1(file_path)
+        if not h:
+            return
+        try:
+            today, todays = self._todays_loaded_hashes()
+            todays.add(h)
+            self._loaded_files_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(self._loaded_files_path, "w", encoding="utf-8") as f:
+                json.dump({today: sorted(todays)}, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"! 불러온 파일 기록 실패: {e}")
+
     def select_excel_file(self):
         """주문서 엑셀 파일을 선택하는 다이얼로그를 표시합니다."""
         # 다운로드 폴더 경로 설정
@@ -5796,6 +5844,18 @@ class MainWindow(QMainWindow):
             is_valid, self.store_type = self.is_valid_filename(filename)
             
             if is_valid:
+                # 중복 로드 차단: 오늘 이미 불러온 동일 파일이면 확인(기본 취소).
+                # 실수로 같은 주문을 또 불러와 인덱스가 중복으로 올라가는 것을 방지.
+                if self._is_duplicate_order_file(file_path):
+                    if QMessageBox.question(
+                        self, "중복 불러오기 확인",
+                        f"이미 오늘 불러온 주문 파일입니다:\n{filename}\n\n"
+                        "다시 불러오면 주문번호 인덱스가 또 올라갑니다. 계속할까요?",
+                    ) != QMessageBox.StandardButton.Yes:
+                        self.statusBar().showMessage("중복 파일 — 불러오기 취소")
+                        print("⏭ 중복 파일로 불러오기를 취소했습니다.")
+                        return
+                self._record_loaded_order(file_path)
                 self.selected_file_path = file_path
                 self._set_status_label(self.ui.filePathLabel, filename, ok=True)
                 self.statusBar().showMessage(f"파일 선택됨: {filename}")

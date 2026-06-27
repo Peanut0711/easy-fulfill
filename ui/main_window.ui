@@ -381,7 +381,7 @@
                  <widget class="QLineEdit" name="lineEdit_idx_naver">
                   <property name="maximumSize">
                    <size>
-                    <width>140</width>
+                    <width>70</width>
                     <height>16777215</height>
                    </size>
                   </property>
@@ -398,7 +398,7 @@
                  <widget class="QLineEdit" name="lineEdit_idx_coupang">
                   <property name="maximumSize">
                    <size>
-                    <width>140</width>
+                    <width>70</width>
                     <height>16777215</height>
                    </size>
                   </property>
@@ -415,7 +415,7 @@
                  <widget class="QLineEdit" name="lineEdit_idx_gmarket">
                   <property name="maximumSize">
                    <size>
-                    <width>140</width>
+                    <width>70</width>
                     <height>16777215</height>
                    </size>
                   </property>
@@ -432,7 +432,7 @@
                  <widget class="QLineEdit" name="lineEdit_idx_11st">
                   <property name="maximumSize">
                    <size>
-                    <width>140</width>
+                    <width>70</width>
                     <height>16777215</height>
                    </size>
                   </property>
