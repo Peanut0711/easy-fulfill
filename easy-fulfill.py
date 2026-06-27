@@ -4296,23 +4296,44 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.warning(self, "오류", f"복사 중 오류가 발생했습니다: {str(e)}")
         
+    def _set_status_label(self, label, text, ok=False):
+        """주문·발송 탭 상태 라벨 텍스트+색. ok=True 초록(완료/불러옴), 기본 회색(대기/없음)."""
+        if label is None:
+            return
+        label.setText(text)
+        label.setStyleSheet(
+            "color: #2e7d32; font-weight: 600;" if ok else "color: #888888;")
+
+    def _reset_idle_logo(self):
+        """주문 미로드 시 스토어 로고 자리에 앱 로고를 표시(없으면 비움). 'image' 텍스트 대체."""
+        lbl = getattr(self.ui, "label_logo", None)
+        if lbl is None:
+            return
+        path = "image/easy-fulfill-logo.png"
+        if os.path.exists(path):
+            pm = QPixmap(path).scaled(
+                QSize(150, 44), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            lbl.setPixmap(pm)
+            lbl.setAlignment(Qt.AlignCenter)
+        else:
+            lbl.clear()
+            lbl.setText("")
+
     def setup_status_bar(self):
         """상태바를 초기화하고 기본 메시지를 설정합니다."""
         statusbar = self.statusBar()
         
-        # 기본 레이블 생성 및 설정
+        # 기본 레이블 생성 및 설정(상태바답게 좌측·작게·일반 굵기 — 제목/버튼처럼 보이지 않도록)
         self.status_label = QLabel()
-        self.status_label.setAlignment(Qt.AlignCenter)  # 중앙 정렬
-        self.status_label.setMinimumHeight(30)  # 최소 높이 설정
+        self.status_label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+        self.status_label.setMinimumHeight(24)
         self.status_label.setStyleSheet("""
             QLabel {
-                color: #333333;
-                font-size: 12pt;
-                font-weight: bold;
-                font-family: Arial;
-                padding: 0 10px;
+                color: #666666;
+                font-size: 9pt;
+                font-weight: normal;
+                padding: 0 8px;
                 background-color: #f5f5f5;
-                width: 100%;
             }
         """)
         
@@ -4416,6 +4437,11 @@ class MainWindow(QMainWindow):
             self.ui.pushButton_refresh_tracking.clicked.connect(self.on_refresh_tracking_clicked)
         # 배송추적 설정은 「관리자」 탭에 상시 구성(팝업·설정 버튼 제거). 시작 시 1회 빌드.
         self._build_admin_tracking_settings()
+        # 주문·발송 탭 초기 상태: 앱 로고 + 회색 상태 텍스트
+        self._reset_idle_logo()
+        self._set_status_label(self.ui.filePathLabel, "주문 정보가 없습니다. ( Ctrl + O )")
+        self._set_status_label(self.ui.label_invoice, "송장 정보가 없습니다.")
+        self._set_status_label(self.ui.label_generate_invoice, "생성 버튼을 누르세요.")
         if hasattr(self.ui, "tableWidget_tracking"):
             # 마우스 올릴 때 생기는 파란 호버 하이라이트 제거(위험행 색칠·선택은 유지).
             # 프록시 스타일은 파이썬 참조가 사라지면 GC 되므로 self 에 보관한다.
@@ -5616,7 +5642,7 @@ class MainWindow(QMainWindow):
             
             if is_valid:
                 self.selected_file_path = file_path
-                self.ui.filePathLabel.setText(filename)
+                self._set_status_label(self.ui.filePathLabel, filename, ok=True)
                 self.statusBar().showMessage(f"파일 선택됨: {filename}")
                 print("✓ 파일이 성공적으로 선택되었습니다.")
 
@@ -5642,7 +5668,7 @@ class MainWindow(QMainWindow):
                     "쿠팡 스토어: DeliveryList(YYYY-MM-DD)_(0).xlsx"
                 )
                 self.selected_file_path = None
-                self.ui.filePathLabel.setText("주문 정보가 없습니다. ( Ctrl + O )")
+                self._set_status_label(self.ui.filePathLabel, "주문 정보가 없습니다. ( Ctrl + O )")
                 self.statusBar().showMessage("잘못된 파일명")
                 print("❌ 파일 선택이 취소되었습니다.")
         else:
@@ -6807,16 +6833,15 @@ class MainWindow(QMainWindow):
         self.store_type = None
         
         # UI 요소 초기화
-        self.ui.filePathLabel.setText("주문 정보가 없습니다. ( Ctrl + O )")
+        self._set_status_label(self.ui.filePathLabel, "주문 정보가 없습니다. ( Ctrl + O )")
         self.ui.plainTextEdit.setPlainText("")
-        
-        # 로고 초기화
-        self.ui.label_logo.clear()
-        self.ui.label_logo.setText("image")
-        
+
+        # 로고 초기화(앱 로고로)
+        self._reset_idle_logo()
+
         # 송장 미리보기(주문·발송 탭) 텍스트 초기화
-        self.ui.label_invoice.setText("송장 정보가 없습니다.")
-        self.ui.label_generate_invoice.setText("생성 버튼을 누르세요.")
+        self._set_status_label(self.ui.label_invoice, "송장 정보가 없습니다.")
+        self._set_status_label(self.ui.label_generate_invoice, "생성 버튼을 누르세요.")
         self.ui.plainTextEdit_invoice.setPlainText("")
         
         # 상태바 메시지 업데이트
@@ -7265,7 +7290,7 @@ class MainWindow(QMainWindow):
                     return
                 
                 self.invoice_file_path = file_path
-                self.ui.label_invoice.setText(filename)
+                self._set_status_label(self.ui.label_invoice, filename, ok=True)
                 
                 # 엑셀 파일 읽기
                 df = pd.read_excel(file_path, header=6)  # 7번째 행을 헤더로 사용
@@ -7376,7 +7401,9 @@ class MainWindow(QMainWindow):
                 self._process_naver_invoice(temp_order_file, temp_invoice_file)
             elif self.store_type == "coupang":
                 self._process_coupang_invoice(temp_order_file, temp_invoice_file)
-            
+            self._set_status_label(
+                self.ui.label_generate_invoice, "발송 파일 생성 완료 ✓", ok=True)
+
             # 임시 파일 정리
             temp_order_file.unlink()
             temp_invoice_file.unlink()

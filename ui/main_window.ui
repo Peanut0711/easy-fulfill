@@ -92,6 +92,16 @@
              <number>0</number>
             </property>
             <item>
+             <widget class="QLabel" name="label_step_order">
+              <property name="styleSheet">
+               <string>font-weight: 600; color: #1a73e8; padding: 2px 0;</string>
+              </property>
+              <property name="text">
+               <string>① 주문 불러오기</string>
+              </property>
+             </widget>
+            </item>
+            <item>
              <layout class="QHBoxLayout" name="horizontalLayout_order_header">
               <property name="spacing">
                <number>8</number>
@@ -124,7 +134,7 @@
                  <enum>QFrame::Shadow::Plain</enum>
                 </property>
                 <property name="text">
-                 <string>image</string>
+                 <string/>
                 </property>
                 <property name="alignment">
                  <set>Qt::AlignmentFlag::AlignCenter</set>
@@ -151,12 +161,6 @@
                   <pointsize>9</pointsize>
                   <bold>false</bold>
                  </font>
-                </property>
-                <property name="frameShape">
-                 <enum>QFrame::Shape::Panel</enum>
-                </property>
-                <property name="frameShadow">
-                 <enum>QFrame::Shadow::Sunken</enum>
                 </property>
                 <property name="text">
                  <string>주문 정보가 없습니다.</string>
@@ -211,7 +215,7 @@
                <enum>QFrame::Shadow::Plain</enum>
               </property>
               <property name="placeholderText">
-               <string>주문 마크다운 미리보기</string>
+               <string>주문 엑셀을 불러오면 여기에 주문 미리보기가 표시됩니다.</string>
               </property>
              </widget>
             </item>
@@ -237,6 +241,16 @@
             <property name="bottomMargin">
              <number>0</number>
             </property>
+            <item>
+             <widget class="QLabel" name="label_step_ship">
+              <property name="styleSheet">
+               <string>font-weight: 600; color: #1a73e8; padding: 2px 0;</string>
+              </property>
+              <property name="text">
+               <string>② 송장·발송 생성</string>
+              </property>
+             </widget>
+            </item>
             <item>
              <layout class="QHBoxLayout" name="horizontalLayout_ship_row1">
               <property name="spacing">
@@ -271,12 +285,6 @@
                   <horstretch>1</horstretch>
                   <verstretch>0</verstretch>
                  </sizepolicy>
-                </property>
-                <property name="frameShape">
-                 <enum>QFrame::Shape::Panel</enum>
-                </property>
-                <property name="frameShadow">
-                 <enum>QFrame::Shadow::Sunken</enum>
                 </property>
                 <property name="text">
                  <string>송장 정보가 없습니다.</string>
@@ -345,12 +353,6 @@
                   <verstretch>0</verstretch>
                  </sizepolicy>
                 </property>
-                <property name="frameShape">
-                 <enum>QFrame::Shape::Panel</enum>
-                </property>
-                <property name="frameShadow">
-                 <enum>QFrame::Shadow::Sunken</enum>
-                </property>
                 <property name="text">
                  <string>생성 버튼을 누르세요.</string>
                 </property>
@@ -361,6 +363,9 @@
               </item>
               <item>
                <widget class="QPushButton" name="pushButton_generate_invoice">
+               <property name="styleSheet">
+                <string>QPushButton { background-color: #1a73e8; color: white; border: none; border-radius: 4px; font-weight: 600; } QPushButton:hover { background-color: #1666c1; } QPushButton:disabled { background-color: #b9c7da; color: #eef; }</string>
+               </property>
                 <property name="minimumSize">
                  <size>
                   <width>100</width>
@@ -401,7 +406,7 @@
                <enum>QFrame::Shadow::Plain</enum>
               </property>
               <property name="placeholderText">
-               <string>송장·발송 미리보기</string>
+               <string>송장을 불러오거나 일괄 발송을 생성하면 여기에 표시됩니다.</string>
               </property>
              </widget>
             </item>
