@@ -126,6 +126,26 @@ def _is_weekday(now_dt=None):
     return (now_dt or datetime.now()).weekday() < 5
 
 
+def _business_elapsed_hours(ref_dt, now_dt):
+    """ref_dt~now_dt 경과 시간을 '영업일(월~금)' 기준으로 환산해 시간 단위로 반환한다.
+
+    토·일은 우체국이 배송물을 움직이지 않으므로 정체 판정에서 제외한다. 달력 시간으로
+    재면 금요일 저녁 도착 건이 월요일에 60시간 '정체'로 오탐되므로, 주말에 걸친 구간을
+    빼고 평일 구간만 누적한다(공휴일은 아직 미반영 — 추후 캘린더 도입 여지).
+    """
+    if now_dt <= ref_dt:
+        return 0.0
+    weekend = 0.0
+    cur = ref_dt
+    while cur < now_dt:
+        day_end = datetime(cur.year, cur.month, cur.day) + timedelta(days=1)
+        seg_end = min(day_end, now_dt)
+        if cur.weekday() >= 5:  # 토(5)·일(6) 구간은 제외
+            weekend += (seg_end - cur).total_seconds()
+        cur = seg_end
+    return ((now_dt - ref_dt).total_seconds() - weekend) / 3600.0
+
+
 def _inquiry_alerts_allowed(now_dt, start_hour=NAVER_INQUIRY_WORK_START_HOUR,
                             end_hour=NAVER_INQUIRY_WORK_END_HOUR):
     """평일(월~금) 근무시간(start_hour:00~end_hour:00) 안이면 True."""
@@ -2453,8 +2473,9 @@ class MainWindow(QMainWindow):
         (6, "배송상태"), (7, "완료"), (8, "마지막위치"),
         (11, "최근이벤트"), (9, "최근조회"), (10, "비고"),
     ]
-    # 허브(물류센터) 판별 키워드 — '도착 후 정체'가 가장 위험
-    _RISK_HUB_KEYWORDS = ("물류", "허브", "터미널")
+    # 허브(물류센터·집중국) 판별 키워드 — '도착 후 정체'가 가장 위험.
+    # '우편집중국'·'교환센터'는 실제 핵심 허브라 반드시 포함(누락 시 이동정체로 오분류).
+    _RISK_HUB_KEYWORDS = ("물류", "허브", "터미널", "집중국", "교환센터")
     # 정상으로 보아 위험 판정에서 제외하는 상태
     _RISK_EXCLUDE_STATUS = ("배달준비",)
 
@@ -2571,7 +2592,8 @@ class MainWindow(QMainWindow):
             done = _cell(row, 7).strip().upper() == "Y"
             ref = self._parse_event_dt(_cell(row, 11)) or self._parse_event_dt(_cell(row, 1))
             is_stale = (
-                ref is not None and (now_dt - ref).total_seconds() > stale_hours * 3600
+                ref is not None
+                and _business_elapsed_hours(ref, now_dt) > stale_hours
             )
             risk = self._classify_risk(_cell(row, 6), _cell(row, 8), is_stale, done)
             if risk:
@@ -2764,9 +2786,8 @@ class MainWindow(QMainWindow):
             done = _cell(row, 7).strip().upper() == "Y"
             ev = self._parse_event_dt(_cell(row, 11))
             ref = ev or self._parse_event_dt(_cell(row, 1))
-            is_stale = (
-                ref is not None and (now_dt - ref).total_seconds() > hours * 3600
-            )
+            elapsed_h = _business_elapsed_hours(ref, now_dt) if ref is not None else 0.0
+            is_stale = ref is not None and elapsed_h > hours
             risk = self._classify_risk(_cell(row, 6), _cell(row, 8), is_stale, done)
             if not risk:
                 continue
@@ -2776,7 +2797,7 @@ class MainWindow(QMainWindow):
                 "status": _cell(row, 6),
                 "where": _cell(row, 8),
                 "event_time": _cell(row, 11) if ev else "",
-                "elapsed_h": (now_dt - ref).total_seconds() / 3600.0,
+                "elapsed_h": elapsed_h,
                 "category": risk,
             })
         # 위험도 순서: 허브정체 → 수거누락 → 이동정체
@@ -2798,7 +2819,7 @@ class MainWindow(QMainWindow):
         label = {"허브정체": "🔴 허브 정체(분실·사고 의심)",
                  "수거누락": "🟠 수거 누락 의심",
                  "이동정체": "🟠 이동 정체"}
-        lines = [f"⚠️ 배송 위험 {len(risks)}건 (기준 {hours}시간 무이동 · {t})"]
+        lines = [f"⚠️ 배송 위험 {len(risks)}건 (기준 평일 {hours}시간 무이동 · {t})"]
         cur = None
         shown = 0
         for it in risks:
