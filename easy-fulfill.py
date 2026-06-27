@@ -1883,6 +1883,7 @@ class MainWindow(QMainWindow):
         self._slack_notify_after_reload = False
         # API·알림 설정 팝업(작업자에겐 숨기고 작은 버튼으로만 노출)
         self._tracking_settings_dialog = None
+        self._quick_excel_dialog = None
         self._dlg_key_status = None
         self._dlg_slack_status = None
         self._dlg_slack_auto = None
@@ -4398,6 +4399,10 @@ class MainWindow(QMainWindow):
         # 신규 DB 반영 UI·로직 제거(2026-04). (pushButton_database_* / load·apply_database_* 삭제)
         if hasattr(self.ui, 'pushButton_quick_excel_gen'):
             self.ui.pushButton_quick_excel_gen.clicked.connect(self.generate_quick_excel)
+        # 퀵엑셀 그룹은 시작 시 다이얼로그로 옮겨, 환경설정 탭에는 「수동 주문 추가…」 버튼만 둔다.
+        if hasattr(self.ui, "pushButton_open_quick_excel"):
+            self._ensure_quick_excel_dialog()
+            self.ui.pushButton_open_quick_excel.clicked.connect(self._open_quick_excel_dialog)
         if hasattr(self.ui, 'comboBox_store_select'):
             self.ui.comboBox_store_select.currentIndexChanged.connect(
                 self._refresh_quick_excel_manual_ui
@@ -4985,7 +4990,9 @@ class MainWindow(QMainWindow):
             self.ui.lineEdit_quick_manual_detail.setText(dlg.detail_address)
 
     def _refresh_quick_excel_manual_ui(self):
-        """수동 모드일 때만 이름·전화·주소 입력란을 표시하고 그룹 높이를 조정합니다."""
+        """수동 모드일 때만 이름·전화·주소 입력란을 표시합니다.
+        퀵엑셀 그룹은 별도 다이얼로그(_quick_excel_dialog)로 분리돼 있고, 내부 위젯이
+        절대좌표라 그룹 크기를 모드에 맞춰 고정해 다이얼로그가 이에 맞춰지게 한다."""
         if not hasattr(self.ui, "comboBox_store_select"):
             return
         manual = self.ui.comboBox_store_select.currentText().strip() == "수동"
@@ -4995,61 +5002,34 @@ class MainWindow(QMainWindow):
             self.ui.label_gift_3.setVisible(not manual)
 
         gb = getattr(self.ui, "groupBox", None)
-        if gb is None:
-            return
-        quick_h = 278 if manual else 102
-        grect = gb.geometry()
-        gb.setGeometry(grect.x(), grect.y(), grect.width(), quick_h)
+        if gb is not None:
+            gb.setFixedSize(341, 278 if manual else 102)
+        dlg = getattr(self, "_quick_excel_dialog", None)
+        if dlg is not None:
+            dlg.adjustSize()
 
-        gap_after_quick = 13
-        gs = getattr(self.ui, "groupBox_google_sheets", None)
-        bb = getattr(self.ui, "groupBox_batch_ship", None)
+    def _ensure_quick_excel_dialog(self):
+        """퀵엑셀 그룹(.ui의 groupBox)을 모달리스 다이얼로그로 옮겨 보관(최초 1회 reparent)."""
+        dlg = getattr(self, "_quick_excel_dialog", None)
+        if dlg is not None:
+            return dlg
+        dlg = QDialog(self)
+        dlg.setWindowTitle("수동 주문 추가")
+        lay = QVBoxLayout(dlg)
+        lay.setContentsMargins(10, 10, 10, 10)
+        gb = getattr(self.ui, "groupBox", None)
+        if gb is not None:
+            lay.addWidget(gb)
+        self._quick_excel_dialog = dlg
+        return dlg
 
-        # 우측 컬럼으로 이동된 경우(퀵 엑셀과 x축이 충분히 떨어진 경우),
-        # 순서를 Google Sheets -> 일괄 발송으로 고정한다.
-        right_column_x = None
-        if gs is not None:
-            right_column_x = gs.geometry().x()
-        elif bb is not None:
-            right_column_x = bb.geometry().x()
-        is_right_column = (
-            right_column_x is not None
-            and right_column_x >= (grect.x() + grect.width() + 8)
-        )
-
-        if is_right_column:
-            top_anchor_y = grect.y()
-            order_index_gb = getattr(self.ui, "groupBox_order_index", None)
-            if order_index_gb is not None:
-                top_anchor_y = order_index_gb.geometry().y()
-
-            gap_between_right = 9
-            if gs is not None:
-                gsrect = gs.geometry()
-                gs.setGeometry(gsrect.x(), top_anchor_y, gsrect.width(), gsrect.height())
-            if bb is not None:
-                brect = bb.geometry()
-                if gs is not None:
-                    gsrect_after = gs.geometry()
-                    batch_y = gsrect_after.y() + gsrect_after.height() + gap_between_right
-                else:
-                    batch_y = top_anchor_y
-                bb.setGeometry(brect.x(), batch_y, brect.width(), brect.height())
-        else:
-            if bb is not None:
-                brect = bb.geometry()
-                batch_y = grect.y() + quick_h + gap_after_quick
-                bb.setGeometry(brect.x(), batch_y, brect.width(), brect.height())
-
-            if gs is not None:
-                gsrect = gs.geometry()
-                gap_after_batch = 9
-                if bb is not None:
-                    bbr = bb.geometry()
-                    google_y = bbr.y() + bbr.height() + gap_after_batch
-                else:
-                    google_y = grect.y() + quick_h + gap_after_quick + 61 + gap_after_batch
-                gs.setGeometry(gsrect.x(), google_y, gsrect.width(), gsrect.height())
+    def _open_quick_excel_dialog(self):
+        """환경설정의 「수동 주문 추가…」 → 퀵엑셀 다이얼로그 열기."""
+        dlg = self._ensure_quick_excel_dialog()
+        self._refresh_quick_excel_manual_ui()
+        dlg.show()
+        dlg.raise_()
+        dlg.activateWindow()
 
     def generate_quick_excel(self):
         """클립보드 정보를 기반으로 단건 엑셀을 생성합니다. 수동 선택 시 입력란 값으로 생성합니다."""
