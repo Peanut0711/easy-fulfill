@@ -3769,7 +3769,7 @@ class MainWindow(QMainWindow):
         # self.setMenuBar(window.menubar)
         
         # 툴바 설정
-        self.setup_toolbar()
+        self.setup_menubar()
         
         self.setStatusBar(window.statusbar)
         self.setWindowTitle(window.windowTitle())
@@ -4390,136 +4390,121 @@ class MainWindow(QMainWindow):
         left = int(w * 0.52)
         splitter.setSizes([left, max(w - left, 200)])
 
-    def setup_toolbar(self):
-        """툴바를 설정합니다."""
-        # 툴바 생성
-        toolbar = self.addToolBar('툴바')
-        toolbar.setIconSize(QSize(32, 32))
-        
-        # 툴바를 세로로 설정하고 좌측에 배치
-        # toolbar.setOrientation(Qt.Vertical)
-        # self.addToolBar(Qt.LeftToolBarArea, toolbar)
-        
-        # 툴바 스타일 설정
-        toolbar.setStyleSheet("""
-            QToolBar {
-                spacing: 5px;
-                padding: 5px;
-                background-color: #f5f5f5;
-                border: none;
-            }
-            QToolBar QToolButton {
-                min-width: 40px;
-                min-height: 40px;
-                padding: 5px;
-                margin: 2px;
-                border: 1.5px solid #dcdcdc;
-                border-radius: 8px;
-                background-color: white;
-            }
-            QToolBar QToolButton:hover {
-                background-color: #e8e8e8;
-                border-color: #c0c0c0;
-            }
-            QToolBar QToolButton:pressed {
-                background-color: #d0d0d0;
-                border-color: #a0a0a0;
-            }
-        """)
-        
-        # 불러오기 액션
-        loadAction = QAction(QIcon('image/open-file-icon.png'), '파일 불러오기', self)
-        loadAction.setShortcut('Ctrl+O')
-        loadAction.setStatusTip('파일 불러오기 (Ctrl+O)')
-        loadAction.triggered.connect(self.select_excel_file)
-        toolbar.addAction(loadAction)
+    def setup_menubar(self):
+        """메뉴/단축키용 액션을 정의하고 상단 메뉴바를 구성합니다(툴바 없음)."""
 
-        # API로 불러오기 액션(네이버 주문을 커머스API로 직접 조회 — 엑셀 다운로드 대체)
-        apiLoadAction = QAction(QIcon('image/open-file-icon.png'), 'API로 불러오기', self)
-        apiLoadAction.setStatusTip('네이버 주문을 API로 직접 불러오기(발송 전 결제완료·발주확인)')
-        apiLoadAction.triggered.connect(self.load_naver_orders_via_api)
-        toolbar.addAction(apiLoadAction)
+        # ── 액션 정의(메뉴·단축키용) ─────────────────────────────
+        self.act_load = QAction(QIcon('image/open-file-icon.png'), '주문 불러오기', self)
+        self.act_load.setShortcut('Ctrl+O')
+        self.act_load.setStatusTip('주문 엑셀 파일 불러오기 (Ctrl+O)')
+        self.act_load.triggered.connect(self.select_excel_file)
 
-        # 복사 액션
-        copyAction = QAction(QIcon('image/copy-icon.png'), '클립보드에 복사', self)
-        copyAction.setShortcut('Ctrl+C')
-        copyAction.setStatusTip('클립보드에 복사 (Ctrl+C)')
-        copyAction.triggered.connect(self.copy_to_clipboard)
-        toolbar.addAction(copyAction)        
+        self.act_load_invoice = QAction(QIcon('image/open-file-icon.png'), '송장 불러오기', self)
+        self.act_load_invoice.setStatusTip('우체국 송장 엑셀 파일 불러오기')
+        self.act_load_invoice.triggered.connect(self.load_invoice_file)
 
-        # 엑셀 송장 출력 액션
-        exportAction = QAction(QIcon('image/microsoft-excel-icon.png'), '엑셀 송장 출력', self)
-        exportAction.setShortcut('Ctrl+E')
-        exportAction.setStatusTip('엑셀 송장 출력 (Ctrl+E)')
-        exportAction.triggered.connect(self.export_invoice_excel)
-        toolbar.addAction(exportAction)
+        self.act_copy = QAction(QIcon('image/copy-icon.png'), '복사', self)
+        self.act_copy.setShortcut('Ctrl+C')
+        self.act_copy.setStatusTip('주문 정보를 클립보드에 복사 (Ctrl+C)')
+        self.act_copy.triggered.connect(self.copy_to_clipboard)
 
-        # API 발송처리 액션(매칭된 송장번호를 네이버에 직접 등록 — 업로드 엑셀 대체)
-        dispatchAction = QAction(QIcon('image/microsoft-excel-icon.png'), 'API 발송처리', self)
-        dispatchAction.setStatusTip('매칭된 송장번호를 네이버에 API로 발송처리(배송중 전환)')
-        dispatchAction.triggered.connect(self.dispatch_naver_via_api)
-        toolbar.addAction(dispatchAction)
+        self.act_export = QAction(QIcon('image/microsoft-excel-icon.png'), '송장 출력', self)
+        self.act_export.setShortcut('Ctrl+E')
+        self.act_export.setStatusTip('네이버 업로드용 엑셀 송장 출력 (Ctrl+E)')
+        self.act_export.triggered.connect(self.export_invoice_excel)
 
-        # 폴더 열기 액션
-        openAction = QAction(QIcon('image/folder-icon.png'), '출력 폴더 열기', self)        
-        openAction.setShortcut('Ctrl+F')
-        openAction.setStatusTip('출력 폴더 열기 (Ctrl+F)')
-        openAction.triggered.connect(self.open_output_folder)
-        toolbar.addAction(openAction)                                
-        
-        # 구분자 추가
-        toolbar.addSeparator()
-        
-        # # 노션 홈페이지 액션
-        # notionAction = QAction(QIcon('image/notion-icon.png'), '노션 홈페이지로 이동', self)        
-        # notionAction.setStatusTip('노션 홈페이지로 이동')
-        # notionAction.triggered.connect(lambda: QDesktopServices.openUrl(QUrl("https://www.notion.so")))
-        # toolbar.addAction(notionAction)
-        
-        # 데이터베이스 액션
-        databaseAction = QAction(QIcon('image/database-icon.png'), '데이터베이스 확인', self)
-        databaseAction.setShortcut('Ctrl+D')
-        databaseAction.setStatusTip('데이터베이스 확인 (Ctrl+D)')
-        databaseAction.triggered.connect(lambda: QDesktopServices.
-                                         openUrl(QUrl("https://docs.google.com/spreadsheets/d/1F0l6FMjXvKXAR9WyDvxEWcRvji-TaJbBim_G12TJ2Pw/edit?gid=195401368#gid=195401368")))
-        toolbar.addAction(databaseAction)  
-        
-        # 우체국 홈페이지 액션
-        notionAction = QAction(QIcon('image/korea-post-icon.png'), '우체국 홈페이지로 이동', self)
-        notionAction.setStatusTip('우체국 홈페이지로 이동')
-        notionAction.triggered.connect(lambda: QDesktopServices.openUrl(QUrl("https://biz.epost.go.kr/ui/index.jsp")))
-        toolbar.addAction(notionAction)
-        
-        # 네이버 스마트스토어 액션
-        naverStoreAction = QAction(QIcon('image/smart-store-icon.png'), '네이버 스마트스토어 페이지로 이동', self)        
-        naverStoreAction.setStatusTip('네이버 스마트스토어 페이지로 이동')
-        naverStoreAction.triggered.connect(lambda: QDesktopServices.openUrl(QUrl("https://sell.smartstore.naver.com/#/home/about")))
-        toolbar.addAction(naverStoreAction)
-        
-        # 쿠팡 스토어 액션
-        coupangStoreAction = QAction(QIcon('image/coupang-wing-icon.png'), '쿠팡 스토어 페이지로 이동', self)        
-        coupangStoreAction.setStatusTip('쿠팡 스토어 페이지로 이동')
-        coupangStoreAction.triggered.connect(lambda: QDesktopServices.openUrl(QUrl("https://wing.coupang.com/")))
-        toolbar.addAction(coupangStoreAction)
-        
-         # 구분자 추가
-        toolbar.addSeparator()
-        
-        # 초기화 액션
-        clearAction = QAction(QIcon('image/reset-icon.png'), '주문 정보 초기화', self)
-        clearAction.setShortcut('Ctrl+R')
-        clearAction.setStatusTip('주문 정보 초기화 (Ctrl+R)')
-        clearAction.triggered.connect(self.clear_list)
-        toolbar.addAction(clearAction)  
-        
-        # 종료 액션
-        exitAction = QAction(QIcon('image/exit-icon.png'), '프로그램 종료', self)
-        exitAction.setShortcut('Ctrl+Q')
-        exitAction.setStatusTip('프로그램 종료 (Ctrl+Q)')
-        exitAction.triggered.connect(QApplication.quit)
-        toolbar.addAction(exitAction)
+        self.act_openfolder = QAction(QIcon('image/folder-icon.png'), '출력 폴더', self)
+        self.act_openfolder.setShortcut('Ctrl+F')
+        self.act_openfolder.setStatusTip('출력 폴더 열기 (Ctrl+F)')
+        self.act_openfolder.triggered.connect(self.open_output_folder)
+
+        self.act_clear = QAction(QIcon('image/reset-icon.png'), '초기화', self)
+        self.act_clear.setShortcut('Ctrl+R')
+        self.act_clear.setStatusTip('주문 정보 초기화 (Ctrl+R)')
+        self.act_clear.triggered.connect(self.clear_list)
+
+        # API 동작(개발 중) — 툴바엔 두지 않고 메뉴에서만 노출
+        self.act_api_load = QAction(QIcon('image/open-file-icon.png'), 'API로 주문 불러오기', self)
+        self.act_api_load.setStatusTip('네이버 주문을 API로 직접 불러오기(발송 전 결제완료·발주확인)')
+        self.act_api_load.triggered.connect(self.load_naver_orders_via_api)
+
+        self.act_dispatch = QAction(QIcon('image/microsoft-excel-icon.png'), 'API 발송처리', self)
+        self.act_dispatch.setStatusTip('매칭된 송장번호를 네이버에 API로 발송처리(배송중 전환)')
+        self.act_dispatch.triggered.connect(self.dispatch_naver_via_api)
+
+        # 외부 바로가기
+        self.act_db = QAction(QIcon('image/database-icon.png'), '데이터베이스 시트', self)
+        self.act_db.setShortcut('Ctrl+D')
+        self.act_db.setStatusTip('공유 데이터베이스 구글시트 열기 (Ctrl+D)')
+        self.act_db.triggered.connect(lambda: QDesktopServices.openUrl(QUrl(
+            "https://docs.google.com/spreadsheets/d/1F0l6FMjXvKXAR9WyDvxEWcRvji-TaJbBim_G12TJ2Pw/edit?gid=195401368#gid=195401368")))
+
+        self.act_epost = QAction(QIcon('image/korea-post-icon.png'), '우체국', self)
+        self.act_epost.setStatusTip('우체국 홈페이지로 이동')
+        self.act_epost.triggered.connect(lambda: QDesktopServices.openUrl(QUrl("https://biz.epost.go.kr/ui/index.jsp")))
+
+        self.act_naver_store = QAction(QIcon('image/smart-store-icon.png'), '네이버 스마트스토어', self)
+        self.act_naver_store.setStatusTip('네이버 스마트스토어 페이지로 이동')
+        self.act_naver_store.triggered.connect(lambda: QDesktopServices.openUrl(QUrl("https://sell.smartstore.naver.com/#/home/about")))
+
+        self.act_coupang_store = QAction(QIcon('image/coupang-wing-icon.png'), '쿠팡 윙', self)
+        self.act_coupang_store.setStatusTip('쿠팡 스토어 페이지로 이동')
+        self.act_coupang_store.triggered.connect(lambda: QDesktopServices.openUrl(QUrl("https://wing.coupang.com/")))
+
+        self.act_exit = QAction(QIcon('image/exit-icon.png'), '종료', self)
+        self.act_exit.setShortcut('Ctrl+Q')
+        self.act_exit.setStatusTip('프로그램 종료 (Ctrl+Q)')
+        self.act_exit.triggered.connect(QApplication.quit)
+
+        # 상단 메뉴바 구성
+        self._setup_menus()
         
         
+
+    def _setup_menus(self):
+        """상단 메뉴바를 구성합니다(생성 UI의 기본 메뉴 대신 여기서 일괄 정의).
+
+        툴바엔 매일 쓰는 파일 기반 동작만 두고, 나머지(API·외부링크·종료)는
+        여기로 모은다. API 항목은 아직 개발 단계라 별도 그룹으로 분리.
+        """
+        mb = self.menuBar()
+        mb.clear()
+        # 메뉴바와 탭 사이 경계: 얇은 헤어라인 + 위아래 패딩(숨통)
+        mb.setStyleSheet("QMenuBar { border-bottom: 1px solid #e0e0e0; padding: 2px 0; }")
+        # 구분선과 탭 헤더 사이 여백(레이아웃 안 위젯은 stylesheet margin이 안 먹어
+        # 레이아웃 상단 마진으로 준다)
+        lay = getattr(self.ui, "verticalLayout", None)
+        if lay is not None:
+            m = lay.contentsMargins()
+            lay.setContentsMargins(m.left(), 14, m.right(), m.bottom())
+
+        m_file = mb.addMenu('파일(&F)')
+        m_file.addAction(self.act_load)
+        m_file.addAction(self.act_load_invoice)
+        m_file.addAction(self.act_openfolder)
+        m_file.addSeparator()
+        m_file.addAction(self.act_exit)
+
+        m_order = mb.addMenu('주문·발송(&O)')
+        m_order.addAction(self.act_copy)
+        m_order.addAction(self.act_export)
+        m_order.addSeparator()
+        m_order.addAction(self.act_clear)
+
+        m_api = mb.addMenu('API(개발 중)')
+        m_api.addAction(self.act_api_load)
+        m_api.addAction(self.act_dispatch)
+
+        m_link = mb.addMenu('바로가기(&L)')
+        m_link.addAction(self.act_db)
+        m_link.addAction(self.act_epost)
+        m_link.addAction(self.act_naver_store)
+        m_link.addAction(self.act_coupang_store)
+
+        m_help = mb.addMenu('도움말(&H)')
+        self.act_about = QAction('프로그램 정보(&A)', self)
+        self.act_about.triggered.connect(self.show_about)
+        m_help.addAction(self.act_about)
 
     def copy_to_clipboard(self):
         """plainTextEdit의 내용을 클립보드에 복사합니다."""
@@ -4577,11 +4562,12 @@ class MainWindow(QMainWindow):
             return
         name = self._STORE_NAMES.get(store_type or "", "")
         lbl.clear()  # 이전 픽스맵 제거
+        lbl.setFrameShape(QFrame.Shape.NoFrame)  # 버튼처럼 보이던 패널 테두리 제거(라벨로)
         if name:
             lbl.setText(name)
             lbl.setStyleSheet("font-weight: 700; font-size: 12pt; color: #1a73e8;")
         else:
-            lbl.setText("스토어")
+            lbl.setText("스토어 미선택")
             lbl.setStyleSheet("color: #bbbbbb;")
         lbl.setAlignment(Qt.AlignCenter)
 
