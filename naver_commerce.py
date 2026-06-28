@@ -161,7 +161,12 @@ def fetch_customer_inquiries(token, start_date, end_date, answered=None):
 PRODUCT_ORDERS_BASE = API_BASE + "/v1/pay-order/seller/product-orders"
 LAST_CHANGED_URL = PRODUCT_ORDERS_BASE + "/last-changed-statuses"
 ORDER_QUERY_URL = PRODUCT_ORDERS_BASE + "/query"
+DISPATCH_URL = PRODUCT_ORDERS_BASE + "/dispatch"
 QUERY_CHUNK = 300  # query API 1회 최대 상품주문 수(상한)
+
+# 우체국 택배사 코드(발송처리 deliveryCompanyCode). 우체국택배=EPOST,
+# 우편등기=REGISTPOST, 일반우편=GENERALPOST.
+KPOST_COMPANY_CODE = "EPOST"
 
 # 발송 전(아직 미발송) 상태. '신규주문(결제완료)'과 '발주확인(상품준비중)'은
 # 모두 productOrderStatus == 'PAYED' 로 내려오고, 발송하면 DELIVERING 으로 바뀐다.
@@ -304,6 +309,97 @@ def order_detail_to_row(item):
         "_상품주문번호": str(_first(po, "productOrderId")),
         "_상태": str(_first(po, "productOrderStatus")),
     }
+
+
+def dispatch_product_orders(token, items, dispatch_dt=None,
+                            default_company=KPOST_COMPANY_CODE):
+    """발송 처리(송장 등록). 상태를 발주확인→배송중으로 전이시킨다.
+
+    items: [{productOrderId, trackingNumber, deliveryCompanyCode(옵션),
+             deliveryMethod(옵션, 기본 DELIVERY), dispatchDate(옵션)}].
+    반환: {ok, success:[productOrderId...], fail:[{productOrderId, reason}...], raw}.
+    같은 productOrderId+동일 송장 재호출은 보통 무시되지만, 다른 송장으로의
+    정정은 이 API가 아닌 별도 송장수정 API를 써야 한다.
+    """
+    _require()
+    default_date = _fmt_dt(dispatch_dt) if dispatch_dt else _fmt_dt(datetime.now())
+    body = {"dispatchProductOrders": []}
+    for it in items:
+        poid = str(it.get("productOrderId") or "").strip()
+        tracking = str(it.get("trackingNumber") or "").strip()
+        if not poid or not tracking:
+            continue
+        body["dispatchProductOrders"].append({
+            "productOrderId": poid,
+            "deliveryMethod": it.get("deliveryMethod") or "DELIVERY",
+            "deliveryCompanyCode": it.get("deliveryCompanyCode") or default_company,
+            "trackingNumber": tracking,
+            "dispatchDate": it.get("dispatchDate") or default_date,
+        })
+    if not body["dispatchProductOrders"]:
+        return {"ok": True, "success": [], "fail": [], "raw": {}}
+    js = _post_json(DISPATCH_URL, token, body)
+    data = js.get("data") or {}
+    success = [str(x) for x in (data.get("successProductOrderIds") or [])]
+    fail = []
+    for f in (data.get("failProductOrderInfos") or []):
+        if isinstance(f, dict):
+            fail.append({
+                "productOrderId": str(f.get("productOrderId") or ""),
+                "reason": str(f.get("message") or f.get("reason")
+                              or f.get("code") or f),
+            })
+        else:
+            fail.append({"productOrderId": "", "reason": str(f)})
+    return {"ok": True, "success": success, "fail": fail, "raw": data}
+
+
+def fetch_product_order_ids_of_order(token, order_id):
+    """주문번호(orderId) 1개에 속한 상품주문번호(productOrderId) 목록을 반환."""
+    _require()
+    url = API_BASE + f"/v1/pay-order/seller/orders/{order_id}/product-order-ids"
+    js = _get_json(url, token, None)
+    return [str(x) for x in (js.get("data") or [])]
+
+
+def dispatch_orders_by_tracking(token, records, company=KPOST_COMPANY_CODE,
+                                dispatch_dt=None):
+    """주문번호↔송장번호 쌍을 받아 상품주문번호로 풀어 발송처리한다.
+
+    records: [{orderId, trackingNumber, ...}]. 각 orderId 의 productOrderId 를
+    조회(fetch_product_order_ids_of_order)해 같은 송장번호로 dispatch 한다.
+    한 주문에 상품이 여럿이면 모두 같은 등기번호로 발송 처리된다(한 박스 가정).
+    반환: {ok, success, fail, resolved, errors}.
+    """
+    _require()
+    items = []
+    resolved = []
+    errors = []
+    seen = set()
+    for r in records:
+        oid = str(r.get("orderId") or "").strip()
+        tracking = str(r.get("trackingNumber") or "").strip()
+        if not oid or not tracking or oid in seen:
+            continue
+        seen.add(oid)
+        try:
+            poids = fetch_product_order_ids_of_order(token, oid)
+        except Exception as e:
+            errors.append({"orderId": oid, "error": str(e)})
+            continue
+        if not poids:
+            errors.append({"orderId": oid, "error": "상품주문번호를 찾지 못함"})
+            continue
+        resolved.append({"orderId": oid, "trackingNumber": tracking,
+                         "productOrderIds": poids})
+        for poid in poids:
+            items.append({"productOrderId": poid, "trackingNumber": tracking,
+                          "deliveryCompanyCode": company})
+    res = dispatch_product_orders(token, items, dispatch_dt=dispatch_dt,
+                                  default_company=company)
+    res["resolved"] = resolved
+    res["errors"] = errors
+    return res
 
 
 def fetch_orders_for_shipping(client_id, client_secret, from_dt, to_dt=None,

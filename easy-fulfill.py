@@ -1377,6 +1377,47 @@ class NaverOrderFetchThread(QThread):
         self.result_ready.emit(run_naver_order_fetch_worker(self._days))
 
 
+def run_naver_dispatch_worker(records):
+    """공유 「설정」의 네이버 키로 (주문번호↔송장번호) 쌍을 발송처리(API)한다.
+
+    records: [{orderId, trackingNumber, 수취인명}]. 반환: {ok, success, fail,
+    resolved, errors} 또는 {ok: False, error}.
+    """
+    if gspread is None:
+        return {"ok": False, "error": "gspread 패키지가 필요합니다."}
+    try:
+        from google_sheets_oauth import get_authorized_gspread_client
+        import naver_commerce
+    except ImportError as e:
+        return {"ok": False, "error": str(e)}
+    try:
+        gc = get_authorized_gspread_client()
+        cfg = _read_config_values_map(_standalone_open_config_ws(gc))
+        client_id = cfg.get(CONFIG_KEY_NAVER_CLIENT_ID, "")
+        client_secret = cfg.get(CONFIG_KEY_NAVER_CLIENT_SECRET, "")
+        if not (client_id and client_secret):
+            return {"ok": False,
+                    "error": "네이버 client_id/secret 이 설정되지 않았습니다."}
+        token = naver_commerce.get_access_token(client_id, client_secret)
+        res = naver_commerce.dispatch_orders_by_tracking(token, records)
+        return res
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+class NaverDispatchThread(QThread):
+    """네이버 발송처리(송장 등록)를 API로 백그라운드 수행."""
+
+    result_ready = Signal(dict)
+
+    def __init__(self, records, parent=None):
+        super().__init__(parent)
+        self._records = records
+
+    def run(self):
+        self.result_ready.emit(run_naver_dispatch_worker(self._records))
+
+
 class OrderIndexReadSyncThread(QThread):
     """스프레드시트 인덱스를 백그라운드에서 읽습니다(앱 시작·주기적 폴링 공용)."""
 
@@ -4413,6 +4454,12 @@ class MainWindow(QMainWindow):
         exportAction.triggered.connect(self.export_invoice_excel)
         toolbar.addAction(exportAction)
 
+        # API 발송처리 액션(매칭된 송장번호를 네이버에 직접 등록 — 업로드 엑셀 대체)
+        dispatchAction = QAction(QIcon('image/microsoft-excel-icon.png'), 'API 발송처리', self)
+        dispatchAction.setStatusTip('매칭된 송장번호를 네이버에 API로 발송처리(배송중 전환)')
+        dispatchAction.triggered.connect(self.dispatch_naver_via_api)
+        toolbar.addAction(dispatchAction)
+
         # 폴더 열기 액션
         openAction = QAction(QIcon('image/folder-icon.png'), '출력 폴더 열기', self)        
         openAction.setShortcut('Ctrl+F')
@@ -6501,6 +6548,61 @@ class MainWindow(QMainWindow):
         except Exception as e:
             print(f"! 불러온 주문번호 기록 실패: {e}")
 
+    def dispatch_naver_via_api(self):
+        """매칭된 (주문번호↔송장번호)를 네이버에 API로 발송처리(송장 등록)한다."""
+        records = getattr(self, "_naver_dispatch_records", None) or []
+        if not records:
+            QMessageBox.information(
+                self, "API 발송처리",
+                "발송처리할 송장 매칭이 없습니다.\n"
+                "먼저 주문서와 우체국 송장 파일을 불러와 일괄발송 매칭을 만들어 주세요.")
+            return
+        n = len(records)
+        if QMessageBox.question(
+            self, "API 발송처리",
+            f"매칭된 {n}건의 주문을 네이버에 발송처리(송장 등록)합니다.\n"
+            "각 주문의 상품주문번호를 API로 조회해 같은 송장번호로 등록하며,\n"
+            "네이버 주문 상태가 '배송중'으로 바뀝니다. 계속할까요?",
+        ) != QMessageBox.StandardButton.Yes:
+            return
+        self._show_busy_processing_overlay(
+            "네이버에 발송처리 중…",
+            "상품주문번호 조회 후 송장을 등록하고 있습니다. 잠시만 기다려 주세요.",
+        )
+        QApplication.processEvents()
+        self._naver_dispatch_thread = NaverDispatchThread(records, self)
+        self._naver_dispatch_thread.result_ready.connect(
+            self._on_naver_dispatch_finished)
+        self._naver_dispatch_thread.finished.connect(
+            lambda: setattr(self, "_naver_dispatch_thread", None))
+        self._naver_dispatch_thread.start()
+
+    def _on_naver_dispatch_finished(self, payload: dict):
+        self._hide_busy_processing_overlay()
+        if not payload.get("ok"):
+            QMessageBox.warning(
+                self, "API 발송처리 실패",
+                f"발송처리에 실패했습니다.\n\n{payload.get('error', '')}")
+            return
+        success = payload.get("success") or []
+        fail = payload.get("fail") or []
+        errors = payload.get("errors") or []
+        lines = [f"✓ 성공: {len(success)}건 (상품주문 기준)"]
+        if fail:
+            lines.append(f"✗ 발송처리 실패: {len(fail)}건")
+            for f in fail[:10]:
+                lines.append(f"   - {f.get('productOrderId', '')}: {f.get('reason', '')}")
+        if errors:
+            lines.append(f"⚠ 주문번호 조회 실패: {len(errors)}건")
+            for e in errors[:10]:
+                lines.append(f"   - {e.get('orderId', '')}: {e.get('error', '')}")
+        msg = "\n".join(lines)
+        print("[API 발송처리 결과]\n" + msg)
+        if fail or errors:
+            QMessageBox.warning(self, "API 발송처리 결과", msg)
+        else:
+            QMessageBox.information(self, "API 발송처리 완료", msg)
+
     def process_coupang_excel_file(self):
         """쿠팡 스토어 엑셀 파일에서 주문번호를 처리합니다."""
         try:
@@ -7939,6 +8041,8 @@ class MainWindow(QMainWindow):
             print("\n[매칭된 주문 정보]")
             matched_count = 0
             naver_matched_records = []
+            # API 발송처리용: (전체 주문번호 ↔ 등기번호) 쌍 — 상품주문번호는 발송 시 API로 해석
+            self._naver_dispatch_records = []
 
             for idx, invoice_row in invoice_df.iterrows():
                 invoice_name = _normalize_value(invoice_row[column_mapping['invoice']['수취인명']])
@@ -7974,6 +8078,16 @@ class MainWindow(QMainWindow):
                         "주문번호": invoice_order_number,
                         "수취인명": invoice_name,
                     })
+
+                    # 발송처리 API용: 주문서의 '전체' 주문번호(orderId)를 송장번호와 함께 저장
+                    full_oid = _normalize_digits(
+                        matching_rows[column_mapping['order']['주문번호']].iloc[0])
+                    if full_oid and invoice_number:
+                        self._naver_dispatch_records.append({
+                            "orderId": full_oid,
+                            "trackingNumber": invoice_number,
+                            "수취인명": invoice_name,
+                        })
 
             print(f"\n✓ 총 {matched_count}개의 주문이 매칭되었습니다.")
 
