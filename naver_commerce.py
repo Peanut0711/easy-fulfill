@@ -154,3 +154,178 @@ def fetch_customer_inquiries(token, start_date, end_date, answered=None):
             break
         page += 1
     return items
+
+
+# ── 주문(발주) 조회 ─────────────────────────────────────────────
+# 폴링 파이프라인: last-changed-statuses(변경 식별자만) → query(상세 풀세트).
+PRODUCT_ORDERS_BASE = API_BASE + "/v1/pay-order/seller/product-orders"
+LAST_CHANGED_URL = PRODUCT_ORDERS_BASE + "/last-changed-statuses"
+ORDER_QUERY_URL = PRODUCT_ORDERS_BASE + "/query"
+QUERY_CHUNK = 300  # query API 1회 최대 상품주문 수(상한)
+
+# 발송 전(아직 미발송) 상태. '신규주문(결제완료)'과 '발주확인(상품준비중)'은
+# 모두 productOrderStatus == 'PAYED' 로 내려오고, 발송하면 DELIVERING 으로 바뀐다.
+SHIPPABLE_STATUSES = ("PAYED",)
+
+# 배송방법 enum → 엑셀 '배송방법(구매자 요청)' 라벨. 다운스트림은 '택배,등기,소포'
+# 문자열만 특별 처리(배송비 중복 결제 방지)하므로 DELIVERY 매핑이 핵심이다.
+DELIVERY_METHOD_LABELS = {
+    "DELIVERY": "택배,등기,소포",
+    "GDFW_ISSUE_SVC": "퀵서비스",
+    "VISIT_RECEIPT": "방문수령",
+    "DIRECT_DELIVERY": "직접배송(화물배달)",
+    "NOTHING": "배송없음",
+}
+
+
+def _post_json(url, token, payload):
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    resp = requests.post(url, headers=headers, json=payload, timeout=DEFAULT_TIMEOUT)
+    _raise_for_status_with_body(resp)
+    return resp.json()
+
+
+def _first(d, *keys):
+    """dict d 에서 keys 를 순서대로 보고 비어있지 않은 첫 값을 반환(없으면 '')."""
+    if not isinstance(d, dict):
+        return ""
+    for k in keys:
+        v = d.get(k)
+        if v not in (None, ""):
+            return v
+    return ""
+
+
+def _fmt_dt(dt):
+    """네이버 규격(yyyy-MM-dd'T'HH:mm:ss.SSS+09:00)으로 포맷."""
+    return dt.strftime("%Y-%m-%dT%H:%M:%S.000") + KST
+
+
+def fetch_changed_product_order_ids(token, from_dt, to_dt=None,
+                                    changed_type=None, max_pages=MAX_PAGES):
+    """from_dt~to_dt 사이 변경된 상품주문번호 목록(중복 제거, 시간순)을 반환.
+
+    네이버 변경조회는 한 번에 '최대 24시간' 범위만 허용하므로(초과 시
+    104140 '조회 날짜가 유효하지 않습니다'), 범위를 24시간 창으로 쪼개 순회한다.
+    각 창 안에서 응답이 300건을 넘으면 more(moreFrom/moreSequence)로 이어 받는다.
+    """
+    _require()
+    if to_dt is None:
+        to_dt = from_dt + timedelta(hours=24)
+    ids = []
+    seen = set()
+    window = timedelta(hours=24)
+    pages = 0
+    w_start = from_dt
+    while w_start < to_dt and pages < max_pages:
+        w_end = min(w_start + window, to_dt)
+        cur_from = _fmt_dt(w_start)
+        to_s = _fmt_dt(w_end)
+        more_seq = None
+        while pages < max_pages:
+            pages += 1
+            params = {"lastChangedFrom": cur_from, "lastChangedTo": to_s,
+                      "limitCount": 300}
+            if changed_type:
+                params["lastChangedType"] = changed_type
+            if more_seq:
+                params["moreSequence"] = more_seq
+            js = _get_json(LAST_CHANGED_URL, token, params)
+            data = js.get("data") or {}
+            for it in (data.get("lastChangeStatuses") or []):
+                poid = it.get("productOrderId")
+                if poid is None:
+                    continue
+                poid = str(poid)
+                if poid not in seen:
+                    seen.add(poid)
+                    ids.append(poid)
+            more = data.get("more")
+            if not more:
+                break
+            nxt = more.get("moreFrom")
+            more_seq = more.get("moreSequence")
+            if not nxt:
+                break
+            cur_from = nxt
+        w_start = w_end
+    return ids
+
+
+def fetch_product_order_details(token, product_order_ids):
+    """상품주문번호들을 300개씩 묶어 상세(data 항목 리스트)를 반환한다."""
+    _require()
+    out = []
+    ids = [str(x) for x in product_order_ids if x not in (None, "")]
+    for i in range(0, len(ids), QUERY_CHUNK):
+        chunk = ids[i:i + QUERY_CHUNK]
+        js = _post_json(ORDER_QUERY_URL, token,
+                        {"productOrderIds": chunk, "quantityClaimCompatibility": True})
+        out.extend(js.get("data") or [])
+    return out
+
+
+def order_detail_to_row(item):
+    """query 응답의 data 항목 1개 → 주문 엑셀과 동일한 컬럼명의 dict 1행.
+
+    네이버 문서가 order/productOrder/shippingAddress 의 중첩 필드명을 'OAS 참조'로
+    생략하므로, 알려진 필드명 + 후보키 폴백으로 방어적으로 추출한다. 실제 응답과
+    어긋나는 항목이 있으면 아래 _first(...) 후보 목록만 손보면 된다.
+    """
+    order = item.get("order") or {}
+    po = item.get("productOrder") or {}
+    addr = po.get("shippingAddress") or {}
+
+    base = _first(addr, "baseAddress", "roadNameAddress", "address", "addressName")
+    detail = _first(addr, "detailedAddress", "detailAddress")
+    full_addr = (str(base) + " " + str(detail)).strip()
+
+    method_enum = _first(po, "expectedDeliveryMethod", "deliveryMethod", "deliveryPolicyType")
+    method = DELIVERY_METHOD_LABELS.get(str(method_enum).upper(), str(method_enum) or "")
+
+    return {
+        "주문번호": str(_first(order, "orderId") or _first(po, "orderId")),
+        "수취인명": str(_first(addr, "name", "receiverName", "ordererName")),
+        "수취인연락처1": str(_first(addr, "tel1", "tel2", "receiverTel")),
+        "통합배송지": full_addr,
+        "구매자연락처": str(_first(order, "ordererTel", "ordererPhoneNumber",
+                                     "ordererCellPhoneNumber")),
+        "배송메세지": str(_first(po, "shippingMemo") or _first(addr, "shippingMemo")),
+        "상품명": str(_first(po, "productName")),
+        "옵션정보": str(_first(po, "productOption", "optionInfo")),
+        "수량": _first(po, "quantity") or 1,
+        "우편번호": str(_first(addr, "zipCode", "zipcode")),
+        "상품번호": str(_first(po, "productId", "channelProductNo",
+                                 "merchantChannelId", "originProductNo")),
+        "배송방법(구매자 요청)": method,
+        "최종 상품별 총 주문금액": _first(po, "totalPaymentAmount",
+                                          "totalProductAmount") or 0,
+        # 보조 컬럼(다운스트림은 무시; 발송처리/중복방지용으로 보관)
+        "_상품주문번호": str(_first(po, "productOrderId")),
+        "_상태": str(_first(po, "productOrderStatus")),
+    }
+
+
+def fetch_orders_for_shipping(client_id, client_secret, from_dt, to_dt=None,
+                              statuses=SHIPPABLE_STATUSES, account_type="SELF",
+                              debug=False):
+    """발송 전 주문을 '주문 엑셀과 동일 컬럼'의 행(dict) 리스트로 반환한다.
+
+    흐름: 토큰 발급 → last-changed-statuses(변경 식별자) → query(상세) → 상태 필터.
+    statuses 가 비어 있으면 상태 필터를 적용하지 않는다.
+    """
+    token = get_access_token(client_id, client_secret, account_type=account_type)
+    ids = fetch_changed_product_order_ids(token, from_dt, to_dt)
+    details = fetch_product_order_details(token, ids)
+    if debug and details:
+        po0 = details[0].get("productOrder") or {}
+        print("[naver order sample] order keys:",
+              list((details[0].get("order") or {}).keys()))
+        print("[naver order sample] productOrder keys:", list(po0.keys()))
+        print("[naver order sample] shippingAddress keys:",
+              list((po0.get("shippingAddress") or {}).keys()))
+    rows = [order_detail_to_row(it) for it in details]
+    if statuses:
+        sset = set(statuses)
+        rows = [r for r in rows if r.get("_상태") in sset]
+    return rows

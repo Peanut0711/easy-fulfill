@@ -1320,6 +1320,37 @@ def run_product_code_map_load_worker(store_type: str):
         return {"ok": False, "error": str(e), "store_type": store_type}
 
 
+def run_naver_order_fetch_worker(days):
+    """공유 「설정」에서 네이버 키를 읽어 발송 전 주문을 API로 가져온다.
+
+    엑셀 다운로드 대체용. 반환: {ok, rows, count} 또는 {ok: False, error}.
+    rows 는 주문 엑셀과 동일 컬럼명의 dict 리스트(naver_commerce.order_detail_to_row).
+    """
+    if gspread is None:
+        return {"ok": False, "error": "gspread 패키지가 필요합니다."}
+    try:
+        from google_sheets_oauth import get_authorized_gspread_client
+        import naver_commerce
+    except ImportError as e:
+        return {"ok": False, "error": str(e)}
+    try:
+        gc = get_authorized_gspread_client()
+        cfg = _read_config_values_map(_standalone_open_config_ws(gc))
+        client_id = cfg.get(CONFIG_KEY_NAVER_CLIENT_ID, "")
+        client_secret = cfg.get(CONFIG_KEY_NAVER_CLIENT_SECRET, "")
+        if not (client_id and client_secret):
+            return {"ok": False,
+                    "error": "네이버 client_id/secret 이 설정되지 않았습니다. "
+                             "관리자 「키 설정」에서 등록하세요."}
+        now_dt = datetime.now()
+        from_dt = now_dt - timedelta(days=max(1, int(days)))
+        rows = naver_commerce.fetch_orders_for_shipping(
+            client_id, client_secret, from_dt, now_dt, debug=False)
+        return {"ok": True, "rows": rows, "count": len(rows)}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 class ProductMappingLoadThread(QThread):
     """주문 엑셀 열 때 상품 매핑 시트 읽기만 백그라운드에서 수행."""
 
@@ -1331,6 +1362,19 @@ class ProductMappingLoadThread(QThread):
 
     def run(self):
         self.result_ready.emit(run_product_code_map_load_worker(self._store_type))
+
+
+class NaverOrderFetchThread(QThread):
+    """네이버 주문을 API로 백그라운드 조회(엑셀 다운로드 대체)."""
+
+    result_ready = Signal(dict)
+
+    def __init__(self, days, parent=None):
+        super().__init__(parent)
+        self._days = days
+
+    def run(self):
+        self.result_ready.emit(run_naver_order_fetch_worker(self._days))
 
 
 class OrderIndexReadSyncThread(QThread):
@@ -1957,6 +2001,7 @@ class MainWindow(QMainWindow):
         self.index_file_path = Path("database") / "order_index.json"
         # 오늘 불러온 주문 파일 해시(로컬·PC별) — 같은 파일 중복 로드 경고용
         self._loaded_files_path = Path("database") / "loaded_orders.json"
+        self._loaded_order_ids_path = Path("database") / "loaded_order_ids.json"
         self.app_settings_path = Path("database") / "app_settings.json"
         
         # 인덱스 값 초기화
@@ -3998,7 +4043,10 @@ class MainWindow(QMainWindow):
 
             try:
                 if st == "naver":
-                    self.process_naver_excel_file()
+                    if getattr(self, "_naver_order_source", "file") == "api":
+                        self.process_naver_api_orders()
+                    else:
+                        self.process_naver_excel_file()
                 elif st == "coupang":
                     self.process_coupang_excel_file()
                 self.is_order_file_valid = True
@@ -4344,6 +4392,12 @@ class MainWindow(QMainWindow):
         loadAction.setStatusTip('파일 불러오기 (Ctrl+O)')
         loadAction.triggered.connect(self.select_excel_file)
         toolbar.addAction(loadAction)
+
+        # API로 불러오기 액션(네이버 주문을 커머스API로 직접 조회 — 엑셀 다운로드 대체)
+        apiLoadAction = QAction(QIcon('image/open-file-icon.png'), 'API로 불러오기', self)
+        apiLoadAction.setStatusTip('네이버 주문을 API로 직접 불러오기(발송 전 결제완료·발주확인)')
+        apiLoadAction.triggered.connect(self.load_naver_orders_via_api)
+        toolbar.addAction(apiLoadAction)
 
         # 복사 액션
         copyAction = QAction(QIcon('image/copy-icon.png'), '클립보드에 복사', self)
@@ -5866,6 +5920,7 @@ class MainWindow(QMainWindow):
                         print("⏭ 중복 파일로 불러오기를 취소했습니다.")
                         return
                 self._record_loaded_order(file_path)
+                self._naver_order_source = "file"
                 self.selected_file_path = file_path
                 self._set_status_label(self.ui.filePathLabel, filename, ok=True)
                 self.statusBar().showMessage(f"파일 선택됨: {filename}")
@@ -6079,6 +6134,36 @@ class MainWindow(QMainWindow):
                     
                     raise Exception(error_msg)
             
+            self._build_naver_orders_from_df(df, product_mapping)
+            
+        except Exception as e:
+            error_msg = str(e)
+            print(f"❌ 엑셀 파일 처리 중 오류 발생: {error_msg}")
+            if _is_likely_google_sheets_oauth_error(e):
+                QMessageBox.critical(
+                    self,
+                    "오류",
+                    "Google 스프레드시트 연동 중 오류가 발생했습니다.\n\n"
+                    f"{error_msg}\n\n"
+                    + self._oauth_error_dialog_hint(),
+                )
+            else:
+                QMessageBox.critical(
+                    self,
+                    "오류",
+                    "엑셀 파일 처리 중 오류가 발생했습니다.\n\n"
+                    f"{error_msg}\n\n"
+                    "다음 사항을 확인해주세요:\n"
+                    "1. 파일이 손상되지 않았는지\n"
+                    "2. 다른 프로그램에서 파일을 열고 있지 않은지\n"
+                    "3. 파일을 다시 저장하거나 다른 형식(.xlsx)으로 변환해보세요.",
+                )
+
+
+    def _build_naver_orders_from_df(self, df, product_mapping):
+        """엑셀/API 공통: 네이버 주문 DataFrame -> orders dict + 마크다운 생성.
+        df 는 주문 엑셀과 동일한 컬럼명을 가져야 한다."""
+        try:
             # 필요한 열 찾기
             required_columns = {
                 '주문번호': None,
@@ -6295,29 +6380,126 @@ class MainWindow(QMainWindow):
             clipboard = QApplication.clipboard()
             clipboard.setText(markdown_text)
             self.statusBar().showMessage("주문 정보가 클립보드에 복사되었습니다.", 2000)
-            
         except Exception as e:
             error_msg = str(e)
-            print(f"❌ 엑셀 파일 처리 중 오류 발생: {error_msg}")
+            print(f"❌ 네이버 주문 처리 중 오류 발생: {error_msg}")
             if _is_likely_google_sheets_oauth_error(e):
                 QMessageBox.critical(
-                    self,
-                    "오류",
+                    self, "오류",
                     "Google 스프레드시트 연동 중 오류가 발생했습니다.\n\n"
                     f"{error_msg}\n\n"
                     + self._oauth_error_dialog_hint(),
                 )
             else:
                 QMessageBox.critical(
-                    self,
-                    "오류",
-                    "엑셀 파일 처리 중 오류가 발생했습니다.\n\n"
-                    f"{error_msg}\n\n"
-                    "다음 사항을 확인해주세요:\n"
-                    "1. 파일이 손상되지 않았는지\n"
-                    "2. 다른 프로그램에서 파일을 열고 있지 않은지\n"
-                    "3. 파일을 다시 저장하거나 다른 형식(.xlsx)으로 변환해보세요.",
+                    self, "오류",
+                    f"주문 정보 처리 중 오류가 발생했습니다.\n\n{error_msg}",
                 )
+
+    def process_naver_api_orders(self):
+        """API로 가져온 주문 rows -> 엑셀과 동일 파이프라인으로 처리한다."""
+        try:
+            rows = getattr(self, "_api_order_rows", None) or []
+            print(f"\n[네이버 API 주문 처리 시작] {len(rows)}건")
+            product_mapping = self._load_product_code_map_from_spreadsheet("naver")
+            df = pd.DataFrame(rows)
+            self._build_naver_orders_from_df(df, product_mapping)
+            self._record_loaded_naver_order_ids(
+                [r.get("_상품주문번호") for r in rows])
+        finally:
+            self._naver_order_source = "file"
+
+    def load_naver_orders_via_api(self):
+        """네이버 주문을 커머스API로 직접 불러온다(엑셀 다운로드 대체)."""
+        days = 3
+        if QMessageBox.question(
+            self, "API로 주문 불러오기",
+            f"최근 {days}일 내 '발송 전(결제완료·발주확인)' 네이버 주문을 API로 불러옵니다.\n"
+            "이미 오늘 불러온 주문은 자동 제외되며, 새로 불러온 주문 수만큼\n"
+            "주문번호 인덱스가 올라갑니다. 계속할까요?",
+        ) != QMessageBox.StandardButton.Yes:
+            return
+        self._show_busy_processing_overlay(
+            "API로 주문을 불러오는 중…",
+            "네이버 커머스API에서 주문을 조회하고 있습니다. 잠시만 기다려 주세요.",
+        )
+        QApplication.processEvents()
+        self._naver_order_fetch_thread = NaverOrderFetchThread(days, self)
+        self._naver_order_fetch_thread.result_ready.connect(
+            self._on_naver_order_fetch_finished)
+        self._naver_order_fetch_thread.finished.connect(
+            lambda: setattr(self, "_naver_order_fetch_thread", None))
+        self._naver_order_fetch_thread.start()
+
+    def _on_naver_order_fetch_finished(self, payload: dict):
+        if not payload.get("ok"):
+            self._hide_busy_processing_overlay()
+            err = payload.get("error", "")
+            self.is_order_file_valid = False
+            if _is_likely_google_sheets_oauth_error(RuntimeError(str(err))):
+                QMessageBox.critical(
+                    self, "API 불러오기 실패",
+                    f"주문을 불러오지 못했습니다.\n\n{err}\n\n"
+                    + self._oauth_error_dialog_hint())
+            else:
+                QMessageBox.warning(
+                    self, "API 불러오기 실패",
+                    f"주문을 불러오지 못했습니다.\n\n{err}")
+            return
+        rows = self._filter_new_naver_order_rows(payload.get("rows") or [])
+        if not rows:
+            self._hide_busy_processing_overlay()
+            QMessageBox.information(
+                self, "API 불러오기",
+                "새로 불러올 발송 전 주문이 없습니다.\n(이미 오늘 불러온 주문은 제외됩니다.)")
+            return
+        self._api_order_rows = rows
+        self._naver_order_source = "api"
+        self.store_type = "naver"
+        # 엑셀 경로와 동일하게: 인덱스 동기화 후 처리로 이어감(오버레이 유지)
+        self._begin_order_index_read(
+            interactive=False,
+            on_applied=self._continue_order_file_processing_after_index,
+            defer_if_busy=True,
+        )
+
+    def _todays_loaded_naver_order_ids(self):
+        """오늘 API로 불러온 상품주문번호 집합(로컬). 과거 날짜는 무시."""
+        today = date.today().strftime("%Y-%m-%d")
+        try:
+            p = self._loaded_order_ids_path
+            if p.exists() and p.stat().st_size > 0:
+                data = json.load(open(p, encoding="utf-8"))
+                if isinstance(data, dict):
+                    return today, set(data.get(today, []))
+        except Exception as e:
+            print(f"! 불러온 주문번호 기록 읽기 실패: {e}")
+        return today, set()
+
+    def _filter_new_naver_order_rows(self, rows):
+        """오늘 이미 불러온 상품주문번호를 제외(인덱스 중복 상승 방지)."""
+        _, loaded = self._todays_loaded_naver_order_ids()
+        out = []
+        for r in rows:
+            poid = str(r.get("_상품주문번호") or "")
+            if poid and poid in loaded:
+                continue
+            out.append(r)
+        return out
+
+    def _record_loaded_naver_order_ids(self, order_ids):
+        """오늘 처리한 상품주문번호를 로컬에 누적 기록(오늘 것만 보존)."""
+        try:
+            today, loaded = self._todays_loaded_naver_order_ids()
+            for x in order_ids:
+                x = str(x or "")
+                if x:
+                    loaded.add(x)
+            self._loaded_order_ids_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(self._loaded_order_ids_path, "w", encoding="utf-8") as f:
+                json.dump({today: sorted(loaded)}, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"! 불러온 주문번호 기록 실패: {e}")
 
     def process_coupang_excel_file(self):
         """쿠팡 스토어 엑셀 파일에서 주문번호를 처리합니다."""
