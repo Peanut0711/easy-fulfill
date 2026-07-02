@@ -1011,6 +1011,8 @@ def run_naver_inquiry_poll_worker():
     주기적으로 슬랙에 알립니다.
       • 새 미답변 → 즉시 1회 알림.
       • 아직 미답변인 건 → 「최근알림시각」에서 R분(NAVER_INQUIRY_REMIND_MIN)이 지나면 다시 알림.
+        단, 쿠팡 CS문의(KC)는 예외로 하루 1회만 재알림(자동 반품수거 등 액션 불가 건이 많아
+        매시간 알림이 소음이 됨 — 그날 알렸으면 스킵하고 다음날 다시 1회).
       • 누군가 답변하면 다음 조회의 미답변 목록에서 사라져 알림이 자동으로 멈춘다.
     알림은 근무시간(평일 10~19시)에만 보내고, 그 외 시간엔 발송도 「최근알림시각」 갱신도 하지
     않아 근무 시작 시각에 밀린 미답변이 한 번에 환기된다. 「최근알림시각」이 전원 공유 시트에
@@ -1175,9 +1177,17 @@ def run_naver_inquiry_poll_worker():
                     r["_kind"] = "new"
                     to_notify.append(r)
             else:
-                # 기존 미답변: 근무시간 + R분 경과 시 리마인더.
+                # 기존 미답변: 근무시간 + 재알림 조건 충족 시 리마인더.
                 row_no, last_dt = index[rid]
-                if allowed and (last_dt is None or now_dt - last_dt >= remind_delta):
+                if rid.startswith("KC"):
+                    # 쿠팡 CS문의: 하루 1회만 리마인더. 자동 반품수거처럼 회사 도착까지
+                    # 판매자가 액션할 수 없는 건이 많아 매시간 알림이 소음이 된다.
+                    # 마지막 알림이 오늘 이전 날짜면 재알림(그날 이미 알렸으면 스킵→다음날 1회).
+                    due = last_dt is None or last_dt.date() < now_dt.date()
+                else:
+                    # 그 외 채널(네이버 상품/고객문의, 쿠팡 상품문의 KO): R분 경과 시 재알림.
+                    due = last_dt is None or now_dt - last_dt >= remind_delta
+                if allowed and due:
                     r["_kind"] = "remind"
                     to_notify.append(r)
                     ts_updates.append({"range": f"H{row_no}", "values": [[now]]})
