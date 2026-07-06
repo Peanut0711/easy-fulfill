@@ -11,6 +11,9 @@ Easy Fulfill 추후 작업 백로그. 완료 시 항목을 지우지 말고 `- [
       → `docs/naver-order-dispatch-api.md` / 커밋 `f877693`. 실키 동작 확인됨.
 - [x] **네이버 발송처리(dispatch) API**(송장 등록, 업로드 엑셀 대체) — 2026-06-29
       → 같은 문서 / 커밋 `13bb0d7`. ⚠️ **실호출(쓰기) 미검증** — 아래 참고.
+- [x] **배송추적 자동 새로고침**(백그라운드 N분, 다중 PC 소프트 락) — 2026-07-06
+      → `docs/tracking-auto-refresh.md`. 간격 공유설정 `tracking_auto_refresh_min`(기본 60·0=끔),
+      `tracking_last_auto_refresh` 타임스탬프로 공통키 부하 5회→1회.
 
 ### 네이버 API 후속 (다음에 이어서 — 우선순위 순)
 
