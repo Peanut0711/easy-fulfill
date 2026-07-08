@@ -87,6 +87,9 @@ TRACKING_SHEET_HEADERS = [
     "최근이벤트시각",
 ]
 TRACKING_SHEET_PUSH_DEBOUNCE_MS = 1200
+# 택배사 제출용 「당일 접수목록」 xlsx 파일명 접두어(관리자가 하루 1회 택배사에 전달).
+# 예: "하이제니스 26.07.03.xlsx" — 접두어는 고정, 날짜(YY.MM.DD)만 자동.
+COURIER_RECEIPT_PREFIX = "하이제니스"
 # 공유 설정 탭: 회사 공통 우체국 OpenAPI 인증키(regkey)를 한 곳에 두고 직원 전원이 읽어 쓴다.
 # (퍼블릭 레포에 키를 넣지 않기 위함 — 키는 코드가 아니라 비공개 시트에 저장)
 # 우편번호 검색과 동일한 우체국 regkey를 종추적조회에도 사용한다(kpost_regkey).
@@ -863,6 +866,56 @@ def run_tracking_list_worker():
         return {"ok": False, "error": str(e)}
 
 
+def run_courier_receipt_export_worker(save_path, today_str):
+    """「송장추적」 시트에서 today_str(YYYY-MM-DD) 등록분만 추려
+    순번/송장번호/이름 3열 xlsx 를 save_path 에 씁니다(택배사 제출용).
+    반환 dict: ok, count(저장 건수), path — 또는 ok False, error.
+    """
+    read = run_tracking_list_worker()
+    if not read.get("ok"):
+        return read
+    values = read.get("values") or []
+    if not values:
+        return {"ok": False, "error": "「송장추적」 시트가 비어 있습니다."}
+    header = values[0]
+    # 헤더명 기반 컬럼 인덱스(시트 컬럼 순서가 바뀌어도 안전).
+    def _col(name):
+        try:
+            return header.index(name)
+        except ValueError:
+            return -1
+    i_reg, i_no, i_name = _col("등록일시"), _col("등기번호"), _col("수취인명")
+    if min(i_reg, i_no, i_name) < 0:
+        return {"ok": False,
+                "error": "시트 헤더에서 등록일시/등기번호/수취인명 컬럼을 찾지 못했습니다."}
+    rows = []
+    seen = set()  # 같은 등기번호 중복 제거
+    for row in values[1:]:
+        reg = (row[i_reg] if len(row) > i_reg else "").strip()
+        if not reg.startswith(today_str):
+            continue
+        no = (row[i_no] if len(row) > i_no else "").strip()
+        if not no or no in seen:
+            continue
+        seen.add(no)
+        name = (row[i_name] if len(row) > i_name else "").strip()
+        rows.append((no, name))
+    if not rows:
+        return {"ok": True, "count": 0, "path": None}
+    # 송장번호는 문자열 그대로 기록(13자리 등기번호가 숫자로 변해 지수표기·정밀도
+    # 손실되는 것을 막는다). 순번은 1..N 자동 부여.
+    df = pd.DataFrame(
+        [(idx, no, name) for idx, (no, name) in enumerate(rows, start=1)],
+        columns=["순번", "송장번호", "이름"],
+    )
+    try:
+        with pd.ExcelWriter(save_path, engine="xlsxwriter") as writer:
+            df.to_excel(writer, index=False, sheet_name="접수목록")
+    except Exception as e:
+        return {"ok": False, "error": f"파일 저장 실패: {e}"}
+    return {"ok": True, "count": len(rows), "path": save_path}
+
+
 def _standalone_open_config_ws(gc):
     """공유 「설정」 탭을 제목으로 찾고, 없으면 맨 끝에 생성하고 헤더를 기록합니다."""
     spreadsheet = gc.open_by_key(SPREADSHEET_ID)
@@ -1564,6 +1617,21 @@ class TrackingListThread(QThread):
         self.result_ready.emit(run_tracking_list_worker())
 
 
+class CourierReceiptExportThread(QThread):
+    """당일 송장추적 등록분을 택배사 제출용 xlsx 로 백그라운드 생성합니다."""
+
+    result_ready = Signal(dict)
+
+    def __init__(self, save_path, today_str, parent=None):
+        super().__init__(parent)
+        self._save_path = save_path
+        self._today_str = today_str
+
+    def run(self):
+        self.result_ready.emit(
+            run_courier_receipt_export_worker(self._save_path, self._today_str))
+
+
 class TrackingRefreshOneThread(QThread):
     """단일 등기번호만 우체국으로 조회·갱신(백그라운드)."""
 
@@ -2163,6 +2231,8 @@ class MainWindow(QMainWindow):
         # 배송추적 목록(표) 뷰
         self._tracking_list_thread = None
         self._tracking_list_values = []  # 시트에서 읽어온 원본(헤더 포함)
+        # 택배사 제출용 당일 접수목록 내보내기(하루 1회, 관리자)
+        self._courier_export_thread = None
         # 목록 자동 갱신: 배송추적 탭을 보고 있을 때 주기적으로 시트를 다시 읽음(버튼 대체)
         self._tracking_list_timer = QTimer(self)
         self._tracking_list_timer.setInterval(120000)  # 2분
@@ -4597,6 +4667,12 @@ class MainWindow(QMainWindow):
         self.act_openfolder.setStatusTip('출력 폴더 열기 (Ctrl+F)')
         self.act_openfolder.triggered.connect(self.open_output_folder)
 
+        self.act_courier_export = QAction(
+            QIcon('image/microsoft-excel-icon.png'), '택배사 접수목록 내보내기(당일)…', self)
+        self.act_courier_export.setStatusTip(
+            '오늘 「송장추적」에 등록된 송장을 순번/송장번호/이름 엑셀로 내보내기(택배사 제출용)')
+        self.act_courier_export.triggered.connect(self.export_courier_receipt)
+
         self.act_clear = QAction(QIcon('image/reset-icon.png'), '초기화', self)
         self.act_clear.setShortcut('Ctrl+R')
         self.act_clear.setStatusTip('주문 정보 초기화 (Ctrl+R)')
@@ -4661,6 +4737,8 @@ class MainWindow(QMainWindow):
         m_file.addAction(self.act_load)
         m_file.addAction(self.act_load_invoice)
         m_file.addAction(self.act_openfolder)
+        m_file.addSeparator()
+        m_file.addAction(self.act_courier_export)
         m_file.addSeparator()
         m_file.addAction(self.act_exit)
 
@@ -8860,6 +8938,69 @@ class MainWindow(QMainWindow):
                 "오류",
                 f"분류 결과 파일 생성 중 오류가 발생했습니다.\n\n{error_msg}"
             )
+
+    def export_courier_receipt(self):
+        """[파일] 오늘 「송장추적」에 등록된 송장을 택배사 제출용 xlsx(순번/송장번호/이름)로
+        내보냅니다. 관리자가 하루 1회 택배사에 전달하는 문서라 저장 위치를 매번 선택합니다.
+        """
+        if gspread is None:
+            QMessageBox.warning(self, "택배 접수목록",
+                                "gspread 패키지가 필요합니다. (pip install gspread)")
+            return
+        if self._courier_export_thread is not None:
+            QMessageBox.information(self, "택배 접수목록",
+                                    "이미 내보내는 중입니다. 잠시만 기다려 주세요.")
+            return
+        today = date.today()
+        default_name = f"{COURIER_RECEIPT_PREFIX} {today.strftime('%y.%m.%d')}.xlsx"
+        default_dir = str(Path.home() / "Documents")
+        start_path = os.path.join(default_dir, default_name)
+        path, _ = QFileDialog.getSaveFileName(
+            self, "택배사 접수목록 저장", start_path, "Excel 파일 (*.xlsx)")
+        if not path:
+            return
+        self.statusBar().showMessage("택배 접수목록 생성 중…")
+        thread = CourierReceiptExportThread(path, today.strftime("%Y-%m-%d"), self)
+        self._courier_export_thread = thread
+        thread.result_ready.connect(self._on_courier_export_finished)
+        thread.finished.connect(self._cleanup_courier_export_thread)
+        thread.start()
+
+    def _on_courier_export_finished(self, payload):
+        """택배 접수목록 생성 결과 처리(성공 시 폴더 열기 안내)."""
+        if not payload.get("ok"):
+            self.statusBar().showMessage("택배 접수목록 생성 실패", 4000)
+            QMessageBox.warning(self, "택배 접수목록",
+                                payload.get("error", "알 수 없는 오류가 발생했습니다."))
+            return
+        count = payload.get("count", 0)
+        if count == 0:
+            self.statusBar().showMessage("오늘 접수된 송장이 없습니다.", 4000)
+            QMessageBox.information(self, "택배 접수목록",
+                                    "오늘 「송장추적」에 등록된 송장이 없습니다.")
+            return
+        path = payload.get("path")
+        self.statusBar().showMessage(f"택배 접수목록 {count}건 저장 완료", 5000)
+        res = QMessageBox.question(
+            self, "택배 접수목록",
+            f"오늘 접수 {count}건을 저장했습니다.\n\n{path}\n\n파일이 있는 폴더를 열까요?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if res == QMessageBox.StandardButton.Yes:
+            try:
+                if sys.platform == 'win32':
+                    os.startfile(os.path.dirname(path))
+                elif sys.platform == 'darwin':
+                    subprocess.call(('open', os.path.dirname(path)))
+                else:
+                    subprocess.call(('xdg-open', os.path.dirname(path)))
+            except Exception as e:
+                print(f"! 폴더 열기 실패: {e}")
+
+    def _cleanup_courier_export_thread(self):
+        th = self._courier_export_thread
+        self._courier_export_thread = None
+        if th is not None:
+            th.deleteLater()
 
     def open_output_folder(self):
         """output 폴더를 생성하고 엽니다."""
