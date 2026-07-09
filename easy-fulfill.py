@@ -2249,7 +2249,6 @@ class MainWindow(QMainWindow):
         self._slack_notify_after_reload = False
         # API·알림 설정 팝업(작업자에겐 숨기고 작은 버튼으로만 노출)
         self._admin_tracking_built = False
-        self._quick_excel_dialog = None
         self._dlg_key_status = None
         self._dlg_slack_status = None
         self._dlg_slack_auto = None
@@ -4898,10 +4897,10 @@ class MainWindow(QMainWindow):
         # 신규 DB 반영 UI·로직 제거(2026-04). (pushButton_database_* / load·apply_database_* 삭제)
         if hasattr(self.ui, 'pushButton_quick_excel_gen'):
             self.ui.pushButton_quick_excel_gen.clicked.connect(self.generate_quick_excel)
-        # 퀵엑셀 그룹은 시작 시 다이얼로그로 옮겨, 환경설정 탭에는 「수동 주문 추가…」 버튼만 둔다.
-        if hasattr(self.ui, "pushButton_open_quick_excel"):
-            self._ensure_quick_excel_dialog()
-            self.ui.pushButton_open_quick_excel.clicked.connect(self._open_quick_excel_dialog)
+        # 퀵엑셀(수동 주문 추가) 그룹은 팝업 대신 환경설정 탭에 상시 인라인으로 노출한다.
+        self._mount_quick_excel_inline()
+        if hasattr(self.ui, "pushButton_quick_excel_reset"):
+            self.ui.pushButton_quick_excel_reset.clicked.connect(self._reset_quick_excel_fields)
         # 연동·API 키(관리자): 배송추적 팝업에서 환경설정 탭으로 이동. 기존 핸들러 재사용.
         for _bn, _h in (("pushButton_cfg_kpost_key", self._on_tracking_key_edit_clicked),
                         ("pushButton_cfg_slack_webhook", self._on_slack_config_clicked),
@@ -5501,8 +5500,8 @@ class MainWindow(QMainWindow):
 
     def _refresh_quick_excel_manual_ui(self):
         """수동 모드일 때만 이름·전화·주소 입력란을 표시합니다.
-        퀵엑셀 그룹은 별도 다이얼로그(_quick_excel_dialog)로 분리돼 있고, 내부 위젯이
-        절대좌표라 그룹 크기를 모드에 맞춰 고정해 다이얼로그가 이에 맞춰지게 한다."""
+        퀵엑셀 그룹은 환경설정 탭에 상시 인라인으로 붙어 있고, 내부 위젯이 절대좌표라
+        그룹 크기를 모드에 맞춰 고정해 레이아웃이 이에 맞춰지게 한다."""
         if not hasattr(self.ui, "comboBox_store_select"):
             return
         manual = self.ui.comboBox_store_select.currentText().strip() == "수동"
@@ -5514,32 +5513,28 @@ class MainWindow(QMainWindow):
         gb = getattr(self.ui, "groupBox", None)
         if gb is not None:
             gb.setFixedSize(341, 278 if manual else 102)
-        dlg = getattr(self, "_quick_excel_dialog", None)
-        if dlg is not None:
-            dlg.adjustSize()
 
-    def _ensure_quick_excel_dialog(self):
-        """퀵엑셀 그룹(.ui의 groupBox)을 모달리스 다이얼로그로 옮겨 보관(최초 1회 reparent)."""
-        dlg = getattr(self, "_quick_excel_dialog", None)
-        if dlg is not None:
-            return dlg
-        dlg = QDialog(self)
-        dlg.setWindowTitle("수동 주문 추가")
-        lay = QVBoxLayout(dlg)
-        lay.setContentsMargins(10, 10, 10, 10)
+    def _mount_quick_excel_inline(self):
+        """퀵엑셀 그룹(.ui의 절대좌표 groupBox)을 환경설정 탭 레이아웃에 상시 인라인으로 삽입."""
         gb = getattr(self.ui, "groupBox", None)
-        if gb is not None:
-            lay.addWidget(gb)
-        self._quick_excel_dialog = dlg
-        return dlg
+        lay = getattr(self.ui, "verticalLayout_settings", None)
+        if gb is None or lay is None:
+            return
+        # 하단 세로 스페이서 바로 앞(마지막 위젯 자리)에 넣는다.
+        lay.insertWidget(max(lay.count() - 1, 0), gb, 0, Qt.AlignmentFlag.AlignLeft)
 
-    def _open_quick_excel_dialog(self):
-        """환경설정의 「수동 주문 추가…」 → 퀵엑셀 다이얼로그 열기."""
-        dlg = self._ensure_quick_excel_dialog()
-        self._refresh_quick_excel_manual_ui()
-        dlg.show()
-        dlg.raise_()
-        dlg.activateWindow()
+    def _reset_quick_excel_fields(self):
+        """「초기화」 → 수동 주문 입력란을 모두 비웁니다(스토어 선택은 유지)."""
+        for name in (
+            "lineEdit_quick_manual_name",
+            "lineEdit_quick_manual_phone",
+            "lineEdit_quick_manual_postcode",
+            "lineEdit_quick_manual_address",
+            "lineEdit_quick_manual_detail",
+            "lineEdit_quick_manual_product",
+        ):
+            if hasattr(self.ui, name):
+                getattr(self.ui, name).clear()
 
     def generate_quick_excel(self):
         """클립보드 정보를 기반으로 단건 엑셀을 생성합니다. 수동 선택 시 입력란 값으로 생성합니다."""

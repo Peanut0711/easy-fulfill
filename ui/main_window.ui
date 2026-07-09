@@ -491,22 +491,6 @@
             </widget>
            </item>
            <item>
-            <layout class="QHBoxLayout" name="horizontalLayout_settings_tools">
-             <item>
-              <widget class="QPushButton" name="pushButton_open_quick_excel">
-               <property name="text"><string>수동 주문 추가…</string></property>
-               <property name="toolTip"><string>클립보드 단건 주문 또는 직접 입력으로 발송 엑셀을 만듭니다.</string></property>
-              </widget>
-             </item>
-             <item>
-              <spacer name="horizontalSpacer_settings_tools">
-               <property name="orientation"><enum>Qt::Orientation::Horizontal</enum></property>
-               <property name="sizeHint" stdset="0"><size><width>10</width><height>20</height></size></property>
-              </spacer>
-             </item>
-            </layout>
-           </item>
-           <item>
             <spacer name="verticalSpacer_settings">
              <property name="orientation">
               <enum>Qt::Orientation::Vertical</enum>
@@ -541,14 +525,30 @@
         <widget class="QPushButton" name="pushButton_quick_excel_gen">
          <property name="geometry">
           <rect>
-           <x>252</x>
+           <x>206</x>
            <y>18</y>
-           <width>61</width>
+           <width>52</width>
            <height>40</height>
           </rect>
          </property>
          <property name="text">
           <string>생성</string>
+         </property>
+        </widget>
+        <widget class="QPushButton" name="pushButton_quick_excel_reset">
+         <property name="geometry">
+          <rect>
+           <x>262</x>
+           <y>18</y>
+           <width>52</width>
+           <height>40</height>
+          </rect>
+         </property>
+         <property name="text">
+          <string>초기화</string>
+         </property>
+         <property name="toolTip">
+          <string>입력한 스토어·주문정보를 모두 비웁니다.</string>
          </property>
         </widget>
         <widget class="QComboBox" name="comboBox_store_select">
@@ -603,8 +603,8 @@
          <property name="geometry">
           <rect>
            <x>16</x>
-           <y>54</y>
-           <width>305</width>
+           <y>62</y>
+           <width>185</width>
            <height>32</height>
           </rect>
          </property>
