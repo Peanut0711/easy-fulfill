@@ -244,6 +244,44 @@ def _normalize_key_for_mapping_value(value):
     return s
 
 
+def _extract_zip_code(text):
+    """텍스트에서 첫 5자리 우편번호를 반환합니다."""
+    match = re.search(r"(?:\(|\[)?(\d{5})(?:\)|\])?", str(text or ""))
+    return match.group(1) if match else ""
+
+
+def _parse_generic_quick_clipboard(clipboard_text):
+    """'수취인: 값' 같은 일반 라벨 형식의 단건 주문정보를 추출합니다."""
+    result = {"수취인명": "", "연락처": "", "주소": "", "우편번호": ""}
+
+    for line in str(clipboard_text or "").splitlines():
+        parts = re.split(r"\s*[:：]\s*|\t+", line.strip(), maxsplit=1)
+        if len(parts) != 2:
+            continue
+        key = re.sub(r"[\s()（）_-]", "", parts[0])
+        value = parts[1].strip()
+        field = None
+        if re.fullmatch(r"(?:상품)?(?:수령인|수취인)(?:명)?", key):
+            field = "수취인명"
+        elif re.fullmatch(
+            r"(?:수령인|수취인)?(?:연락처(?:안심번호|\d*)?|전화번호|"
+            r"휴대폰(?:번호)?|휴대전화(?:번호)?|핸드폰(?:번호)?|모바일(?:번호)?)",
+            key,
+        ):
+            field = "연락처"
+        elif re.fullmatch(r"(?:수령인|수취인)?(?:주소|배송주소|배송지(?:주소)?)", key):
+            field = "주소"
+        elif key == "우편번호":
+            field = "우편번호"
+        if field and value and not result[field]:
+            result[field] = value
+
+    result["우편번호"] = (
+        _extract_zip_code(result["우편번호"]) or _extract_zip_code(result["주소"])
+    )
+    return result
+
+
 def _order_index_sheet_row_looks_like_header(row):
     if not row:
         return False
@@ -5717,11 +5755,46 @@ class MainWindow(QMainWindow):
                 self.statusBar().showMessage(f"퀵 엑셀 생성 완료: {output_file.name}", 3000)
                 return
 
+            if store_type == "generic":
+                quick_info = _parse_generic_quick_clipboard(clipboard_text)
+                missing_fields = [
+                    label for key, label in (
+                        ("수취인명", "수령인/수취인"),
+                        ("연락처", "연락처/전화번호"),
+                        ("주소", "주소"),
+                    ) if not quick_info[key]
+                ]
+                if missing_fields:
+                    QMessageBox.warning(
+                        self,
+                        "오류",
+                        "일반 양식에서 필수 항목을 찾을 수 없습니다.\n\n"
+                        f"누락 항목: {', '.join(missing_fields)}",
+                    )
+                    return
+
+                invoice_data = [{
+                    '주문번호': '',
+                    '고객주문처명': '',
+                    '수취인명': quick_info["수취인명"],
+                    '우편번호': quick_info["우편번호"],
+                    '수취인 주소': quick_info["주소"],
+                    '수취인 전화번호': quick_info["연락처"],
+                    '수취인 이동통신': quick_info["연락처"],
+                    '상품명': '전자제품',
+                    '상품모델': '전자제품',
+                    '배송메세지': '',
+                    '비고': '',
+                }]
+                output_file = self.save_invoice_excel(invoice_data, "퀵_일반")
+                self.statusBar().showMessage(f"퀵 엑셀 생성 완료: {output_file.name}", 3000)
+                return
+
             QMessageBox.information(
                 self,
                 "안내",
-                "현재 퀵 엑셀은 쿠팡, 네이버, 지마켓만 지원합니다.\n"
-                "지원되는 양식으로 복사했는지 확인해주세요."
+                "클립보드에서 수령인(또는 수취인), 연락처, 주소를 찾지 못했습니다.\n"
+                "각 항목을 '항목: 내용' 형식으로 복사했는지 확인해주세요."
             )
             return
         except Exception as e:
@@ -5785,6 +5858,10 @@ class MainWindow(QMainWindow):
 
         if "연락처1" in tokens or "배송지" in tokens:
             return "naver"
+
+        generic = _parse_generic_quick_clipboard(clipboard_text)
+        if any(generic[key] for key in ("수취인명", "연락처", "주소")):
+            return "generic"
 
         return None
 
@@ -5898,15 +5975,7 @@ class MainWindow(QMainWindow):
 
     def extract_zip_code(self, address):
         """주소 문자열에서 우편번호를 추출합니다."""
-        if not address:
-            return ""
-        match = re.search(r"\((\d{5})\)", address)
-        if match:
-            return match.group(1)
-        match = re.search(r"(\d{5})", address)
-        if match:
-            return match.group(1)
-        return ""
+        return _extract_zip_code(address)
 
     def save_invoice_excel(self, invoice_data, filename_prefix):
         """송장 데이터로 엑셀 파일을 저장하고 경로를 반환합니다."""
