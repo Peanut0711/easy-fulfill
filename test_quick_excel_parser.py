@@ -24,3 +24,15 @@ with_postcode = """수취인명：홍길동
 우편 번호: [06173]
 배송지 주소: 서울 강남구 테헤란로 1"""
 assert parse(with_postcode)["우편번호"] == "06173"
+
+unlabeled_recipient = """인천14
+주소	인천광역시 제물포구 축항대로165번길 20 (항동7가) 7층 12번 DOCK
+우편번호	22335
+전화번호	070-4732-1863"""
+assert parse(unlabeled_recipient) == {
+    "수취인명": "인천14",
+    "연락처": "070-4732-1863",
+    "주소": "인천광역시 제물포구 축항대로165번길 20 (항동7가) 7층 12번 DOCK",
+    "우편번호": "22335",
+}
+assert module["MainWindow"].detect_store_from_clipboard(None, unlabeled_recipient) == "generic"

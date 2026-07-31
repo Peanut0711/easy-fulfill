@@ -251,11 +251,13 @@ def _extract_zip_code(text):
 
 
 def _parse_generic_quick_clipboard(clipboard_text):
-    """'수취인: 값' 같은 일반 라벨 형식의 단건 주문정보를 추출합니다."""
+    """일반 라벨 형식의 단건 주문정보를 추출합니다."""
     result = {"수취인명": "", "연락처": "", "주소": "", "우편번호": ""}
+    lines = [line.strip() for line in str(clipboard_text or "").splitlines() if line.strip()]
+    first_line = lines[0] if lines else ""
 
-    for line in str(clipboard_text or "").splitlines():
-        parts = re.split(r"\s*[:：]\s*|\t+", line.strip(), maxsplit=1)
+    for line in lines:
+        parts = re.split(r"\s*[:：]\s*|\t+", line, maxsplit=1)
         if len(parts) != 2:
             continue
         key = re.sub(r"[\s()（）_-]", "", parts[0])
@@ -276,6 +278,13 @@ def _parse_generic_quick_clipboard(clipboard_text):
         if field and value and not result[field]:
             result[field] = value
 
+    if (
+        not result["수취인명"]
+        and result["연락처"]
+        and result["주소"]
+        and not re.search(r"[:：\t]", first_line)
+    ):
+        result["수취인명"] = first_line
     result["우편번호"] = (
         _extract_zip_code(result["우편번호"]) or _extract_zip_code(result["주소"])
     )
