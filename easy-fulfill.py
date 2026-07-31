@@ -5574,6 +5574,25 @@ class MainWindow(QMainWindow):
             if hasattr(self.ui, name):
                 getattr(self.ui, name).clear()
 
+    def _confirm_quick_excel_info(self, row):
+        """클립보드에서 추출한 정보를 보여주고 생성을 확인합니다."""
+        msg = QMessageBox(self)
+        msg.setIcon(QMessageBox.Question)
+        msg.setWindowTitle("퀵 엑셀 정보 확인")
+        msg.setText(
+            "아래 정보로 엑셀을 생성할까요?\n\n"
+            f"수취인: {row.get('수취인명', '')}\n"
+            f"연락처: {row.get('수취인 전화번호', '')}\n"
+            f"우편번호: {row.get('우편번호') or '(없음)'}\n"
+            f"주소: {row.get('수취인 주소', '')}\n"
+            "상품명: 전자제품"
+        )
+        create_button = msg.addButton("생성", QMessageBox.AcceptRole)
+        msg.addButton("취소", QMessageBox.RejectRole)
+        msg.setDefaultButton(create_button)
+        msg.exec()
+        return msg.clickedButton() == create_button
+
     def generate_quick_excel(self):
         """클립보드 정보를 기반으로 단건 엑셀을 생성합니다. 수동 선택 시 입력란 값으로 생성합니다."""
         try:
@@ -5677,6 +5696,8 @@ class MainWindow(QMainWindow):
                     '비고': ''
                 }]
 
+                if not self._confirm_quick_excel_info(invoice_data[0]):
+                    return
                 output_file = self.save_invoice_excel(invoice_data, "퀵_쿠팡")
                 self.statusBar().showMessage(f"퀵 엑셀 생성 완료: {output_file.name}", 3000)
                 return
@@ -5714,6 +5735,8 @@ class MainWindow(QMainWindow):
                     '비고': ''
                 }]
 
+                if not self._confirm_quick_excel_info(invoice_data[0]):
+                    return
                 output_file = self.save_invoice_excel(invoice_data, "퀵_네이버")
                 self.statusBar().showMessage(f"퀵 엑셀 생성 완료: {output_file.name}", 3000)
                 return
@@ -5751,6 +5774,8 @@ class MainWindow(QMainWindow):
                     '비고': ''
                 }]
 
+                if not self._confirm_quick_excel_info(invoice_data[0]):
+                    return
                 output_file = self.save_invoice_excel(invoice_data, "퀵_지마켓")
                 self.statusBar().showMessage(f"퀵 엑셀 생성 완료: {output_file.name}", 3000)
                 return
@@ -5786,6 +5811,8 @@ class MainWindow(QMainWindow):
                     '배송메세지': '',
                     '비고': '',
                 }]
+                if not self._confirm_quick_excel_info(invoice_data[0]):
+                    return
                 output_file = self.save_invoice_excel(invoice_data, "퀵_일반")
                 self.statusBar().showMessage(f"퀵 엑셀 생성 완료: {output_file.name}", 3000)
                 return
