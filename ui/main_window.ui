@@ -346,6 +346,21 @@
         </item>
        </layout>
       </widget>
+      <widget class="QWidget" name="tab_quick_invoice">
+       <attribute name="title"><string>단건 송장</string></attribute>
+       <layout class="QVBoxLayout" name="verticalLayout_quick_excel">
+        <property name="leftMargin"><number>16</number></property>
+        <property name="topMargin"><number>16</number></property>
+        <property name="rightMargin"><number>16</number></property>
+        <property name="bottomMargin"><number>16</number></property>
+        <item>
+         <spacer name="verticalSpacer_quick_excel">
+          <property name="orientation"><enum>Qt::Orientation::Vertical</enum></property>
+          <property name="sizeHint" stdset="0"><size><width>20</width><height>40</height></size></property>
+         </spacer>
+        </item>
+       </layout>
+      </widget>
       <widget class="QWidget" name="tab_2">
        <attribute name="title"><string>환경설정</string></attribute>
        <layout class="QHBoxLayout" name="horizontalLayout_settings_outer">
@@ -559,6 +574,9 @@
            <width>96</width>
            <height>24</height>
           </rect>
+         </property>
+         <property name="currentIndex">
+          <number>1</number>
          </property>
          <item>
           <property name="text">

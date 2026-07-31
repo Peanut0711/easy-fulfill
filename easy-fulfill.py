@@ -4935,7 +4935,7 @@ class MainWindow(QMainWindow):
         # 신규 DB 반영 UI·로직 제거(2026-04). (pushButton_database_* / load·apply_database_* 삭제)
         if hasattr(self.ui, 'pushButton_quick_excel_gen'):
             self.ui.pushButton_quick_excel_gen.clicked.connect(self.generate_quick_excel)
-        # 퀵엑셀(수동 주문 추가) 그룹은 팝업 대신 환경설정 탭에 상시 인라인으로 노출한다.
+        # 퀵엑셀(수동 주문 추가) 그룹은 단건 송장 탭에 상시 인라인으로 노출한다.
         self._mount_quick_excel_inline()
         if hasattr(self.ui, "pushButton_quick_excel_reset"):
             self.ui.pushButton_quick_excel_reset.clicked.connect(self._reset_quick_excel_fields)
@@ -5538,7 +5538,7 @@ class MainWindow(QMainWindow):
 
     def _refresh_quick_excel_manual_ui(self):
         """수동 모드일 때만 이름·전화·주소 입력란을 표시합니다.
-        퀵엑셀 그룹은 환경설정 탭에 상시 인라인으로 붙어 있고, 내부 위젯이 절대좌표라
+        퀵엑셀 그룹은 단건 송장 탭에 상시 인라인으로 붙어 있고, 내부 위젯이 절대좌표라
         그룹 크기를 모드에 맞춰 고정해 레이아웃이 이에 맞춰지게 한다."""
         if not hasattr(self.ui, "comboBox_store_select"):
             return
@@ -5553,9 +5553,9 @@ class MainWindow(QMainWindow):
             gb.setFixedSize(341, 278 if manual else 102)
 
     def _mount_quick_excel_inline(self):
-        """퀵엑셀 그룹(.ui의 절대좌표 groupBox)을 환경설정 탭 레이아웃에 상시 인라인으로 삽입."""
+        """퀵엑셀 그룹(.ui의 절대좌표 groupBox)을 단건 송장 탭에 상시 인라인으로 삽입."""
         gb = getattr(self.ui, "groupBox", None)
-        lay = getattr(self.ui, "verticalLayout_settings", None)
+        lay = getattr(self.ui, "verticalLayout_quick_excel", None)
         if gb is None or lay is None:
             return
         # 하단 세로 스페이서 바로 앞(마지막 위젯 자리)에 넣는다.
