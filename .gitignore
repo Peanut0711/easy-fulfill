@@ -1,4 +1,5 @@
 output/
+logs/
 input/
 ui/__pycache__/
 build/

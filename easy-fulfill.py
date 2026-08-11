@@ -125,6 +125,7 @@ TRACKING_AUTO_REFRESH_DEFAULT_MIN = 60
 CONFIG_KEY_NAVER_CLIENT_ID = "naver_client_id"
 CONFIG_KEY_NAVER_CLIENT_SECRET = "naver_client_secret"
 _NAVER_DOCUMENT_PRODUCT_CACHE = None  # 문서 탭 실행 중에만 유지하는 상품 목록
+DOCUMENT_PRODUCT_SEARCH_LOG_PATH = Path(__file__).resolve().parent / "logs" / "document_product_search.log"
 # 쿠팡 WING OpenAPI 문의 알림: vendorId/accessKey/secretKey 도 비공개 「설정」 탭에만 저장.
 CONFIG_KEY_COUPANG_VENDOR_ID = "coupang_vendor_id"
 CONFIG_KEY_COUPANG_ACCESS_KEY = "coupang_access_key"
@@ -1518,28 +1519,57 @@ def run_naver_order_fetch_worker(days):
         return {"ok": False, "error": str(e)}
 
 
+def _document_product_search_failure(stage, error):
+    """문서 탭 상품 목록 준비 실패를 run.bat 콘솔과 로컬 로그에 남긴다."""
+    detail = traceback.format_exc()
+    if detail == "NoneType: None\n":
+        detail = ""
+    message = (
+        f"[문서 상품 목록 준비 실패] 단계: {stage}\n"
+        f"오류: {error}\n"
+        f"{detail}"
+    ).rstrip()
+    try:
+        DOCUMENT_PRODUCT_SEARCH_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with DOCUMENT_PRODUCT_SEARCH_LOG_PATH.open("a", encoding="utf-8") as stream:
+            stream.write(f"\n[{datetime.now():%Y-%m-%d %H:%M:%S}]\n{message}\n")
+    except OSError:
+        pass
+    print(message, flush=True)
+    return {
+        "ok": False,
+        "error": f"{stage} 실패: {error} (상세 로그: logs\\document_product_search.log)",
+    }
+
+
 def run_naver_product_search_worker(query):
     """스마트스토어 판매 상품을 이름 일부로 찾아 문서 탭에 반환한다."""
     global _NAVER_DOCUMENT_PRODUCT_CACHE
     if gspread is None:
-        return {"ok": False, "error": "gspread 패키지가 필요합니다."}
+        return _document_product_search_failure("의존성 확인", "gspread 패키지가 필요합니다.")
     try:
         from google_sheets_oauth import get_authorized_gspread_client
         import naver_commerce
     except ImportError as e:
-        return {"ok": False, "error": str(e)}
+        return _document_product_search_failure("모듈 불러오기", e)
+    stage = "초기화"
     try:
         if _NAVER_DOCUMENT_PRODUCT_CACHE is None:
+            stage = "Google Sheets 인증"
             gc = get_authorized_gspread_client()
+            stage = "공유 설정 시트 조회"
             cfg = _read_config_values_map(_standalone_open_config_ws(gc))
+            stage = "네이버 API 키 확인"
             client_id = cfg.get(CONFIG_KEY_NAVER_CLIENT_ID, "")
             client_secret = cfg.get(CONFIG_KEY_NAVER_CLIENT_SECRET, "")
             if not (client_id and client_secret):
-                return {
-                    "ok": False,
-                    "error": "네이버 client_id/secret 이 설정되지 않았습니다. 관리자 ‘키 설정’에서 등록하세요.",
-                }
+                return _document_product_search_failure(
+                    stage,
+                    "네이버 client_id/secret 이 설정되지 않았습니다. 관리자 ‘키 설정’에서 등록하세요.",
+                )
+            stage = "네이버 토큰 발급"
             token = naver_commerce.get_access_token(client_id, client_secret)
+            stage = "스마트스토어 판매 상품 목록 조회"
             _NAVER_DOCUMENT_PRODUCT_CACHE = naver_commerce.fetch_sale_products(token)
 
         tokens = [part.casefold() for part in str(query or "").split() if part]
@@ -1549,7 +1579,7 @@ def run_naver_product_search_worker(query):
         ]
         return {"ok": True, "products": products[:300], "count": len(products)}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return _document_product_search_failure(stage, e)
 
 
 class ProductMappingLoadThread(QThread):
