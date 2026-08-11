@@ -1611,6 +1611,39 @@ def run_naver_order_lookup_worker(order_id):
         return {"ok": False, "error": str(exc)}
 
 
+def run_coupang_order_lookup_worker(order_id):
+    """문서 만들기 탭에서 입력한 쿠팡 주문번호의 거래명세서용 상세를 조회한다."""
+    normalized_order_id = str(order_id or "").strip()
+    if not normalized_order_id:
+        return {"ok": False, "error": "쿠팡 주문번호를 입력해주세요."}
+    if not normalized_order_id.isdigit():
+        return {"ok": False, "error": "쿠팡 주문번호는 숫자만 입력해주세요."}
+    if gspread is None:
+        return {"ok": False, "error": "gspread 패키지가 필요합니다."}
+    try:
+        from google_sheets_oauth import get_authorized_gspread_client
+        import coupang_commerce
+    except ImportError as exc:
+        return {"ok": False, "error": f"쿠팡 주문 조회 모듈을 불러오지 못했습니다: {exc}"}
+    try:
+        gc = get_authorized_gspread_client()
+        cfg = _read_config_values_map(_standalone_open_config_ws(gc))
+        vendor_id = cfg.get(CONFIG_KEY_COUPANG_VENDOR_ID, "")
+        access_key = cfg.get(CONFIG_KEY_COUPANG_ACCESS_KEY, "")
+        secret_key = cfg.get(CONFIG_KEY_COUPANG_SECRET_KEY, "")
+        if not (vendor_id and access_key and secret_key):
+            return {
+                "ok": False,
+                "error": "쿠팡 vendorId/accessKey/secretKey가 설정되지 않았습니다. 관리자 ‘키 설정’에서 등록하세요.",
+            }
+        order = coupang_commerce.fetch_order_for_transaction_statement(
+            vendor_id, access_key, secret_key, normalized_order_id
+        )
+        return {"ok": True, "order": order}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
 class ProductMappingLoadThread(QThread):
     """주문 엑셀 열 때 상품 매핑 시트 읽기만 백그라운드에서 수행."""
 
@@ -5682,6 +5715,7 @@ class MainWindow(QMainWindow):
             self._document_widget = QuotationStatementWidget(
                 product_search_worker=run_naver_product_search_worker,
                 order_lookup_worker=run_naver_order_lookup_worker,
+                coupang_order_lookup_worker=run_coupang_order_lookup_worker,
                 on_created=self.show_excel_created_message,
                 base_dir=Path(__file__).resolve().parent,
                 parent=self,

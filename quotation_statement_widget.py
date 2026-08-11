@@ -70,7 +70,7 @@ class ProductSearchThread(QThread):
         self.result_ready.emit(result)
 
 
-class NaverOrderLookupThread(QThread):
+class OrderLookupThread(QThread):
     result_ready = Signal(dict)
 
     def __init__(self, worker, order_id: str, parent=None):
@@ -212,10 +212,11 @@ class ProductChoiceDialog(QDialog):
 
 class QuotationStatementWidget(QWidget):
     def __init__(self, product_search_worker=None, order_lookup_worker=None,
-                 on_created=None, base_dir=None, parent=None):
+                 coupang_order_lookup_worker=None, on_created=None, base_dir=None, parent=None):
         super().__init__(parent)
         self._product_search_worker = product_search_worker
         self._order_lookup_worker = order_lookup_worker
+        self._coupang_order_lookup_worker = coupang_order_lookup_worker
         self._on_created = on_created
         self._base_dir = Path(base_dir or Path(__file__).resolve().parent)
         self._search_thread = None
@@ -231,6 +232,7 @@ class QuotationStatementWidget(QWidget):
         self._negotiation_mode = False
         self._naver_order_import = False
         self._naver_order_shipping_gross = 0
+        self._order_import_source = ""
         self._build_ui()
         self.add_item_row()
 
@@ -301,6 +303,25 @@ class QuotationStatementWidget(QWidget):
         order_layout.addWidget(self.naver_order_status)
         root.addWidget(self.naver_order_group)
 
+        self.coupang_order_group = QGroupBox("쿠팡 주문 불러오기")
+        coupang_order_layout = QVBoxLayout(self.coupang_order_group)
+        coupang_order_row = QHBoxLayout()
+        coupang_order_row.addWidget(QLabel("주문번호"))
+        self.coupang_order_id_edit = QLineEdit()
+        self.coupang_order_id_edit.setPlaceholderText("쿠팡 Wing에서 확인한 주문번호(orderId)를 입력하세요")
+        self.coupang_order_id_edit.setMaximumWidth(350)
+        self.coupang_order_load_button = QPushButton("주문 불러오기")
+        coupang_order_row.addWidget(self.coupang_order_id_edit)
+        coupang_order_row.addWidget(self.coupang_order_load_button)
+        coupang_order_row.addStretch(1)
+        coupang_order_layout.addLayout(coupang_order_row)
+        self.coupang_order_status = QLabel(
+            "주문을 불러오면 실제 적용 할인 후 상품금액과 고객 부담 배송비를 적용합니다."
+        )
+        self.coupang_order_status.setWordWrap(True)
+        coupang_order_layout.addWidget(self.coupang_order_status)
+        root.addWidget(self.coupang_order_group)
+
         item_header = QHBoxLayout()
         item_header.addWidget(QLabel("품목"))
         item_header.addStretch(1)
@@ -367,6 +388,8 @@ class QuotationStatementWidget(QWidget):
         self.search_edit.returnPressed.connect(self.search_products)
         self.naver_order_id_edit.returnPressed.connect(self.load_naver_order)
         self.naver_order_load_button.clicked.connect(self.load_naver_order)
+        self.coupang_order_id_edit.returnPressed.connect(self.load_coupang_order)
+        self.coupang_order_load_button.clicked.connect(self.load_coupang_order)
         self.table.itemChanged.connect(self._on_item_changed)
         self.document_type.currentTextChanged.connect(self._on_document_type_changed)
         self.negotiated_check.toggled.connect(self.refresh_summary)
@@ -383,11 +406,15 @@ class QuotationStatementWidget(QWidget):
         self.delivery_label.setVisible(quote)
         self.delivery_edit.setVisible(quote)
         self.naver_order_group.setVisible(not quote)
-        self.free_shipping_check.setVisible(not self._is_naver_order_import())
+        self.coupang_order_group.setVisible(not quote)
+        self.free_shipping_check.setVisible(not self._is_order_import())
         self.refresh_summary()
 
     def _is_naver_order_import(self):
-        return self.document_type.currentText() == "거래명세서" and self._naver_order_import
+        return self._is_order_import()
+
+    def _is_order_import(self):
+        return self.document_type.currentText() == "거래명세서" and bool(self._order_import_source)
 
     @staticmethod
     def _editable_item(text=""):
@@ -615,36 +642,51 @@ class QuotationStatementWidget(QWidget):
         self._apply_product(self._search_target_row, dialog.selected_product)
 
     def load_naver_order(self):
-        order_id = self.naver_order_id_edit.text().strip()
+        self._load_order("naver", self.naver_order_id_edit, self.naver_order_load_button,
+                         self.naver_order_status, self._order_lookup_worker)
+
+    def load_coupang_order(self):
+        self._load_order("coupang", self.coupang_order_id_edit, self.coupang_order_load_button,
+                         self.coupang_order_status, self._coupang_order_lookup_worker)
+
+    def _load_order(self, source, order_edit, load_button, status_label, worker):
+        source_label = "네이버" if source == "naver" else "쿠팡"
+        order_id = order_edit.text().strip()
         if not order_id:
-            QMessageBox.information(self, "네이버 주문 불러오기", "스마트스토어 주문번호를 입력해주세요.")
+            QMessageBox.information(self, f"{source_label} 주문 불러오기", "주문번호를 입력해주세요.")
             return
-        if self._order_lookup_worker is None:
-            QMessageBox.warning(self, "네이버 주문 불러오기", "네이버 주문 API를 사용할 수 없습니다.")
+        if worker is None:
+            QMessageBox.warning(self, f"{source_label} 주문 불러오기", f"{source_label} 주문 API를 사용할 수 없습니다.")
             return
         if self._order_lookup_thread and self._order_lookup_thread.isRunning():
             return
-        self.naver_order_load_button.setEnabled(False)
-        self.naver_order_status.setText("네이버 주문을 조회하고 있습니다…")
-        self._order_lookup_thread = NaverOrderLookupThread(self._order_lookup_worker, order_id, self)
-        self._order_lookup_thread.result_ready.connect(self._on_naver_order_result)
-        self._order_lookup_thread.finished.connect(self._finish_naver_order_lookup)
+        load_button.setEnabled(False)
+        status_label.setText(f"{source_label} 주문을 조회하고 있습니다…")
+        self._order_lookup_thread = OrderLookupThread(worker, order_id, self)
+        self._order_lookup_thread.result_ready.connect(
+            lambda result: self._on_order_result(source, result)
+        )
+        self._order_lookup_thread.finished.connect(
+            lambda: self._finish_order_lookup(load_button)
+        )
         self._order_lookup_thread.start()
 
-    def _finish_naver_order_lookup(self):
-        self.naver_order_load_button.setEnabled(True)
+    def _finish_order_lookup(self, load_button):
+        load_button.setEnabled(True)
         self._order_lookup_thread = None
 
-    def _on_naver_order_result(self, result):
+    def _on_order_result(self, source, result):
+        source_label = "네이버" if source == "naver" else "쿠팡"
+        status_label = self.naver_order_status if source == "naver" else self.coupang_order_status
         if not result.get("ok"):
             error = result.get("error") or "알 수 없는 오류"
-            self.naver_order_status.setText(f"주문 조회 실패: {error}")
-            QMessageBox.warning(self, "네이버 주문 불러오기", f"주문을 불러오지 못했습니다.\n\n{error}")
+            status_label.setText(f"주문 조회 실패: {error}")
+            QMessageBox.warning(self, f"{source_label} 주문 불러오기", f"주문을 불러오지 못했습니다.\n\n{error}")
             return
         order = result.get("order") or {}
         lines = order.get("items") or []
         if not lines:
-            self.naver_order_status.setText("주문 상품을 찾지 못했습니다.")
+            status_label.setText("주문 상품을 찾지 못했습니다.")
             return
         self._updating_table = True
         try:
@@ -676,16 +718,17 @@ class QuotationStatementWidget(QWidget):
         imported_date = QDate.fromString(payment_date, Qt.DateFormat.ISODate)
         if imported_date.isValid():
             self.trade_date.setDate(imported_date)
-        self._naver_order_import = True
+        self._naver_order_import = source == "naver"
+        self._order_import_source = source
         self._naver_order_shipping_gross = int(order.get("shipping_gross") or 0)
         self.free_shipping_check.setVisible(False)
         shipping_message = (
             f"실제 배송비 {self._naver_order_shipping_gross:,}원을 포함했습니다."
             if self._naver_order_shipping_gross else "고객 부담 배송비가 없어 배송비 행을 만들지 않습니다."
         )
-        self.naver_order_status.setText(
+        status_label.setText(
             f"주문번호 {order.get('order_id', '')}의 상품 {len(lines)}개를 적용했습니다. "
-            f"{shipping_message} 추가 할인은 적용하지 않습니다."
+            f"{shipping_message}"
         )
         self.refresh_summary()
 
@@ -718,14 +761,19 @@ class QuotationStatementWidget(QWidget):
         self.delivery_edit.clear()
         self.search_edit.clear()
         self.naver_order_id_edit.clear()
+        self.coupang_order_id_edit.clear()
         self.search_status.setText("API를 사용하지 않아도 아래 표에 상품명과 가격을 직접 입력할 수 있습니다.")
         self.negotiated_check.setChecked(False)
         self.free_shipping_check.setChecked(False)
         self._negotiation_mode = False
         self._naver_order_import = False
         self._naver_order_shipping_gross = 0
+        self._order_import_source = ""
         self.naver_order_status.setText(
             "주문을 불러오면 상품·옵션·수량·실제 결제금액을 적용하며 추가 할인과 고정 배송비는 적용하지 않습니다."
+        )
+        self.coupang_order_status.setText(
+            "주문을 불러오면 실제 적용 할인 후 상품금액과 고객 부담 배송비를 적용합니다."
         )
         self.free_shipping_check.setVisible(True)
         self.table.setRowCount(0)

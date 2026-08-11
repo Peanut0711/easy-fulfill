@@ -169,6 +169,135 @@ def fetch_callcenter_inquiries(vendor_id, access_key, secret_key, from_dt, to_dt
     return out
 
 
+def _money_units(value, field_name):
+    """쿠팡 Money 객체를 원 단위 정수로 변환한다.
+
+    거래명세서는 원 단위 문서이므로 KRW가 아니거나 소수점이 있으면 조용히
+    반올림하지 않고 발급을 중단한다. 금액을 추정해 문서를 만드는 일을 막는다.
+    """
+    if not isinstance(value, dict):
+        raise ValueError(f"{field_name} 금액 정보를 확인할 수 없습니다.")
+    currency = str(value.get("currencyCode") or "").upper()
+    if currency != "KRW":
+        raise ValueError(f"{field_name} 통화가 KRW가 아니어서 거래명세서를 발급할 수 없습니다.")
+    try:
+        units = int(value.get("units"))
+        nanos = int(value.get("nanos") or 0)
+    except (TypeError, ValueError):
+        raise ValueError(f"{field_name} 금액 형식이 올바르지 않습니다.")
+    if nanos:
+        raise ValueError(f"{field_name}에 원 단위가 아닌 금액이 있어 거래명세서를 발급할 수 없습니다.")
+    if units < 0:
+        raise ValueError(f"{field_name} 금액이 음수여서 거래명세서를 발급할 수 없습니다.")
+    return units
+
+
+def build_transaction_statement_order(order_id, order_sheets):
+    """쿠팡 발주서 응답을 거래명세서용 주문 데이터로 엄격하게 변환한다.
+
+    품목 금액은 API가 제공하는 주문 상품금액(orderPrice)에서 실제 적용 할인
+    (discountPrice)을 뺀 값만 사용한다. 배송비는 묶음배송번호당 한 번만 더한다.
+    취소·취소대기·부분취소 주문은 최종 결제액을 추정하지 않도록 발급 대상에서 제외한다.
+    """
+    requested_id = str(order_id or "").strip()
+    if not requested_id:
+        raise ValueError("쿠팡 주문번호를 입력해주세요.")
+    if not isinstance(order_sheets, list) or not order_sheets:
+        raise ValueError("입력한 주문번호의 발주서 정보를 찾지 못했습니다.")
+
+    items = []
+    orderer_name = ""
+    receiver_name = ""
+    payment_date = ""
+    shipping_by_box = {}
+    for sheet in order_sheets:
+        if not isinstance(sheet, dict):
+            raise ValueError("쿠팡 발주서 응답 형식이 올바르지 않습니다.")
+        response_id = str(sheet.get("orderId") or "").strip()
+        if response_id and response_id != requested_id:
+            continue
+        status = str(sheet.get("status") or "").upper()
+        if status in {"CANCEL", "CANCELLED", "RETURN", "RETURNED", "EXCHANGE", "EXCHANGED"}:
+            raise ValueError("취소·반품·교환 완료 주문은 거래명세서를 발급할 수 없습니다.")
+
+        orderer = sheet.get("orderer") or {}
+        receiver = sheet.get("receiver") or {}
+        orderer_name = orderer_name or str(orderer.get("name") or "").strip()
+        receiver_name = receiver_name or str(receiver.get("name") or "").strip()
+        payment_date = payment_date or str(sheet.get("paidAt") or sheet.get("orderedAt") or "").strip()
+
+        shipment_box_id = str(sheet.get("shipmentBoxId") or "").strip()
+        if not shipment_box_id:
+            raise ValueError("묶음배송번호를 확인할 수 없어 배송비를 정확히 계산할 수 없습니다.")
+        shipping = _money_units(sheet.get("shippingPrice"), "기본 배송비")
+        remote = _money_units(sheet.get("remotePrice"), "도서산간 배송비")
+        shipping_by_box[shipment_box_id] = max(shipping_by_box.get(shipment_box_id, 0), shipping + remote)
+
+        order_items = sheet.get("orderItems")
+        if not isinstance(order_items, list) or not order_items:
+            raise ValueError("발주서에서 주문 상품을 찾지 못했습니다.")
+        for source_item in order_items:
+            if not isinstance(source_item, dict):
+                raise ValueError("주문 상품 정보 형식이 올바르지 않습니다.")
+            cancelled = bool(source_item.get("canceled"))
+            try:
+                cancel_count = int(source_item.get("cancelCount") or 0)
+                hold_cancel_count = int(source_item.get("holdCountForCancel") or 0)
+                quantity = int(source_item.get("shippingCount") or 0)
+            except (TypeError, ValueError):
+                raise ValueError("주문 상품 수량 정보를 확인할 수 없습니다.")
+            if cancelled or cancel_count or hold_cancel_count:
+                raise ValueError("부분취소 또는 취소 처리 중인 주문은 거래명세서를 발급할 수 없습니다.")
+            if quantity <= 0:
+                raise ValueError("주문 상품 수량을 확인할 수 없습니다.")
+            order_price = _money_units(source_item.get("orderPrice"), "상품 주문금액")
+            discount_price = _money_units(source_item.get("discountPrice"), "상품 할인금액")
+            if discount_price > order_price:
+                raise ValueError("상품 할인금액이 주문금액보다 커서 거래명세서를 발급할 수 없습니다.")
+            paid_amount = order_price - discount_price
+            if paid_amount <= 0:
+                raise ValueError("실제 결제 상품금액이 0원이어서 거래명세서를 발급할 수 없습니다.")
+            name = str(source_item.get("sellerProductName") or source_item.get("vendorItemName") or "").strip()
+            if not name:
+                raise ValueError("주문 상품명을 확인할 수 없습니다.")
+            specification = str(source_item.get("sellerProductItemName") or "").strip()
+            items.append({
+                "name": name,
+                "specification": specification,
+                "quantity": quantity,
+                "gross_unit_price": (paid_amount + quantity // 2) // quantity,
+                "gross_amount": paid_amount,
+                "status": status,
+            })
+
+    if not items:
+        raise ValueError("입력한 주문번호의 발급 가능한 상품을 찾지 못했습니다.")
+    if not (orderer_name or receiver_name):
+        raise ValueError("주문자명과 수취인명을 확인할 수 없어 거래명세서를 발급할 수 없습니다.")
+    if not payment_date:
+        raise ValueError("결제일시를 확인할 수 없어 거래명세서를 발급할 수 없습니다.")
+    return {
+        "order_id": requested_id,
+        "orderer_name": orderer_name,
+        "receiver_name": receiver_name,
+        "customer_name": orderer_name or receiver_name,
+        "payment_date": payment_date,
+        "shipping_gross": sum(shipping_by_box.values()),
+        "items": items,
+    }
+
+
+def fetch_order_for_transaction_statement(vendor_id, access_key, secret_key, order_id):
+    """쿠팡 주문번호로 발주서 전체를 조회해 거래명세서용 데이터로 변환한다."""
+    normalized_order_id = str(order_id or "").strip()
+    if not normalized_order_id:
+        raise ValueError("쿠팡 주문번호를 입력해주세요.")
+    path = f"{PATH_PREFIX}/{vendor_id}/{normalized_order_id}/ordersheets"
+    response = _get(path, {}, access_key, secret_key)
+    data = response.get("data") if isinstance(response, dict) else None
+    return build_transaction_statement_order(normalized_order_id, data)
+
+
 def validate_credentials(vendor_id, access_key, secret_key):
     """키 3종으로 최근 1일 온라인문의를 1회 조회해 유효성만 확인. 반환 {ok, valid, error}."""
     vid = str(vendor_id or "").strip()

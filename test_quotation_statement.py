@@ -18,6 +18,7 @@ from quotation_statement import (
     generate_document,
 )
 import naver_commerce
+import coupang_commerce
 
 
 ROOT = Path(__file__).resolve().parent
@@ -287,6 +288,85 @@ class NaverTransactionStatementOrderTests(unittest.TestCase):
         })
         order = naver_commerce.build_transaction_statement_order("202608120001", [first, second])
         self.assertEqual(order["shipping_gross"], 2_700)
+
+
+class CoupangTransactionStatementOrderTests(unittest.TestCase):
+    @staticmethod
+    def _money(amount):
+        return {"currencyCode": "KRW", "units": amount, "nanos": 0}
+
+    def _sheet(self, *, shipment_box_id="853138000000000001", order_price=14_000,
+               discount=500, shipping=2_500, remote=0):
+        return {
+            "shipmentBoxId": shipment_box_id,
+            "orderId": "500000596",
+            "paidAt": "2026-08-12T10:20:30+09:00",
+            "status": "FINAL_DELIVERY",
+            "orderer": {"name": "홍길동"},
+            "receiver": {"name": "수취인"},
+            "shippingPrice": self._money(shipping),
+            "remotePrice": self._money(remote),
+            "orderItems": [{
+                "sellerProductName": "개발 보드",
+                "sellerProductItemName": "검정 / 1개",
+                "vendorItemName": "개발 보드, 검정",
+                "shippingCount": 2,
+                "orderPrice": self._money(order_price),
+                "discountPrice": self._money(discount),
+                "cancelCount": 0,
+                "holdCountForCancel": 0,
+                "canceled": False,
+            }],
+        }
+
+    def test_build_transaction_statement_order_uses_actual_discounted_goods_and_shipping(self):
+        order = coupang_commerce.build_transaction_statement_order("500000596", [self._sheet()])
+        self.assertEqual(order["customer_name"], "홍길동")
+        self.assertEqual(order["payment_date"], "2026-08-12T10:20:30+09:00")
+        self.assertEqual(order["shipping_gross"], 2_500)
+        self.assertEqual(order["items"][0]["gross_amount"], 13_500)
+        result = calculate_document(
+            [ItemInput("개발 보드", gross_unit_price=6_750, quantity=2, gross_amount_override=13_500)],
+            order_import=True, shipping_gross_override=2_500,
+        )
+        self.assertEqual(result.grand_total, 16_000)
+
+    def test_build_transaction_statement_order_deduplicates_shipping_per_box(self):
+        first = self._sheet()
+        second = self._sheet()
+        second["orderItems"][0]["sellerProductName"] = "추가 상품"
+        order = coupang_commerce.build_transaction_statement_order("500000596", [first, second])
+        self.assertEqual(order["shipping_gross"], 2_500)
+
+    def test_build_transaction_statement_order_includes_remote_shipping_per_box(self):
+        order = coupang_commerce.build_transaction_statement_order(
+            "500000596", [self._sheet(shipping=2_500, remote=3_000)]
+        )
+        self.assertEqual(order["shipping_gross"], 5_500)
+
+    def test_build_transaction_statement_order_blocks_partial_cancellation(self):
+        sheet = self._sheet()
+        sheet["orderItems"][0]["holdCountForCancel"] = 1
+        with self.assertRaisesRegex(ValueError, "부분취소"):
+            coupang_commerce.build_transaction_statement_order("500000596", [sheet])
+
+    def test_build_transaction_statement_order_rejects_ambiguous_currency(self):
+        sheet = self._sheet()
+        sheet["orderItems"][0]["discountPrice"]["currencyCode"] = "USD"
+        with self.assertRaisesRegex(ValueError, "KRW"):
+            coupang_commerce.build_transaction_statement_order("500000596", [sheet])
+
+    def test_fetch_transaction_statement_order_uses_single_order_api(self):
+        sheet = self._sheet()
+        with patch.object(coupang_commerce, "_get", return_value={"data": [sheet]}) as get:
+            order = coupang_commerce.fetch_order_for_transaction_statement(
+                "A00000001", "access", "secret", "500000596"
+            )
+        get.assert_called_once_with(
+            "/v2/providers/openapi/apis/api/v5/vendors/A00000001/500000596/ordersheets",
+            {}, "access", "secret",
+        )
+        self.assertEqual(order["items"][0]["gross_amount"], 13_500)
 
 
 class WorkbookGenerationTests(unittest.TestCase):
