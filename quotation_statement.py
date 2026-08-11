@@ -398,8 +398,11 @@ def generate_document(
             ws[f"B{total_row + 3}"] = f"기본 납기 : {str(delivery_term).strip() or '결제 후 즉시'}"
             payment_row = total_row + 4
             ws[f"B{payment_row}"] = f"결제 방법 : {payment_text}"
-            ws[f"B{payment_row + 1}"] = None
-            ws.print_area = f"A1:V{29 + extra}"
+            # 할인 항목을 제거한 빈 행도 숨겨 Excel/PDF에 남지 않게 한다.
+            blank_row = payment_row + 1
+            ws.unmerge_cells(f"B{blank_row}:V{blank_row}")
+            ws.row_dimensions[blank_row].hidden = True
+            ws.print_area = f"A1:V{payment_row}"
             # Keep quotation content at the top of the A4 page when few items exist.
             ws.print_options.verticalCentered = False
         else:
