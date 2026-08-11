@@ -127,6 +127,23 @@ class PdfExportTests(unittest.TestCase):
             self.assertEqual(pdf, xlsx.with_suffix(".pdf"))
             self.assertTrue(pdf.is_file())
             self.assertGreater(pdf.stat().st_size, 0)
+            self.assertIn("completed", (Path(directory) / "pdf_export.log").read_text(encoding="utf-8"))
+
+    def test_pdf_export_keeps_generated_pdf_when_excel_cleanup_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            xlsx = Path(directory) / "document.xlsx"
+            xlsx.write_bytes(b"xlsx")
+
+            def fake_run(args, **kwargs):
+                Path(kwargs["env"]["EASY_FULFILL_PDF_PATH"]).write_bytes(b"%PDF-1.4")
+                return subprocess.CompletedProcess(args, 1, "cleanup=Workbook.Close hresult=-2147418111", "")
+
+            with patch("quotation_statement.subprocess.run", side_effect=fake_run):
+                pdf = export_xlsx_to_pdf(xlsx)
+            self.assertTrue(pdf.is_file())
+            log = (Path(directory) / "pdf_export.log").read_text(encoding="utf-8")
+            self.assertIn("completed_with_cleanup_warning", log)
+            self.assertIn("-2147418111", log)
 
 
 class NaverProductTests(unittest.TestCase):

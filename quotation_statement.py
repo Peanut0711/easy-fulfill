@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from copy import copy
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 import os
@@ -49,6 +49,23 @@ class NegotiationRequired(DocumentValidationError):
 
 class PdfExportError(RuntimeError):
     """Raised when Excel cannot export the generated workbook as PDF."""
+
+
+def _write_pdf_export_log(source: Path, target: Path, status: str, detail: str = "") -> None:
+    """Append diagnostics without making a document export fail because logging is unavailable."""
+    try:
+        log_path = source.parent / "pdf_export.log"
+        lines = [
+            f"[{datetime.now():%Y-%m-%d %H:%M:%S}] {status}",
+            f"source={source.name}",
+            f"target={target.name}",
+        ]
+        if detail:
+            lines.append(detail.strip())
+        with log_path.open("a", encoding="utf-8") as stream:
+            stream.write(" | ".join(lines) + "\n")
+    except OSError:
+        pass
 
 
 @dataclass(frozen=True)
@@ -443,6 +460,24 @@ $originalPrinter = $null
 $pdfPrinter = $null
 $excel = $null
 $book = $null
+function Invoke-ComCleanupWithRetry {
+    param([string]$Name, [scriptblock]$Action)
+    foreach ($attempt in 1..3) {
+        try {
+            & $Action
+            Write-Output "cleanup=$Name attempt=$attempt result=success"
+            return
+        } catch {
+            $hresult = $_.Exception.HResult
+            Write-Output "cleanup=$Name attempt=$attempt hresult=$hresult error=$($_.Exception.Message)"
+            if ($attempt -lt 3 -and $hresult -eq -2147418111) {
+                Start-Sleep -Milliseconds (250 * $attempt)
+                continue
+            }
+            return
+        }
+    }
+}
 try {
     $pdfPrinter = Get-CimInstance Win32_Printer -Filter "Name = 'Microsoft Print to PDF'"
     if ($null -eq $pdfPrinter) {
@@ -472,12 +507,14 @@ try {
     $book.ExportAsFixedFormat(0, $env:EASY_FULFILL_PDF_PATH, 0, $true, $false)
 } finally {
     if ($book -ne $null) {
-        $book.Close($false)
-        [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($book)
+        Invoke-ComCleanupWithRetry 'Workbook.Close' { $book.Close($false) }
+        try { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($book) }
+        catch { Write-Output "cleanup=Workbook.Release error=$($_.Exception.Message)" }
     }
     if ($excel -ne $null) {
-        $excel.Quit()
-        [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($excel)
+        Invoke-ComCleanupWithRetry 'Excel.Quit' { $excel.Quit() }
+        try { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($excel) }
+        catch { Write-Output "cleanup=Excel.Release error=$($_.Exception.Message)" }
     }
     if ($originalPrinter -ne $null) {
         & "$env:SystemRoot\System32\rundll32.exe" 'printui.dll,PrintUIEntry' '/y' '/n' $originalPrinter.Name
@@ -499,12 +536,26 @@ try {
             env=env,
         )
     except FileNotFoundError as exc:
+        _write_pdf_export_log(source, target, "failed", "PowerShell was not found.")
         raise PdfExportError("Windows PowerShell을 찾을 수 없습니다.") from exc
     except subprocess.TimeoutExpired as exc:
+        _write_pdf_export_log(source, target, "failed", "Excel PDF conversion timed out after 60 seconds.")
         raise PdfExportError("Excel PDF 변환 시간이 초과되었습니다.") from exc
+    detail = "\n".join(part for part in (completed.stdout, completed.stderr) if part).strip()
     if completed.returncode != 0:
-        detail = (completed.stderr or completed.stdout or "알 수 없는 오류").strip()
+        if target.is_file() and target.stat().st_size > 0:
+            _write_pdf_export_log(
+                source,
+                target,
+                "completed_with_cleanup_warning",
+                f"returncode={completed.returncode}\n{detail}",
+            )
+            return target
+        _write_pdf_export_log(source, target, "failed", f"returncode={completed.returncode}\n{detail}")
+        detail = detail or "알 수 없는 오류"
         raise PdfExportError(f"Excel PDF 변환 실패: {detail}")
     if not target.is_file() or target.stat().st_size == 0:
+        _write_pdf_export_log(source, target, "failed", "Excel finished without creating a PDF file.")
         raise PdfExportError("Excel이 PDF 파일을 만들지 못했습니다.")
+    _write_pdf_export_log(source, target, "completed", detail)
     return target
