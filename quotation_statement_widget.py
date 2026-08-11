@@ -230,7 +230,7 @@ class QuotationStatementWidget(QWidget):
         self.trade_date.setCalendarPopup(True)
         self.trade_date.setDisplayFormat("yyyy.MM.dd")
         form.addRow("문서 종류", self.document_type)
-        form.addRow("소속명", self.organization_edit)
+        form.addRow("소속", self.organization_edit)
         form.addRow("성명", self.name_edit)
         form.addRow("거래일자", self.trade_date)
         form.addRow("결제 방법", self.payment_method)
