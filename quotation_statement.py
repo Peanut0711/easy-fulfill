@@ -299,8 +299,6 @@ def _output_path(output_dir: Path, kind: str, organization: str, name: str, trad
 
 
 def _validate_header(organization: str, name: str, trade_date: date) -> None:
-    if not str(organization or "").strip():
-        raise DocumentValidationError("소속명을 입력해주세요.")
     if not str(name or "").strip():
         raise DocumentValidationError("성명을 입력해주세요.")
     if not isinstance(trade_date, date):
@@ -442,7 +440,10 @@ def generate_document(
             # Keep quotation content at the top of the A4 page when few items exist.
             ws.print_options.verticalCentered = False
         else:
-            ws["B5"] = f"{str(organization).strip()} {str(name).strip()}님 귀하"
+            recipient = " ".join(
+                value for value in (str(organization).strip(), str(name).strip()) if value
+            )
+            ws["B5"] = f"{recipient}님 귀하"
             # 날짜 일련번호를 표시하는 일부 뷰어도 있으므로 문서에는 고정 문자열로 기록한다.
             ws["B6"] = trade_date.strftime("%Y.%m.%d")
             _write_statement_total_label(ws)

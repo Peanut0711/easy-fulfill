@@ -733,8 +733,8 @@ class QuotationStatementWidget(QWidget):
             )
             organization = self.organization_edit.text().strip()
             name = self.name_edit.text().strip()
-            if not organization or not name:
-                raise DocumentValidationError("소속명과 성명을 입력해주세요.")
+            if not name:
+                raise DocumentValidationError("성명을 입력해주세요.")
         except DocumentValidationError as exc:
             QMessageBox.warning(self, "입력 확인", str(exc))
             return

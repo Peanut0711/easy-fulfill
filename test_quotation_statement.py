@@ -292,6 +292,19 @@ class WorkbookGenerationTests(unittest.TestCase):
             finally:
                 wb.close()
 
+    def test_statement_allows_blank_organization_and_keeps_recipient_text_clean(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, _ = generate_document(
+                "거래명세서", "", "홍길동", date(2026, 8, 11), [item(30_000)],
+                templates_dir=TEMPLATES, output_dir=directory,
+            )
+            wb = load_workbook(path, data_only=False)
+            try:
+                self.assertEqual(path.name, "거래명세서_미입력_홍길동_2026.08.11.xlsx")
+                self.assertEqual(wb.active["B5"].value, "홍길동님 귀하")
+            finally:
+                wb.close()
+
     def test_output_filename_adds_a_number_when_the_base_name_exists(self):
         with tempfile.TemporaryDirectory() as directory:
             args = ("견적서", "테스트 소속", "홍길동", date(2026, 8, 11), [item(30_000)])
