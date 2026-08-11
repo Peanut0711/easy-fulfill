@@ -32,17 +32,20 @@ from quotation_statement import (
     ItemInput,
     NEGOTIATION_LIMIT,
     NegotiationRequired,
+    PAYMENT_METHODS,
+    PdfExportError,
     calculate_document,
+    export_xlsx_to_pdf,
     generate_document,
 )
 
 
-COL_API_NAME = 0
-COL_DOCUMENT_NAME = 1
-COL_SPEC = 2
-COL_PRICE = 3
+COL_STATUS = 0
+COL_API_NAME = 1
+COL_DOCUMENT_NAME = 2
+COL_SPEC = 3
 COL_QUANTITY = 4
-COL_STATUS = 5
+COL_PRICE = 5
 ROLE_API_PRICE = Qt.ItemDataRole.UserRole + 1
 
 
@@ -159,6 +162,8 @@ class QuotationStatementWidget(QWidget):
         form = QFormLayout()
         self.document_type = QComboBox()
         self.document_type.addItems(["견적서", "거래명세서"])
+        self.payment_method = QComboBox()
+        self.payment_method.addItems(PAYMENT_METHODS)
         self.organization_edit = QLineEdit()
         self.organization_edit.setPlaceholderText("예: 한국대학교 전자공학과")
         self.name_edit = QLineEdit()
@@ -167,6 +172,7 @@ class QuotationStatementWidget(QWidget):
         self.trade_date.setCalendarPopup(True)
         self.trade_date.setDisplayFormat("yyyy.MM.dd")
         form.addRow("문서 종류", self.document_type)
+        form.addRow("결제 방법", self.payment_method)
         form.addRow("소속명", self.organization_edit)
         form.addRow("성명", self.name_edit)
         form.addRow("거래일자", self.trade_date)
@@ -199,19 +205,25 @@ class QuotationStatementWidget(QWidget):
 
         self.table = QTableWidget(0, 6)
         self.table.setHorizontalHeaderLabels(
-            ["API 상품명 (확인용)", "문서용 상품명", "규격", "VAT 포함 기준단가", "수량", "상태"]
+            ["상태", "API 상품명 (확인용)", "문서용 상품명", "규격", "수량", "VAT포함 단가"]
         )
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.table.setAlternatingRowColors(True)
+        self.table.setStyleSheet(
+            "QTableWidget { selection-background-color: #dcefff; selection-color: #1f2937; }"
+            "QTableWidget::item:selected { background-color: #dcefff; color: #1f2937; }"
+        )
         self.table.verticalHeader().setVisible(False)
         header = self.table.horizontalHeader()
+        header.setSectionResizeMode(COL_STATUS, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(COL_API_NAME, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(COL_DOCUMENT_NAME, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(COL_SPEC, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(COL_DOCUMENT_NAME, QHeaderView.ResizeMode.Interactive)
+        header.setSectionResizeMode(COL_SPEC, QHeaderView.ResizeMode.Interactive)
         header.setSectionResizeMode(COL_PRICE, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(COL_QUANTITY, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(COL_STATUS, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.setColumnWidth(COL_DOCUMENT_NAME, 240)
+        self.table.setColumnWidth(COL_SPEC, 120)
         self.table.setMinimumHeight(260)
         root.addWidget(self.table, 1)
 
@@ -231,8 +243,11 @@ class QuotationStatementWidget(QWidget):
         self.reset_button = QPushButton("초기화")
         self.create_button = QPushButton("문서 생성")
         self.create_button.setMinimumWidth(120)
+        self.pdf_button = QPushButton("PDF로 출력")
+        self.pdf_button.setMinimumWidth(120)
         action_row.addWidget(self.reset_button)
         action_row.addWidget(self.create_button)
+        action_row.addWidget(self.pdf_button)
         root.addLayout(action_row)
 
         self.add_button.clicked.connect(self.add_item_row)
@@ -240,10 +255,17 @@ class QuotationStatementWidget(QWidget):
         self.search_button.clicked.connect(self.search_products)
         self.search_edit.returnPressed.connect(self.search_products)
         self.table.itemChanged.connect(self._on_item_changed)
-        self.document_type.currentTextChanged.connect(self.refresh_summary)
+        self.document_type.currentTextChanged.connect(self._on_document_type_changed)
         self.negotiated_check.toggled.connect(self.refresh_summary)
         self.reset_button.clicked.connect(self.reset_form)
         self.create_button.clicked.connect(self.create_document)
+        self.pdf_button.clicked.connect(lambda: self.create_document(as_pdf=True))
+
+    def _on_document_type_changed(self, document_type):
+        quote = document_type == "견적서"
+        self.payment_method.setEnabled(quote)
+        self.payment_method.setToolTip("" if quote else "결제 방법은 견적서에만 기재됩니다.")
+        self.refresh_summary()
 
     @staticmethod
     def _editable_item(text=""):
@@ -261,7 +283,7 @@ class QuotationStatementWidget(QWidget):
             self.table.setItem(row, COL_SPEC, self._editable_item())
             self.table.setItem(row, COL_PRICE, self._editable_item())
             self.table.setItem(row, COL_QUANTITY, self._editable_item("1"))
-            status = QTableWidgetItem("수동 입력")
+            status = QTableWidgetItem("수동")
             status.setFlags(status.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.table.setItem(row, COL_STATUS, status)
             self.table.setCurrentCell(row, COL_DOCUMENT_NAME)
@@ -281,17 +303,36 @@ class QuotationStatementWidget(QWidget):
     def _on_item_changed(self, item):
         if self._updating_table:
             return
+        if item.column() == COL_PRICE:
+            raw_price = item.text().replace(",", "").strip()
+            if raw_price.isdigit():
+                formatted = f"{int(raw_price):,}"
+                if item.text() != formatted:
+                    self._updating_table = True
+                    item.setText(formatted)
+                    self._updating_table = False
         row = item.row()
+        self._update_row_status(row)
+        self.refresh_summary()
+
+    def _update_row_status(self, row):
         api_name = self.table.item(row, COL_API_NAME).text().strip()
+        status_text = "수동"
         if api_name:
             doc_name = self.table.item(row, COL_DOCUMENT_NAME).text().strip()
+            specification = self.table.item(row, COL_SPEC).text().strip()
             price_text = self.table.item(row, COL_PRICE).text().replace(",", "").strip()
             api_price = self.table.item(row, COL_PRICE).data(ROLE_API_PRICE)
-            modified = doc_name != api_name or (api_price is not None and price_text != str(api_price))
+            modified = (
+                doc_name != api_name
+                or bool(specification)
+                or (api_price is not None and price_text != str(api_price))
+            )
+            status_text = "수정" if modified else "자동"
+        if self.table.item(row, COL_STATUS).text() != status_text:
             self._updating_table = True
-            self.table.item(row, COL_STATUS).setText("수동 수정" if modified else "API 적용")
+            self.table.item(row, COL_STATUS).setText(status_text)
             self._updating_table = False
-        self.refresh_summary()
 
     def _collect_items(self, strict=True):
         items = []
@@ -392,11 +433,11 @@ class QuotationStatementWidget(QWidget):
             self.table.item(row, COL_API_NAME).setText(name)
             self.table.item(row, COL_DOCUMENT_NAME).setText(name)
             price_item = self.table.item(row, COL_PRICE)
-            price_item.setText(str(price))
+            price_item.setText(f"{price:,}")
             price_item.setData(ROLE_API_PRICE, price)
-            self.table.item(row, COL_STATUS).setText("API 적용")
         finally:
             self._updating_table = False
+        self._update_row_status(row)
         self.refresh_summary()
 
     def reset_form(self):
@@ -405,6 +446,7 @@ class QuotationStatementWidget(QWidget):
         self.organization_edit.clear()
         self.name_edit.clear()
         self.trade_date.setDate(QDate.currentDate())
+        self.payment_method.setCurrentIndex(0)
         self.search_edit.clear()
         self.search_status.setText("API를 사용하지 않아도 아래 표에 상품명과 가격을 직접 입력할 수 있습니다.")
         self.negotiated_check.setChecked(False)
@@ -412,7 +454,7 @@ class QuotationStatementWidget(QWidget):
         self.table.setRowCount(0)
         self.add_item_row()
 
-    def create_document(self):
+    def create_document(self, as_pdf=False):
         try:
             items = self._collect_items(strict=True)
             negotiated = self._negotiation_mode and self.negotiated_check.isChecked()
@@ -431,11 +473,14 @@ class QuotationStatementWidget(QWidget):
             f"- {item.document_name} / {item.specification or '-'} / {item.quantity}개 / 단가 {item.gross_unit_price:,}원"
             for item in result.items
         )
+        output_label = "엑셀과 PDF를" if as_pdf else "엑셀을"
         text = (
-            f"{self.document_type.currentText()}를 생성할까요?\n\n{lines}\n\n"
+            f"{self.document_type.currentText()} {output_label} 생성할까요?\n\n{lines}\n\n"
             f"공급가액 {result.supply_total:,}원 + 세액 {result.tax_total:,}원 = "
             f"최종 {result.grand_total:,}원"
         )
+        if self.document_type.currentText() == "견적서":
+            text += f"\n결제 방법: {PAYMENT_METHODS[self.payment_method.currentText()]}"
         if QMessageBox.question(self, "문서 생성 확인", text) != QMessageBox.StandardButton.Yes:
             return
 
@@ -447,11 +492,34 @@ class QuotationStatementWidget(QWidget):
                 self.trade_date.date().toPython(),
                 items,
                 negotiated=negotiated,
+                payment_method=self.payment_method.currentText(),
                 templates_dir=self._base_dir / "templates",
                 output_dir=self._base_dir / "output",
             )
         except Exception as exc:
             QMessageBox.critical(self, "문서 생성 실패", str(exc))
+            return
+
+        if as_pdf:
+            try:
+                pdf_path = export_xlsx_to_pdf(path)
+            except PdfExportError as exc:
+                QMessageBox.warning(
+                    self,
+                    "PDF 출력 실패",
+                    f"PDF 변환에 실패했습니다. 엑셀 파일은 생성되었습니다.\n\n{exc}",
+                )
+                if self._on_created:
+                    self._on_created(str(path), f"{self.document_type.currentText()} 엑셀 파일이 생성되었습니다.")
+                return
+            if self._on_created:
+                self._on_created(
+                    str(pdf_path),
+                    f"{self.document_type.currentText()} 엑셀 및 PDF 파일이 생성되었습니다.",
+                    "PDF 열기",
+                )
+            else:
+                QMessageBox.information(self, "완료", f"엑셀 및 PDF 파일을 생성했습니다.\n{pdf_path}")
             return
 
         if self._on_created:

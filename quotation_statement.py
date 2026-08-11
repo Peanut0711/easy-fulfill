@@ -1,6 +1,6 @@
 """Quotation and transaction-statement calculation and XLSX generation.
 
-The module deliberately has no Qt dependency.  It owns the fixed direct-trade
+The module deliberately has no Qt dependency.  It owns the fixed pricing
 rules, per-unit VAT rounding, and the small amount of template manipulation
 needed by both documents.
 """
@@ -12,7 +12,9 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
+import os
 import re
+import subprocess
 
 from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter, range_boundaries
@@ -24,6 +26,14 @@ SHIPPING_GROSS = 3000
 SHIPPING_SUPPLY = 2727
 SHIPPING_TAX = 273
 NEGOTIATION_LIMIT = 5_000_000
+PAYMENT_METHODS = {
+    "직거래": "직접 거래",
+    "네이버": "네이버 스토어 거래",
+    "쿠팡": "쿠팡 스토어 거래",
+    "G마켓": "G마켓 거래",
+    "옥션": "옥션 거래",
+    "11번가": "11번가 거래",
+}
 
 
 class DocumentValidationError(ValueError):
@@ -32,6 +42,10 @@ class DocumentValidationError(ValueError):
 
 class NegotiationRequired(DocumentValidationError):
     """Raised when an order over five million won is not confirmed."""
+
+
+class PdfExportError(RuntimeError):
+    """Raised when Excel cannot export the generated workbook as PDF."""
 
 
 @dataclass(frozen=True)
@@ -307,6 +321,7 @@ def generate_document(
     items: list[ItemInput] | tuple[ItemInput, ...],
     *,
     negotiated: bool = False,
+    payment_method: str = "직거래",
     templates_dir: str | Path | None = None,
     output_dir: str | Path | None = None,
 ) -> tuple[Path, CalculationResult]:
@@ -324,6 +339,10 @@ def generate_document(
     wb, ws, total_row, extra = _prepare_sheet(templates / template_name, line_count, quote=is_quote)
     try:
         if is_quote:
+            try:
+                payment_text = PAYMENT_METHODS[payment_method]
+            except KeyError:
+                raise DocumentValidationError("결제 방법을 확인해주세요.") from None
             ws["B4"] = str(organization).strip()
             ws["D6"] = f"{str(name).strip()}님 귀하"
             ws["D7"] = trade_date.strftime("%Y.%m.%d")
@@ -336,12 +355,10 @@ def generate_document(
             )
             ws[f"R{total_row}"] = result.supply_total
             ws[f"V{total_row}"] = result.tax_total
-            footer_row = total_row + 4
-            rate_text = "협의 금액" if result.negotiated else f"{int(result.discount_rate * 100)}%"
-            ws[f"B{footer_row}"] = f"할인 : {rate_text} (할인액 {result.discount_amount:,}원)"
-            ws[f"B{footer_row + 1}"] = "결제 방법 : 직거래 구입"
-            ws[f"B{footer_row + 2}"] = None
-            ws.print_area = f"A1:V{30 + extra}"
+            payment_row = total_row + 4
+            ws[f"B{payment_row}"] = f"결제 방법 : {payment_text}"
+            ws[f"B{payment_row + 1}"] = None
+            ws.print_area = f"A1:V{29 + extra}"
         else:
             ws["B5"] = f"{str(organization).strip()} {str(name).strip()}님 귀하"
             # 날짜 일련번호를 표시하는 일부 뷰어도 있으므로 문서에는 고정 문자열로 기록한다.
@@ -365,3 +382,55 @@ def generate_document(
     finally:
         wb.close()
     return path, result
+
+
+def export_xlsx_to_pdf(xlsx_path: str | Path) -> Path:
+    """Excel COM으로 XLSX의 인쇄영역을 그대로 PDF로 내보낸다."""
+    source = Path(xlsx_path).resolve()
+    if not source.is_file():
+        raise PdfExportError(f"엑셀 파일을 찾을 수 없습니다: {source}")
+    target = source.with_suffix(".pdf")
+    script = r'''
+$ErrorActionPreference = 'Stop'
+$excel = $null
+$book = $null
+try {
+    $excel = New-Object -ComObject Excel.Application
+    $excel.Visible = $false
+    $excel.DisplayAlerts = $false
+    $book = $excel.Workbooks.Open($env:EASY_FULFILL_XLSX_PATH, 0, $true)
+    $book.ExportAsFixedFormat(0, $env:EASY_FULFILL_PDF_PATH, 0, $true, $false)
+} finally {
+    if ($book -ne $null) {
+        $book.Close($false)
+        [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($book)
+    }
+    if ($excel -ne $null) {
+        $excel.Quit()
+        [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($excel)
+    }
+}
+'''
+    env = os.environ.copy()
+    env["EASY_FULFILL_XLSX_PATH"] = str(source)
+    env["EASY_FULFILL_PDF_PATH"] = str(target)
+    try:
+        completed = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=60,
+            env=env,
+        )
+    except FileNotFoundError as exc:
+        raise PdfExportError("Windows PowerShell을 찾을 수 없습니다.") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise PdfExportError("Excel PDF 변환 시간이 초과되었습니다.") from exc
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout or "알 수 없는 오류").strip()
+        raise PdfExportError(f"Excel PDF 변환 실패: {detail}")
+    if not target.is_file() or target.stat().st_size == 0:
+        raise PdfExportError("Excel이 PDF 파일을 만들지 못했습니다.")
+    return target

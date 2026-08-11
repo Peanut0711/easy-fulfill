@@ -6139,15 +6139,15 @@ class MainWindow(QMainWindow):
         self.show_excel_created_message(output_file, "송장 엑셀 파일이 생성되었습니다.")
         return output_file
 
-    def show_excel_created_message(self, output_file, message_text):
-        """엑셀 생성 완료 메시지를 표시합니다."""
+    def show_excel_created_message(self, output_file, message_text, open_file_label="엑셀 열기"):
+        """생성 파일의 열기·폴더 열기 메시지를 표시합니다."""
         msg = QMessageBox()
         msg.setIcon(QMessageBox.Information)
         msg.setWindowTitle("완료")
         msg.setText(message_text)
 
         open_location_button = msg.addButton("폴더 열기", QMessageBox.ActionRole)
-        open_file_button = msg.addButton("엑셀 열기", QMessageBox.ActionRole)
+        open_file_button = msg.addButton(open_file_label, QMessageBox.ActionRole)
         close_button = msg.addButton("닫기", QMessageBox.RejectRole)
 
         msg.setDefaultButton(close_button)
@@ -6158,7 +6158,7 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, "오류", "파일 위치를 열 수 없습니다.")
         elif msg.clickedButton() == open_file_button:
             if not self.open_file_with_default_app(output_file):
-                QMessageBox.warning(self, "오류", "파일을 열 수 없습니다.\n엑셀이 설치되어 있는지 확인해주세요.")
+                QMessageBox.warning(self, "오류", "파일을 열 수 없습니다.\n연결된 기본 앱을 확인해주세요.")
 
     def on_naver_index_changed(self, text):
         """네이버 인덱스가 수동으로 변경되었을 때 호출됩니다."""

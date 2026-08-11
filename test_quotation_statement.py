@@ -3,6 +3,7 @@ import unittest
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
+import subprocess
 from unittest.mock import patch
 
 from openpyxl import load_workbook
@@ -10,7 +11,9 @@ from openpyxl import load_workbook
 from quotation_statement import (
     ItemInput,
     NegotiationRequired,
+    PAYMENT_METHODS,
     calculate_document,
+    export_xlsx_to_pdf,
     generate_document,
 )
 import naver_commerce
@@ -25,6 +28,16 @@ def item(price, quantity=1, name="테스트 상품", spec="규격"):
 
 
 class CalculationTests(unittest.TestCase):
+    def test_payment_method_order_and_labels(self):
+        self.assertEqual(list(PAYMENT_METHODS.items()), [
+            ("직거래", "직접 거래"),
+            ("네이버", "네이버 스토어 거래"),
+            ("쿠팡", "쿠팡 스토어 거래"),
+            ("G마켓", "G마켓 거래"),
+            ("옥션", "옥션 거래"),
+            ("11번가", "11번가 거래"),
+        ])
+
     def test_discount_boundaries(self):
         cases = [
             (100_000, Decimal("0"), 3_000),
@@ -98,6 +111,23 @@ class WorkbookTests(unittest.TestCase):
                 wb.close()
 
 
+class PdfExportTests(unittest.TestCase):
+    def test_pdf_export_uses_xlsx_sibling_path(self):
+        with tempfile.TemporaryDirectory() as directory:
+            xlsx = Path(directory) / "document.xlsx"
+            xlsx.write_bytes(b"xlsx")
+
+            def fake_run(args, **kwargs):
+                Path(kwargs["env"]["EASY_FULFILL_PDF_PATH"]).write_bytes(b"%PDF-1.4")
+                return subprocess.CompletedProcess(args, 0, "", "")
+
+            with patch("quotation_statement.subprocess.run", side_effect=fake_run):
+                pdf = export_xlsx_to_pdf(xlsx)
+            self.assertEqual(pdf, xlsx.with_suffix(".pdf"))
+            self.assertTrue(pdf.is_file())
+            self.assertGreater(pdf.stat().st_size, 0)
+
+
 class NaverProductTests(unittest.TestCase):
     def test_sale_product_list_uses_discounted_price_and_smartstore_only(self):
         response = {
@@ -146,6 +176,7 @@ class WorkbookGenerationTests(unittest.TestCase):
                 self.assertEqual(ws["N23"].value, 2_727)
                 self.assertEqual(ws["V23"].value, 273)
                 self.assertEqual(ws["R24"].value, result.supply_total)
+                self.assertEqual(ws["B28"].value, "결제 방법 : 직접 거래")
             finally:
                 wb.close()
 
@@ -154,7 +185,7 @@ class WorkbookGenerationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path, result = generate_document(
                 "견적서", "테스트 소속", "홍길동", date(2026, 8, 11), items,
-                templates_dir=TEMPLATES, output_dir=directory,
+                payment_method="네이버", templates_dir=TEMPLATES, output_dir=directory,
             )
             wb = load_workbook(path, data_only=False)
             try:
@@ -163,9 +194,11 @@ class WorkbookGenerationTests(unittest.TestCase):
                 self.assertEqual(ws["R24"].value, result.supply_total)
                 self.assertEqual(ws["V24"].value, result.tax_total)
                 self.assertEqual(ws["R12"].value, result.grand_total)
-                self.assertEqual(ws["B29"].value, "결제 방법 : 직거래 구입")
+                self.assertEqual(result.discount_rate, Decimal("0.05"))
+                self.assertEqual(ws["B28"].value, "결제 방법 : 네이버 스토어 거래")
+                self.assertIsNone(ws["B29"].value)
                 self.assertIn("B23:F23", {str(r) for r in ws.merged_cells.ranges})
-                self.assertEqual(str(ws.print_area), "'스토어 견적서'!$A$1:$V$31")
+                self.assertEqual(str(ws.print_area), "'스토어 견적서'!$A$1:$V$30")
                 self.assertEqual(ws.page_setup.fitToWidth, 1)
                 self.assertEqual(ws.page_setup.fitToHeight, 0)
                 self.assertEqual(len(ws._images), 1)
