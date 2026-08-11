@@ -133,7 +133,8 @@ def discount_rate_for(goods_total: int) -> Decimal:
 
 
 def calculate_document(
-    items: list[ItemInput] | tuple[ItemInput, ...], *, negotiated: bool = False
+    items: list[ItemInput] | tuple[ItemInput, ...], *, negotiated: bool = False,
+    free_shipping: bool = False,
 ) -> CalculationResult:
     if not items:
         raise DocumentValidationError("품목을 한 개 이상 입력해주세요.")
@@ -189,7 +190,7 @@ def calculate_document(
         tax_total += tax_amount
         discounted_goods_total += gross_unit * quantity
 
-    shipping = SHIPPING_GROSS if goods_total <= 100_000 and not negotiated else 0
+    shipping = SHIPPING_GROSS if goods_total <= 100_000 and not (negotiated or free_shipping) else 0
     if shipping:
         supply_total += SHIPPING_SUPPLY
         tax_total += SHIPPING_TAX
@@ -374,13 +375,14 @@ def generate_document(
     items: list[ItemInput] | tuple[ItemInput, ...],
     *,
     negotiated: bool = False,
+    free_shipping: bool = False,
     payment_method: str = "직거래",
     delivery_term: str = "",
     templates_dir: str | Path | None = None,
     output_dir: str | Path | None = None,
 ) -> tuple[Path, CalculationResult]:
     _validate_header(organization, name, trade_date)
-    result = calculate_document(items, negotiated=negotiated)
+    result = calculate_document(items, negotiated=negotiated, free_shipping=free_shipping)
     base = Path(__file__).resolve().parent
     templates = Path(templates_dir) if templates_dir else base / "templates"
     output = Path(output_dir) if output_dir else base / "output"

@@ -300,8 +300,10 @@ class QuotationStatementWidget(QWidget):
         self.summary_label.setStyleSheet("font-weight: 600; padding: 4px;")
         self.negotiated_check = QCheckBox("협의 완료 (현재 입력 단가를 협의 확정가로 사용)")
         self.negotiated_check.setVisible(False)
+        self.free_shipping_check = QCheckBox("배송비 면제")
         summary_layout.addWidget(self.summary_label)
         summary_layout.addWidget(self.negotiated_check)
+        summary_layout.addWidget(self.free_shipping_check)
         root.addWidget(summary_group)
 
         action_row = QHBoxLayout()
@@ -323,6 +325,7 @@ class QuotationStatementWidget(QWidget):
         self.table.itemChanged.connect(self._on_item_changed)
         self.document_type.currentTextChanged.connect(self._on_document_type_changed)
         self.negotiated_check.toggled.connect(self.refresh_summary)
+        self.free_shipping_check.toggled.connect(self.refresh_summary)
         self.reset_button.clicked.connect(self.reset_form)
         self.create_button.clicked.connect(self.create_document)
         self.pdf_button.clicked.connect(lambda: self.create_document(as_pdf=True))
@@ -448,7 +451,7 @@ class QuotationStatementWidget(QWidget):
             if self._negotiation_mode:
                 result = raw_result
             else:
-                result = calculate_document(items)
+                result = calculate_document(items, free_shipping=self.free_shipping_check.isChecked())
         except DocumentValidationError as exc:
             self.summary_label.setText(str(exc))
             return
@@ -570,6 +573,7 @@ class QuotationStatementWidget(QWidget):
         self.search_edit.clear()
         self.search_status.setText("API를 사용하지 않아도 아래 표에 상품명과 가격을 직접 입력할 수 있습니다.")
         self.negotiated_check.setChecked(False)
+        self.free_shipping_check.setChecked(False)
         self._negotiation_mode = False
         self.table.setRowCount(0)
         self.add_item_row()
@@ -578,9 +582,12 @@ class QuotationStatementWidget(QWidget):
         try:
             items = self._collect_items(strict=True)
             negotiated = self._negotiation_mode and self.negotiated_check.isChecked()
+            free_shipping = self.free_shipping_check.isChecked()
             if self._negotiation_mode and not negotiated:
                 raise NegotiationRequired("500만 원 초과 주문은 협의 완료를 확인해야 합니다.")
-            result = calculate_document(items, negotiated=negotiated)
+            result = calculate_document(
+                items, negotiated=negotiated, free_shipping=free_shipping
+            )
             organization = self.organization_edit.text().strip()
             name = self.name_edit.text().strip()
             if not organization or not name:
@@ -616,6 +623,7 @@ class QuotationStatementWidget(QWidget):
                 self.trade_date.date().toPython(),
                 items,
                 negotiated=negotiated,
+                free_shipping=free_shipping,
                 payment_method=self.payment_method.currentText(),
                 delivery_term=self.delivery_edit.text(),
                 templates_dir=self._base_dir / "templates",

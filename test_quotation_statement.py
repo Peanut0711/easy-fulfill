@@ -82,6 +82,13 @@ class CalculationTests(unittest.TestCase):
         self.assertEqual(result.supply_total, 8_182 + 2_727)
         self.assertEqual(result.tax_total, 818 + 273)
 
+    def test_free_shipping_removes_low_order_shipping(self):
+        result = calculate_document([item(9_000)], free_shipping=True)
+        self.assertEqual(result.shipping_gross, 0)
+        self.assertEqual(result.supply_total, 8_182)
+        self.assertEqual(result.tax_total, 818)
+        self.assertEqual(result.grand_total, 9_000)
+
     def test_one_rate_is_applied_to_all_items(self):
         result = calculate_document([item(70_000, name="A"), item(50_001, name="B")])
         self.assertEqual(result.discount_rate, Decimal("0.05"))
