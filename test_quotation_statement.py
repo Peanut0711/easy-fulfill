@@ -172,6 +172,7 @@ class WorkbookGenerationTests(unittest.TestCase):
             wb = load_workbook(path, rich_text=True)
             try:
                 self.assertEqual(path.name, "견적서_테스트_소속_홍길동_2026.08.11.xlsx")
+                self.assertEqual(wb.active["B26"].value, "기본 납기 : 결제 후 즉시")
                 label = wb.active["B12"].value
                 self.assertEqual(str(label), "견적금액 (공급가액 + 세액) ")
                 self.assertEqual([part.font.sz for part in label], [14.0, 9.0])
@@ -224,7 +225,7 @@ class WorkbookGenerationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path, result = generate_document(
                 "견적서", "테스트 소속", "홍길동", date(2026, 8, 11), items,
-                payment_method="네이버", templates_dir=TEMPLATES, output_dir=directory,
+                payment_method="네이버", delivery_term="발주 후 3일", templates_dir=TEMPLATES, output_dir=directory,
             )
             wb = load_workbook(path, data_only=False)
             try:
@@ -238,6 +239,7 @@ class WorkbookGenerationTests(unittest.TestCase):
                 self.assertEqual(ws["V24"].number_format, WON_NUMBER_FORMAT)
                 self.assertEqual(result.discount_rate, Decimal("0.05"))
                 self.assertEqual(ws["B28"].value, "결제 방법 : 네이버 스토어 거래")
+                self.assertEqual(ws["B27"].value, "기본 납기 : 발주 후 3일")
                 self.assertIsNone(ws["B29"].value)
                 self.assertIn("B23:F23", {str(r) for r in ws.merged_cells.ranges})
                 self.assertEqual(str(ws.print_area), "'스토어 견적서'!$A$1:$V$30")

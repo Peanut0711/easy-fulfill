@@ -222,6 +222,9 @@ class QuotationStatementWidget(QWidget):
         self.document_type.addItems(["견적서", "거래명세서"])
         self.payment_method = QComboBox()
         self.payment_method.addItems(PAYMENT_METHODS)
+        self.delivery_label = QLabel("납기")
+        self.delivery_edit = QLineEdit()
+        self.delivery_edit.setPlaceholderText("결제 후 즉시")
         self.organization_edit = QLineEdit()
         self.organization_edit.setPlaceholderText("예: 한국대학교 전자공학과")
         self.name_edit = QLineEdit()
@@ -234,6 +237,7 @@ class QuotationStatementWidget(QWidget):
         form.addRow("성명", self.name_edit)
         form.addRow("거래일자", self.trade_date)
         form.addRow("결제 방법", self.payment_method)
+        form.addRow(self.delivery_label, self.delivery_edit)
         info_layout.addLayout(form, 1)
 
         search_layout = QVBoxLayout()
@@ -327,6 +331,8 @@ class QuotationStatementWidget(QWidget):
         quote = document_type == "견적서"
         self.payment_method.setEnabled(quote)
         self.payment_method.setToolTip("" if quote else "결제 방법은 견적서에만 기재됩니다.")
+        self.delivery_label.setVisible(quote)
+        self.delivery_edit.setVisible(quote)
         self.refresh_summary()
 
     @staticmethod
@@ -560,6 +566,7 @@ class QuotationStatementWidget(QWidget):
         self.name_edit.clear()
         self.trade_date.setDate(QDate.currentDate())
         self.payment_method.setCurrentIndex(0)
+        self.delivery_edit.clear()
         self.search_edit.clear()
         self.search_status.setText("API를 사용하지 않아도 아래 표에 상품명과 가격을 직접 입력할 수 있습니다.")
         self.negotiated_check.setChecked(False)
@@ -610,6 +617,7 @@ class QuotationStatementWidget(QWidget):
                 items,
                 negotiated=negotiated,
                 payment_method=self.payment_method.currentText(),
+                delivery_term=self.delivery_edit.text(),
                 templates_dir=self._base_dir / "templates",
                 output_dir=self._base_dir / "output",
             )

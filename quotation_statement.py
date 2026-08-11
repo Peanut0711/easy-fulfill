@@ -358,6 +358,7 @@ def generate_document(
     *,
     negotiated: bool = False,
     payment_method: str = "직거래",
+    delivery_term: str = "",
     templates_dir: str | Path | None = None,
     output_dir: str | Path | None = None,
 ) -> tuple[Path, CalculationResult]:
@@ -394,6 +395,7 @@ def generate_document(
             ws[f"V{total_row}"] = result.tax_total
             for cell in (ws["R12"], ws[f"R{total_row}"], ws[f"V{total_row}"]):
                 cell.number_format = WON_NUMBER_FORMAT
+            ws[f"B{total_row + 3}"] = f"기본 납기 : {str(delivery_term).strip() or '결제 후 즉시'}"
             payment_row = total_row + 4
             ws[f"B{payment_row}"] = f"결제 방법 : {payment_text}"
             ws[f"B{payment_row + 1}"] = None
