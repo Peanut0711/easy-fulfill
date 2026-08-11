@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMessageBox,
+    QProgressDialog,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -34,7 +35,6 @@ from quotation_statement import (
     NEGOTIATION_LIMIT,
     NegotiationRequired,
     PAYMENT_METHODS,
-    PdfExportError,
     calculate_document,
     export_xlsx_to_pdf,
     generate_document,
@@ -69,6 +69,20 @@ class ProductSearchThread(QThread):
         self.result_ready.emit(result)
 
 
+class PdfExportThread(QThread):
+    result_ready = Signal(dict)
+
+    def __init__(self, xlsx_path, parent=None):
+        super().__init__(parent)
+        self._xlsx_path = Path(xlsx_path)
+
+    def run(self):
+        try:
+            self.result_ready.emit({"ok": True, "path": str(export_xlsx_to_pdf(self._xlsx_path))})
+        except Exception as exc:
+            self.result_ready.emit({"ok": False, "error": str(exc)})
+
+
 class ProductChoiceDialog(QDialog):
     def __init__(self, products, query: str, parent=None):
         super().__init__(parent)
@@ -78,7 +92,7 @@ class ProductChoiceDialog(QDialog):
         self.selected_product = None
 
         layout = QVBoxLayout(self)
-        guide = QLabel("상품명과 가격을 확인한 뒤 행을 선택하고 ‘적용’을 누르세요. 단순 선택만으로는 입력값이 바뀌지 않습니다.")
+        guide = QLabel("상품명과 가격을 확인한 뒤 행을 선택하고 ‘적용’을 누르세요. 상품명은 더블클릭해도 바로 적용됩니다.")
         guide.setWordWrap(True)
         layout.addWidget(guide)
 
@@ -91,6 +105,10 @@ class ProductChoiceDialog(QDialog):
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.table.setStyleSheet(
+            "QTableWidget::item:selected { background-color: #eef1f4; color: #111827; }"
+        )
         self.table.verticalHeader().setVisible(False)
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
@@ -109,6 +127,7 @@ class ProductChoiceDialog(QDialog):
             lambda: self.apply_button.setEnabled(self.table.currentRow() >= 0)
         )
         self.table.cellClicked.connect(self._open_product_link)
+        self.table.cellDoubleClicked.connect(self._apply_from_product_name)
         buttons.accepted.connect(self._accept_selection)
         buttons.rejected.connect(self.reject)
         self._populate(query)
@@ -160,6 +179,10 @@ class ProductChoiceDialog(QDialog):
         if url and not QDesktopServices.openUrl(QUrl(str(url))):
             QMessageBox.warning(self, "상품 페이지", "기본 브라우저에서 상품 페이지를 열 수 없습니다.")
 
+    def _apply_from_product_name(self, row, column):
+        if column == 1:
+            self._accept_selection()
+
     def _accept_selection(self):
         row = self.table.currentRow()
         if row < 0:
@@ -175,6 +198,8 @@ class QuotationStatementWidget(QWidget):
         self._on_created = on_created
         self._base_dir = Path(base_dir or Path(__file__).resolve().parent)
         self._search_thread = None
+        self._pdf_thread = None
+        self._pdf_progress = None
         self._prefetch_thread = None
         self._prefetch_result = None
         self._prefetch_complete = False
@@ -205,10 +230,10 @@ class QuotationStatementWidget(QWidget):
         self.trade_date.setCalendarPopup(True)
         self.trade_date.setDisplayFormat("yyyy.MM.dd")
         form.addRow("문서 종류", self.document_type)
-        form.addRow("결제 방법", self.payment_method)
         form.addRow("소속명", self.organization_edit)
         form.addRow("성명", self.name_edit)
         form.addRow("거래일자", self.trade_date)
+        form.addRow("결제 방법", self.payment_method)
         info_layout.addLayout(form, 1)
 
         search_layout = QVBoxLayout()
@@ -216,8 +241,10 @@ class QuotationStatementWidget(QWidget):
         search_row = QHBoxLayout()
         self.search_edit = QLineEdit()
         self.search_edit.setPlaceholderText("예: stm32 h7 개발보드")
+        self.search_edit.setFixedWidth(350)
         self.search_button = QPushButton("상품 찾기")
-        search_row.addWidget(self.search_edit, 1)
+        self.search_button.setFixedWidth(82)
+        search_row.addWidget(self.search_edit)
         search_row.addWidget(self.search_button)
         search_layout.addLayout(search_row)
         self.search_status = QLabel("API를 사용하지 않아도 아래 표에 상품명과 가격을 직접 입력할 수 있습니다.")
@@ -346,9 +373,9 @@ class QuotationStatementWidget(QWidget):
         if self._updating_table:
             return
         if item.column() == COL_PRICE:
-            raw_price = item.text().replace(",", "").strip()
+            raw_price = item.text().replace(",", "").replace("원", "").strip()
             if raw_price.isdigit():
-                formatted = f"{int(raw_price):,}"
+                formatted = f"{int(raw_price):,}원"
                 if item.text() != formatted:
                     self._updating_table = True
                     item.setText(formatted)
@@ -363,7 +390,7 @@ class QuotationStatementWidget(QWidget):
         if api_name:
             doc_name = self.table.item(row, COL_DOCUMENT_NAME).text().strip()
             specification = self.table.item(row, COL_SPEC).text().strip()
-            price_text = self.table.item(row, COL_PRICE).text().replace(",", "").strip()
+            price_text = self.table.item(row, COL_PRICE).text().replace(",", "").replace("원", "").strip()
             api_price = self.table.item(row, COL_PRICE).data(ROLE_API_PRICE)
             modified = (
                 doc_name != api_name
@@ -381,7 +408,7 @@ class QuotationStatementWidget(QWidget):
         for row in range(self.table.rowCount()):
             name = self.table.item(row, COL_DOCUMENT_NAME).text().strip()
             spec = self.table.item(row, COL_SPEC).text().strip()
-            price = self.table.item(row, COL_PRICE).text().replace(",", "").strip()
+            price = self.table.item(row, COL_PRICE).text().replace(",", "").replace("원", "").strip()
             quantity = self.table.item(row, COL_QUANTITY).text().strip()
             if not (name or price or spec) and quantity in ("", "1"):
                 continue
@@ -515,7 +542,7 @@ class QuotationStatementWidget(QWidget):
             self.table.item(row, COL_API_NAME).setText(name)
             self.table.item(row, COL_DOCUMENT_NAME).setText(name)
             price_item = self.table.item(row, COL_PRICE)
-            price_item.setText(f"{price:,}")
+            price_item.setText(f"{price:,}원")
             price_item.setData(ROLE_API_PRICE, price)
         finally:
             self._updating_table = False
@@ -523,7 +550,11 @@ class QuotationStatementWidget(QWidget):
         self.refresh_summary()
 
     def reset_form(self):
-        if QMessageBox.question(self, "초기화", "입력한 문서 내용을 모두 지울까요?") != QMessageBox.StandardButton.Yes:
+        confirmation = QMessageBox(QMessageBox.Icon.Question, "초기화", "입력한 문서 내용을 모두 지울까요?", parent=self)
+        yes_button = confirmation.addButton("예", QMessageBox.ButtonRole.YesRole)
+        confirmation.addButton("아니오", QMessageBox.ButtonRole.NoRole)
+        confirmation.exec()
+        if confirmation.clickedButton() is not yes_button:
             return
         self.organization_edit.clear()
         self.name_edit.clear()
@@ -563,7 +594,11 @@ class QuotationStatementWidget(QWidget):
         )
         if self.document_type.currentText() == "견적서":
             text += f"\n결제 방법: {PAYMENT_METHODS[self.payment_method.currentText()]}"
-        if QMessageBox.question(self, "문서 생성 확인", text) != QMessageBox.StandardButton.Yes:
+        confirmation = QMessageBox(QMessageBox.Icon.Question, "문서 생성 확인", text, parent=self)
+        yes_button = confirmation.addButton("예", QMessageBox.ButtonRole.YesRole)
+        confirmation.addButton("아니오", QMessageBox.ButtonRole.NoRole)
+        confirmation.exec()
+        if confirmation.clickedButton() is not yes_button:
             return
 
         try:
@@ -583,28 +618,53 @@ class QuotationStatementWidget(QWidget):
             return
 
         if as_pdf:
-            try:
-                pdf_path = export_xlsx_to_pdf(path)
-            except PdfExportError as exc:
-                QMessageBox.warning(
-                    self,
-                    "PDF 출력 실패",
-                    f"PDF 변환에 실패했습니다. 엑셀 파일은 생성되었습니다.\n\n{exc}",
-                )
-                if self._on_created:
-                    self._on_created(str(path), f"{self.document_type.currentText()} 엑셀 파일이 생성되었습니다.")
-                return
-            if self._on_created:
-                self._on_created(
-                    str(pdf_path),
-                    f"{self.document_type.currentText()} 엑셀 및 PDF 파일이 생성되었습니다.",
-                    "PDF 열기",
-                )
-            else:
-                QMessageBox.information(self, "완료", f"엑셀 및 PDF 파일을 생성했습니다.\n{pdf_path}")
+            self._start_pdf_export(path, self.document_type.currentText())
             return
 
         if self._on_created:
             self._on_created(str(path), f"{self.document_type.currentText()} 파일이 생성되었습니다.")
         else:
             QMessageBox.information(self, "완료", f"문서를 생성했습니다.\n{path}")
+
+    def _start_pdf_export(self, xlsx_path, document_type):
+        self.create_button.setEnabled(False)
+        self.pdf_button.setEnabled(False)
+        progress = QProgressDialog("PDF를 변환하고 있습니다. 잠시만 기다려주세요.", None, 0, 0, self)
+        progress.setWindowTitle("PDF 만들기")
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setWindowFlag(Qt.WindowType.WindowCloseButtonHint, False)
+        progress.setCancelButton(None)
+        progress.setMinimumDuration(0)
+        progress.setAutoClose(False)
+        progress.setAutoReset(False)
+        progress.show()
+        self._pdf_progress = progress
+        self._pdf_thread = PdfExportThread(xlsx_path, self)
+        self._pdf_thread.result_ready.connect(
+            lambda result: self._finish_pdf_export(result, xlsx_path, document_type)
+        )
+        self._pdf_thread.finished.connect(self._pdf_thread.deleteLater)
+        self._pdf_thread.start()
+
+    def _finish_pdf_export(self, result, xlsx_path, document_type):
+        if self._pdf_progress:
+            self._pdf_progress.close()
+            self._pdf_progress.deleteLater()
+            self._pdf_progress = None
+        self._pdf_thread = None
+        self.create_button.setEnabled(True)
+        self.pdf_button.setEnabled(True)
+        if not result.get("ok"):
+            QMessageBox.warning(
+                self,
+                "PDF 출력 실패",
+                f"PDF 변환에 실패했습니다. 엑셀 파일은 생성되었습니다.\n\n{result.get('error', '알 수 없는 오류')}",
+            )
+            if self._on_created:
+                self._on_created(str(xlsx_path), f"{document_type} 엑셀 파일이 생성되었습니다.")
+            return
+        pdf_path = result["path"]
+        if self._on_created:
+            self._on_created(str(pdf_path), f"{document_type} 엑셀 및 PDF 파일이 생성되었습니다.", "PDF 열기")
+        else:
+            QMessageBox.information(self, "완료", f"엑셀 및 PDF 파일을 생성했습니다.\n{pdf_path}")
