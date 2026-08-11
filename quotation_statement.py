@@ -400,6 +400,8 @@ def generate_document(
             ws[f"B{payment_row}"] = f"결제 방법 : {payment_text}"
             ws[f"B{payment_row + 1}"] = None
             ws.print_area = f"A1:V{29 + extra}"
+            # Keep quotation content at the top of the A4 page when few items exist.
+            ws.print_options.verticalCentered = False
         else:
             ws["B5"] = f"{str(organization).strip()} {str(name).strip()}님 귀하"
             # 날짜 일련번호를 표시하는 일부 뷰어도 있으므로 문서에는 고정 문자열로 기록한다.
@@ -463,6 +465,7 @@ try {
     $sheet.PageSetup.Zoom = $false
     $sheet.PageSetup.FitToPagesWide = 1
     $sheet.PageSetup.FitToPagesTall = 1
+    $sheet.PageSetup.CenterVertically = $false
     $book.ExportAsFixedFormat(0, $env:EASY_FULFILL_PDF_PATH, 0, $true, $false)
 } finally {
     if ($book -ne $null) {
