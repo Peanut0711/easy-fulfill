@@ -9,6 +9,7 @@ from PySide6.QtCore import QDate, QThread, QUrl, Qt, Signal
 from PySide6.QtGui import QColor, QDesktopServices
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QButtonGroup,
     QCheckBox,
     QComboBox,
     QDateEdit,
@@ -23,6 +24,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressDialog,
     QPushButton,
+    QRadioButton,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -259,6 +261,21 @@ class QuotationStatementWidget(QWidget):
         self.trade_date.setCalendarPopup(True)
         self.trade_date.setDisplayFormat("yyyy.MM.dd")
         form.addRow("문서 종류", self.document_type)
+        self.input_mode_label = QLabel("작성 방식")
+        self.input_mode_widget = QWidget()
+        input_mode_layout = QHBoxLayout(self.input_mode_widget)
+        input_mode_layout.setContentsMargins(0, 0, 0, 0)
+        input_mode_layout.setSpacing(12)
+        self.direct_input_radio = QRadioButton("직접 입력")
+        self.naver_order_radio = QRadioButton("네이버 주문")
+        self.coupang_order_radio = QRadioButton("쿠팡 주문")
+        self.direct_input_radio.setChecked(True)
+        self.input_mode_group = QButtonGroup(self)
+        for button in (self.direct_input_radio, self.naver_order_radio, self.coupang_order_radio):
+            self.input_mode_group.addButton(button)
+            input_mode_layout.addWidget(button)
+        input_mode_layout.addStretch(1)
+        form.addRow(self.input_mode_label, self.input_mode_widget)
         form.addRow("소속", self.organization_edit)
         form.addRow("성명", self.name_edit)
         form.addRow("거래일자", self.trade_date)
@@ -266,7 +283,9 @@ class QuotationStatementWidget(QWidget):
         form.addRow(self.delivery_label, self.delivery_edit)
         info_layout.addLayout(form, 1)
 
-        search_layout = QVBoxLayout()
+        self.product_search_widget = QWidget()
+        search_layout = QVBoxLayout(self.product_search_widget)
+        search_layout.setContentsMargins(0, 0, 0, 0)
         search_layout.addWidget(QLabel("스마트스토어 기준상품 찾기 (선택한 품목 행에 적용)"))
         search_row = QHBoxLayout()
         self.search_edit = QLineEdit()
@@ -281,7 +300,7 @@ class QuotationStatementWidget(QWidget):
         self.search_status.setWordWrap(True)
         search_layout.addWidget(self.search_status)
         search_layout.addStretch(1)
-        info_layout.addLayout(search_layout, 2)
+        info_layout.addWidget(self.product_search_widget, 2)
         root.addWidget(info_group)
 
         self.naver_order_group = QGroupBox("네이버 주문 불러오기")
@@ -290,7 +309,7 @@ class QuotationStatementWidget(QWidget):
         order_row.addWidget(QLabel("주문번호"))
         self.naver_order_id_edit = QLineEdit()
         self.naver_order_id_edit.setPlaceholderText("스마트스토어에서 확인한 주문번호를 입력하세요")
-        self.naver_order_id_edit.setMaximumWidth(350)
+        self.naver_order_id_edit.setFixedWidth(360)
         self.naver_order_load_button = QPushButton("주문 불러오기")
         order_row.addWidget(self.naver_order_id_edit)
         order_row.addWidget(self.naver_order_load_button)
@@ -309,7 +328,7 @@ class QuotationStatementWidget(QWidget):
         coupang_order_row.addWidget(QLabel("주문번호"))
         self.coupang_order_id_edit = QLineEdit()
         self.coupang_order_id_edit.setPlaceholderText("쿠팡 Wing에서 확인한 주문번호(orderId)를 입력하세요")
-        self.coupang_order_id_edit.setMaximumWidth(350)
+        self.coupang_order_id_edit.setFixedWidth(360)
         self.coupang_order_load_button = QPushButton("주문 불러오기")
         coupang_order_row.addWidget(self.coupang_order_id_edit)
         coupang_order_row.addWidget(self.coupang_order_load_button)
@@ -324,6 +343,13 @@ class QuotationStatementWidget(QWidget):
 
         item_header = QHBoxLayout()
         item_header.addWidget(QLabel("품목"))
+        self.import_source_badge = QLabel()
+        self.import_source_badge.setStyleSheet(
+            "color: #075985; background: #e0f2fe; border: 1px solid #7dd3fc; "
+            "border-radius: 8px; padding: 2px 8px; font-weight: 600;"
+        )
+        self.import_source_badge.setVisible(False)
+        item_header.addWidget(self.import_source_badge)
         item_header.addStretch(1)
         self.add_button = QPushButton("품목 추가")
         self.delete_button = QPushButton("선택 품목 삭제")
@@ -392,6 +418,7 @@ class QuotationStatementWidget(QWidget):
         self.coupang_order_load_button.clicked.connect(self.load_coupang_order)
         self.table.itemChanged.connect(self._on_item_changed)
         self.document_type.currentTextChanged.connect(self._on_document_type_changed)
+        self.input_mode_group.buttonClicked.connect(self._on_input_mode_changed)
         self.negotiated_check.toggled.connect(self.refresh_summary)
         self.free_shipping_check.toggled.connect(self.refresh_summary)
         self.reset_button.clicked.connect(self.reset_form)
@@ -405,8 +432,9 @@ class QuotationStatementWidget(QWidget):
         self.payment_method.setToolTip("" if quote else "결제 방법은 견적서에만 기재됩니다.")
         self.delivery_label.setVisible(quote)
         self.delivery_edit.setVisible(quote)
-        self.naver_order_group.setVisible(not quote)
-        self.coupang_order_group.setVisible(not quote)
+        self.input_mode_label.setVisible(not quote)
+        self.input_mode_widget.setVisible(not quote)
+        self._apply_input_mode_visibility()
         self.free_shipping_check.setVisible(not self._is_order_import())
         self.refresh_summary()
 
@@ -415,6 +443,69 @@ class QuotationStatementWidget(QWidget):
 
     def _is_order_import(self):
         return self.document_type.currentText() == "거래명세서" and bool(self._order_import_source)
+
+    def _selected_input_mode(self):
+        if self.naver_order_radio.isChecked():
+            return "naver"
+        if self.coupang_order_radio.isChecked():
+            return "coupang"
+        return "manual"
+
+    def _apply_input_mode_visibility(self):
+        statement = self.document_type.currentText() == "거래명세서"
+        mode = self._selected_input_mode()
+        self.product_search_widget.setVisible(not statement or mode == "manual")
+        self.naver_order_group.setVisible(statement and mode == "naver")
+        self.coupang_order_group.setVisible(statement and mode == "coupang")
+
+    def _on_input_mode_changed(self, _button):
+        mode = self._selected_input_mode()
+        imported_source = self._order_import_source
+        if imported_source and imported_source != mode:
+            source_label = "네이버" if imported_source == "naver" else "쿠팡"
+            target_label = {"manual": "직접 입력", "naver": "네이버 주문", "coupang": "쿠팡 주문"}[mode]
+            answer = QMessageBox.question(
+                self,
+                "작성 방식 변경",
+                f"{source_label} 주문에서 불러온 품목을 지우고 {target_label} 방식으로 전환할까요?\n"
+                "기존 주문 기준 금액과 배송비는 유지되지 않습니다.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                self.input_mode_group.blockSignals(True)
+                {"naver": self.naver_order_radio, "coupang": self.coupang_order_radio}[imported_source].setChecked(True)
+                self.input_mode_group.blockSignals(False)
+                return
+            self._clear_order_import()
+        self._apply_input_mode_visibility()
+        self.free_shipping_check.setVisible(not self._is_order_import())
+        self.refresh_summary()
+
+    def _clear_order_import(self):
+        self._naver_order_import = False
+        self._naver_order_shipping_gross = 0
+        self._order_import_source = ""
+        self.import_source_badge.clear()
+        self.import_source_badge.setVisible(False)
+        self._updating_table = True
+        try:
+            self.table.setRowCount(0)
+        finally:
+            self._updating_table = False
+        self.add_item_row()
+
+    @staticmethod
+    def _friendly_order_error(error):
+        raw = str(error or "")
+        lowered = raw.casefold()
+        if "ip address" in lowered and "not allowed" in lowered:
+            return "API 접근이 거부되었습니다. 등록된 허용 IP에서 실행하세요."
+        if "http 401" in lowered or "http 403" in lowered:
+            return "API 인증 또는 접근 권한을 확인하세요."
+        if "http 404" in lowered or "찾지 못했" in raw:
+            return "주문번호 또는 주문 조회 권한을 확인하세요."
+        return "주문 정보를 불러오지 못했습니다."
 
     @staticmethod
     def _editable_item(text=""):
@@ -680,8 +771,16 @@ class QuotationStatementWidget(QWidget):
         status_label = self.naver_order_status if source == "naver" else self.coupang_order_status
         if not result.get("ok"):
             error = result.get("error") or "알 수 없는 오류"
-            status_label.setText(f"주문 조회 실패: {error}")
-            QMessageBox.warning(self, f"{source_label} 주문 불러오기", f"주문을 불러오지 못했습니다.\n\n{error}")
+            friendly_error = self._friendly_order_error(error)
+            status_label.setText(f"주문 조회 실패: {friendly_error}")
+            dialog = QMessageBox(
+                QMessageBox.Icon.Warning,
+                f"{source_label} 주문 불러오기",
+                f"주문을 불러오지 못했습니다.\n\n{friendly_error}",
+                parent=self,
+            )
+            dialog.setDetailedText(str(error))
+            dialog.exec()
             return
         order = result.get("order") or {}
         lines = order.get("items") or []
@@ -721,6 +820,9 @@ class QuotationStatementWidget(QWidget):
         self._naver_order_import = source == "naver"
         self._order_import_source = source
         self._naver_order_shipping_gross = int(order.get("shipping_gross") or 0)
+        source_label = "네이버 주문 기준" if source == "naver" else "쿠팡 주문 기준"
+        self.import_source_badge.setText(source_label)
+        self.import_source_badge.setVisible(True)
         self.free_shipping_check.setVisible(False)
         shipping_message = (
             f"실제 배송비 {self._naver_order_shipping_gross:,}원을 포함했습니다."
@@ -766,9 +868,7 @@ class QuotationStatementWidget(QWidget):
         self.negotiated_check.setChecked(False)
         self.free_shipping_check.setChecked(False)
         self._negotiation_mode = False
-        self._naver_order_import = False
-        self._naver_order_shipping_gross = 0
-        self._order_import_source = ""
+        self._clear_order_import()
         self.naver_order_status.setText(
             "주문을 불러오면 상품·옵션·수량·실제 결제금액을 적용하며 추가 할인과 고정 배송비는 적용하지 않습니다."
         )
@@ -776,8 +876,6 @@ class QuotationStatementWidget(QWidget):
             "주문을 불러오면 실제 적용 할인 후 상품금액과 고객 부담 배송비를 적용합니다."
         )
         self.free_shipping_check.setVisible(True)
-        self.table.setRowCount(0)
-        self.add_item_row()
 
     def create_document(self, as_pdf=False):
         try:
