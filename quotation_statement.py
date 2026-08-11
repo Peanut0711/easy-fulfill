@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from copy import copy
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 import os
@@ -28,6 +28,7 @@ SHIPPING_GROSS = 3000
 SHIPPING_SUPPLY = 2727
 SHIPPING_TAX = 273
 NEGOTIATION_LIMIT = 5_000_000
+WON_NUMBER_FORMAT = '"₩"#,##0'
 PAYMENT_METHODS = {
     "직거래": "직접 거래",
     "네이버": "네이버 스토어 거래",
@@ -254,12 +255,15 @@ def _safe_component(value: str) -> str:
     return text or "미입력"
 
 
-def _output_path(output_dir: Path, kind: str, organization: str, name: str) -> Path:
+def _output_path(output_dir: Path, kind: str, organization: str, name: str, trade_date: date) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
-    return output_dir / (
-        f"{kind}_{_safe_component(organization)}_{_safe_component(name)}_{timestamp}.xlsx"
-    )
+    stem = f"{kind}_{_safe_component(organization)}_{_safe_component(name)}_{trade_date:%Y.%m.%d}"
+    path = output_dir / f"{stem}.xlsx"
+    index = 1
+    while path.exists() or path.with_suffix(".pdf").exists():
+        path = output_dir / f"{stem}_({index}).xlsx"
+        index += 1
+    return path
 
 
 def _validate_header(organization: str, name: str, trade_date: date) -> None:
@@ -388,6 +392,8 @@ def generate_document(
             )
             ws[f"R{total_row}"] = result.supply_total
             ws[f"V{total_row}"] = result.tax_total
+            for cell in (ws["R12"], ws[f"R{total_row}"], ws[f"V{total_row}"]):
+                cell.number_format = WON_NUMBER_FORMAT
             payment_row = total_row + 4
             ws[f"B{payment_row}"] = f"결제 방법 : {payment_text}"
             ws[f"B{payment_row + 1}"] = None
@@ -411,7 +417,7 @@ def generate_document(
         ws.sheet_properties.pageSetUpPr.fitToPage = True
         ws.page_setup.fitToWidth = 1
         ws.page_setup.fitToHeight = 0 if extra else 1
-        path = _output_path(output, document_type, organization, name)
+        path = _output_path(output, document_type, organization, name, trade_date)
         wb.save(path)
     finally:
         wb.close()

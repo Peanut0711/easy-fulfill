@@ -12,6 +12,7 @@ from quotation_statement import (
     ItemInput,
     NegotiationRequired,
     PAYMENT_METHODS,
+    WON_NUMBER_FORMAT,
     calculate_document,
     export_xlsx_to_pdf,
     generate_document,
@@ -170,6 +171,7 @@ class WorkbookGenerationTests(unittest.TestCase):
             )
             wb = load_workbook(path, rich_text=True)
             try:
+                self.assertEqual(path.name, "견적서_테스트_소속_홍길동_2026.08.11.xlsx")
                 label = wb.active["B12"].value
                 self.assertEqual(str(label), "견적금액 (공급가액 + 세액) ")
                 self.assertEqual([part.font.sz for part in label], [14.0, 9.0])
@@ -184,11 +186,20 @@ class WorkbookGenerationTests(unittest.TestCase):
             )
             wb = load_workbook(path, rich_text=True)
             try:
+                self.assertEqual(path.name, "거래명세서_테스트_소속_홍길동_2026.08.11.xlsx")
                 label = wb.active["B7"].value
                 self.assertEqual(str(label), "합계 (부가세 포함) ")
                 self.assertEqual([part.font.sz for part in label], [14.0, 9.0])
             finally:
                 wb.close()
+
+    def test_output_filename_adds_a_number_when_the_base_name_exists(self):
+        with tempfile.TemporaryDirectory() as directory:
+            args = ("견적서", "테스트 소속", "홍길동", date(2026, 8, 11), [item(30_000)])
+            first, _ = generate_document(*args, templates_dir=TEMPLATES, output_dir=directory)
+            second, _ = generate_document(*args, templates_dir=TEMPLATES, output_dir=directory)
+            self.assertEqual(first.name, "견적서_테스트_소속_홍길동_2026.08.11.xlsx")
+            self.assertEqual(second.name, "견적서_테스트_소속_홍길동_2026.08.11_(1).xlsx")
 
     def test_shipping_uses_an_added_line_when_base_rows_are_full(self):
         items = [item(10_000, name=f"소액 품목 {n}") for n in range(1, 8)]
@@ -222,6 +233,9 @@ class WorkbookGenerationTests(unittest.TestCase):
                 self.assertEqual(ws["R24"].value, result.supply_total)
                 self.assertEqual(ws["V24"].value, result.tax_total)
                 self.assertEqual(ws["R12"].value, result.grand_total)
+                self.assertEqual(ws["R12"].number_format, WON_NUMBER_FORMAT)
+                self.assertEqual(ws["R24"].number_format, WON_NUMBER_FORMAT)
+                self.assertEqual(ws["V24"].number_format, WON_NUMBER_FORMAT)
                 self.assertEqual(result.discount_rate, Decimal("0.05"))
                 self.assertEqual(ws["B28"].value, "결제 방법 : 네이버 스토어 거래")
                 self.assertIsNone(ws["B29"].value)
