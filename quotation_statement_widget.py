@@ -48,6 +48,7 @@ COL_SPEC = 3
 COL_QUANTITY = 4
 COL_PRICE = 5
 ROLE_API_PRICE = Qt.ItemDataRole.UserRole + 1
+ROLE_ORDER_GROSS_AMOUNT = Qt.ItemDataRole.UserRole + 2
 SMARTSTORE_PRODUCT_URL_TEMPLATE = "https://smartstore.naver.com/higenis/products/{product_no}"
 
 
@@ -64,6 +65,24 @@ class ProductSearchThread(QThread):
             result = self._worker(self._query)
             if not isinstance(result, dict):
                 result = {"ok": False, "error": "상품 조회 결과 형식이 올바르지 않습니다."}
+        except Exception as exc:
+            result = {"ok": False, "error": str(exc)}
+        self.result_ready.emit(result)
+
+
+class NaverOrderLookupThread(QThread):
+    result_ready = Signal(dict)
+
+    def __init__(self, worker, order_id: str, parent=None):
+        super().__init__(parent)
+        self._worker = worker
+        self._order_id = order_id
+
+    def run(self):
+        try:
+            result = self._worker(self._order_id)
+            if not isinstance(result, dict):
+                result = {"ok": False, "error": "주문 조회 결과 형식이 올바르지 않습니다."}
         except Exception as exc:
             result = {"ok": False, "error": str(exc)}
         self.result_ready.emit(result)
@@ -192,12 +211,15 @@ class ProductChoiceDialog(QDialog):
 
 
 class QuotationStatementWidget(QWidget):
-    def __init__(self, product_search_worker=None, on_created=None, base_dir=None, parent=None):
+    def __init__(self, product_search_worker=None, order_lookup_worker=None,
+                 on_created=None, base_dir=None, parent=None):
         super().__init__(parent)
         self._product_search_worker = product_search_worker
+        self._order_lookup_worker = order_lookup_worker
         self._on_created = on_created
         self._base_dir = Path(base_dir or Path(__file__).resolve().parent)
         self._search_thread = None
+        self._order_lookup_thread = None
         self._pdf_thread = None
         self._pdf_progress = None
         self._prefetch_thread = None
@@ -207,6 +229,7 @@ class QuotationStatementWidget(QWidget):
         self._search_target_row = -1
         self._updating_table = False
         self._negotiation_mode = False
+        self._naver_order_import = False
         self._build_ui()
         self.add_item_row()
 
@@ -257,6 +280,25 @@ class QuotationStatementWidget(QWidget):
         search_layout.addStretch(1)
         info_layout.addLayout(search_layout, 2)
         root.addWidget(info_group)
+
+        self.naver_order_group = QGroupBox("네이버 주문 불러오기")
+        order_layout = QVBoxLayout(self.naver_order_group)
+        order_row = QHBoxLayout()
+        order_row.addWidget(QLabel("주문번호"))
+        self.naver_order_id_edit = QLineEdit()
+        self.naver_order_id_edit.setPlaceholderText("스마트스토어에서 확인한 주문번호를 입력하세요")
+        self.naver_order_id_edit.setMaximumWidth(350)
+        self.naver_order_load_button = QPushButton("주문 불러오기")
+        order_row.addWidget(self.naver_order_id_edit)
+        order_row.addWidget(self.naver_order_load_button)
+        order_row.addStretch(1)
+        order_layout.addLayout(order_row)
+        self.naver_order_status = QLabel(
+            "주문을 불러오면 상품·옵션·수량·실제 결제금액을 적용하며 추가 할인과 고정 배송비는 적용하지 않습니다."
+        )
+        self.naver_order_status.setWordWrap(True)
+        order_layout.addWidget(self.naver_order_status)
+        root.addWidget(self.naver_order_group)
 
         item_header = QHBoxLayout()
         item_header.addWidget(QLabel("품목"))
@@ -322,6 +364,8 @@ class QuotationStatementWidget(QWidget):
         self.delete_button.clicked.connect(self.delete_selected_row)
         self.search_button.clicked.connect(self.search_products)
         self.search_edit.returnPressed.connect(self.search_products)
+        self.naver_order_id_edit.returnPressed.connect(self.load_naver_order)
+        self.naver_order_load_button.clicked.connect(self.load_naver_order)
         self.table.itemChanged.connect(self._on_item_changed)
         self.document_type.currentTextChanged.connect(self._on_document_type_changed)
         self.negotiated_check.toggled.connect(self.refresh_summary)
@@ -329,6 +373,7 @@ class QuotationStatementWidget(QWidget):
         self.reset_button.clicked.connect(self.reset_form)
         self.create_button.clicked.connect(self.create_document)
         self.pdf_button.clicked.connect(lambda: self.create_document(as_pdf=True))
+        self._on_document_type_changed(self.document_type.currentText())
 
     def _on_document_type_changed(self, document_type):
         quote = document_type == "견적서"
@@ -336,7 +381,12 @@ class QuotationStatementWidget(QWidget):
         self.payment_method.setToolTip("" if quote else "결제 방법은 견적서에만 기재됩니다.")
         self.delivery_label.setVisible(quote)
         self.delivery_edit.setVisible(quote)
+        self.naver_order_group.setVisible(not quote)
+        self.free_shipping_check.setVisible(not self._is_naver_order_import())
         self.refresh_summary()
+
+    def _is_naver_order_import(self):
+        return self.document_type.currentText() == "거래명세서" and self._naver_order_import
 
     @staticmethod
     def _editable_item(text=""):
@@ -389,6 +439,9 @@ class QuotationStatementWidget(QWidget):
                     self._updating_table = True
                     item.setText(formatted)
                     self._updating_table = False
+            item.setData(ROLE_ORDER_GROSS_AMOUNT, None)
+        elif item.column() == COL_QUANTITY:
+            self.table.item(item.row(), COL_PRICE).setData(ROLE_ORDER_GROSS_AMOUNT, None)
         row = item.row()
         self._update_row_status(row)
         self.refresh_summary()
@@ -397,16 +450,19 @@ class QuotationStatementWidget(QWidget):
         api_name = self.table.item(row, COL_API_NAME).text().strip()
         status_text = "수동"
         if api_name:
-            doc_name = self.table.item(row, COL_DOCUMENT_NAME).text().strip()
-            specification = self.table.item(row, COL_SPEC).text().strip()
-            price_text = self.table.item(row, COL_PRICE).text().replace(",", "").replace("원", "").strip()
-            api_price = self.table.item(row, COL_PRICE).data(ROLE_API_PRICE)
-            modified = (
-                doc_name != api_name
-                or bool(specification)
-                or (api_price is not None and price_text != str(api_price))
-            )
-            status_text = "수정" if modified else "자동"
+            if self.table.item(row, COL_PRICE).data(ROLE_ORDER_GROSS_AMOUNT) is not None:
+                status_text = "주문"
+            else:
+                doc_name = self.table.item(row, COL_DOCUMENT_NAME).text().strip()
+                specification = self.table.item(row, COL_SPEC).text().strip()
+                price_text = self.table.item(row, COL_PRICE).text().replace(",", "").replace("원", "").strip()
+                api_price = self.table.item(row, COL_PRICE).data(ROLE_API_PRICE)
+                modified = (
+                    doc_name != api_name
+                    or bool(specification)
+                    or (api_price is not None and price_text != str(api_price))
+                )
+                status_text = "수정" if modified else "자동"
         if self.table.item(row, COL_STATUS).text() != status_text:
             self._updating_table = True
             self.table.item(row, COL_STATUS).setText(status_text)
@@ -430,6 +486,7 @@ class QuotationStatementWidget(QWidget):
                     specification=spec,
                     gross_unit_price=price,
                     quantity=quantity,
+                    gross_amount_override=self.table.item(row, COL_PRICE).data(ROLE_ORDER_GROSS_AMOUNT),
                 )
             )
         return items
@@ -441,22 +498,31 @@ class QuotationStatementWidget(QWidget):
             self.negotiated_check.setVisible(False)
             return
         try:
-            raw_result = calculate_document(items, negotiated=True)
-            over_limit = raw_result.goods_total_before_discount > NEGOTIATION_LIMIT
-            if over_limit:
-                self._negotiation_mode = True
-            elif self._negotiation_mode and not self.negotiated_check.isChecked():
+            order_import = self._is_naver_order_import()
+            if order_import:
                 self._negotiation_mode = False
-
-            if self._negotiation_mode:
-                result = raw_result
+                result = calculate_document(items, order_import=True)
             else:
-                result = calculate_document(items, free_shipping=self.free_shipping_check.isChecked())
+                raw_result = calculate_document(items, negotiated=True)
+                over_limit = raw_result.goods_total_before_discount > NEGOTIATION_LIMIT
+                if over_limit:
+                    self._negotiation_mode = True
+                elif self._negotiation_mode and not self.negotiated_check.isChecked():
+                    self._negotiation_mode = False
+
+                if self._negotiation_mode:
+                    result = raw_result
+                else:
+                    result = calculate_document(items, free_shipping=self.free_shipping_check.isChecked())
         except DocumentValidationError as exc:
             self.summary_label.setText(str(exc))
             return
         self.negotiated_check.setVisible(self._negotiation_mode)
-        discount = "별도 협의" if self._negotiation_mode else f"{int(result.discount_rate * Decimal('100'))}%"
+        discount = (
+            "주문 금액 기준(추가 할인 없음)" if order_import
+            else "별도 협의" if self._negotiation_mode
+            else f"{int(result.discount_rate * Decimal('100'))}%"
+        )
         self.summary_label.setText(
             f"할인 전 품목 합계 {result.goods_total_before_discount:,}원  |  할인 {discount} "
             f"({result.discount_amount:,}원)  |  공급가액 {result.supply_total:,}원  |  "
@@ -543,6 +609,76 @@ class QuotationStatementWidget(QWidget):
             return
         self._apply_product(self._search_target_row, dialog.selected_product)
 
+    def load_naver_order(self):
+        order_id = self.naver_order_id_edit.text().strip()
+        if not order_id:
+            QMessageBox.information(self, "네이버 주문 불러오기", "스마트스토어 주문번호를 입력해주세요.")
+            return
+        if self._order_lookup_worker is None:
+            QMessageBox.warning(self, "네이버 주문 불러오기", "네이버 주문 API를 사용할 수 없습니다.")
+            return
+        if self._order_lookup_thread and self._order_lookup_thread.isRunning():
+            return
+        self.naver_order_load_button.setEnabled(False)
+        self.naver_order_status.setText("네이버 주문을 조회하고 있습니다…")
+        self._order_lookup_thread = NaverOrderLookupThread(self._order_lookup_worker, order_id, self)
+        self._order_lookup_thread.result_ready.connect(self._on_naver_order_result)
+        self._order_lookup_thread.finished.connect(self._finish_naver_order_lookup)
+        self._order_lookup_thread.start()
+
+    def _finish_naver_order_lookup(self):
+        self.naver_order_load_button.setEnabled(True)
+        self._order_lookup_thread = None
+
+    def _on_naver_order_result(self, result):
+        if not result.get("ok"):
+            error = result.get("error") or "알 수 없는 오류"
+            self.naver_order_status.setText(f"주문 조회 실패: {error}")
+            QMessageBox.warning(self, "네이버 주문 불러오기", f"주문을 불러오지 못했습니다.\n\n{error}")
+            return
+        order = result.get("order") or {}
+        lines = order.get("items") or []
+        if not lines:
+            self.naver_order_status.setText("주문 상품을 찾지 못했습니다.")
+            return
+        self._updating_table = True
+        try:
+            self.table.setRowCount(0)
+        finally:
+            self._updating_table = False
+        for line in lines:
+            self.add_item_row()
+            row = self.table.rowCount() - 1
+            self._updating_table = True
+            try:
+                name = str(line.get("name") or "").strip()
+                price = int(line.get("gross_unit_price") or 0)
+                self.table.item(row, COL_API_NAME).setText(name)
+                self.table.item(row, COL_DOCUMENT_NAME).setText(name)
+                self.table.item(row, COL_SPEC).setText(str(line.get("specification") or "").strip())
+                self.table.item(row, COL_QUANTITY).setText(str(line.get("quantity") or 1))
+                price_item = self.table.item(row, COL_PRICE)
+                price_item.setText(f"{price:,}원")
+                price_item.setData(ROLE_API_PRICE, price)
+                price_item.setData(ROLE_ORDER_GROSS_AMOUNT, int(line.get("gross_amount") or 0))
+                self.table.item(row, COL_STATUS).setText("주문")
+            finally:
+                self._updating_table = False
+        customer_name = str(order.get("customer_name") or "").strip()
+        if customer_name:
+            self.name_edit.setText(customer_name)
+        payment_date = str(order.get("payment_date") or "")[:10]
+        imported_date = QDate.fromString(payment_date, Qt.DateFormat.ISODate)
+        if imported_date.isValid():
+            self.trade_date.setDate(imported_date)
+        self._naver_order_import = True
+        self.free_shipping_check.setVisible(False)
+        self.naver_order_status.setText(
+            f"주문번호 {order.get('order_id', '')}의 상품 {len(lines)}개를 적용했습니다. "
+            "추가 할인과 고정 배송비는 적용하지 않습니다."
+        )
+        self.refresh_summary()
+
     def _apply_product(self, row, product):
         name = str(product.get("name") or "").strip()
         price = int(product.get("price") or 0)
@@ -571,22 +707,29 @@ class QuotationStatementWidget(QWidget):
         self.payment_method.setCurrentIndex(0)
         self.delivery_edit.clear()
         self.search_edit.clear()
+        self.naver_order_id_edit.clear()
         self.search_status.setText("API를 사용하지 않아도 아래 표에 상품명과 가격을 직접 입력할 수 있습니다.")
         self.negotiated_check.setChecked(False)
         self.free_shipping_check.setChecked(False)
         self._negotiation_mode = False
+        self._naver_order_import = False
+        self.naver_order_status.setText(
+            "주문을 불러오면 상품·옵션·수량·실제 결제금액을 적용하며 추가 할인과 고정 배송비는 적용하지 않습니다."
+        )
+        self.free_shipping_check.setVisible(True)
         self.table.setRowCount(0)
         self.add_item_row()
 
     def create_document(self, as_pdf=False):
         try:
             items = self._collect_items(strict=True)
-            negotiated = self._negotiation_mode and self.negotiated_check.isChecked()
-            free_shipping = self.free_shipping_check.isChecked()
+            order_import = self._is_naver_order_import()
+            negotiated = not order_import and self._negotiation_mode and self.negotiated_check.isChecked()
+            free_shipping = not order_import and self.free_shipping_check.isChecked()
             if self._negotiation_mode and not negotiated:
                 raise NegotiationRequired("500만 원 초과 주문은 협의 완료를 확인해야 합니다.")
             result = calculate_document(
-                items, negotiated=negotiated, free_shipping=free_shipping
+                items, negotiated=negotiated, free_shipping=free_shipping, order_import=order_import
             )
             organization = self.organization_edit.text().strip()
             name = self.name_edit.text().strip()
@@ -624,6 +767,7 @@ class QuotationStatementWidget(QWidget):
                 items,
                 negotiated=negotiated,
                 free_shipping=free_shipping,
+                order_import=order_import,
                 payment_method=self.payment_method.currentText(),
                 delivery_term=self.delivery_edit.text(),
                 templates_dir=self._base_dir / "templates",

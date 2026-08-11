@@ -165,6 +165,22 @@ ORDER_QUERY_URL = PRODUCT_ORDERS_BASE + "/query"
 DISPATCH_URL = PRODUCT_ORDERS_BASE + "/dispatch"
 QUERY_CHUNK = 300  # query API 1회 최대 상품주문 수(상한)
 
+# 거래명세서 자동 발급 대상에서 제외할 거래 종료 상태. 부분 취소 등으로 한 주문에
+# 정상 상품과 아래 상태 상품이 섞인 경우에도 자동 발급은 막아 원거래와 다른 문서가
+# 만들어지지 않게 한다.
+TRANSACTION_STATEMENT_BLOCKED_STATUSES = {
+    "CANCELED",
+    "CANCELED_BY_NOPAYMENT",
+    "RETURNED",
+    "EXCHANGED",
+}
+TRANSACTION_STATEMENT_BLOCKED_CLAIM_STATUSES = {
+    "CANCEL_DONE",
+    "RETURN_DONE",
+    "EXCHANGE_DONE",
+    "ADMIN_CANCEL_DONE",
+}
+
 # 우체국 택배사 코드(발송처리 deliveryCompanyCode). 우체국택배=EPOST,
 # 우편등기=REGISTPOST, 일반우편=GENERALPOST.
 KPOST_COMPANY_CODE = "EPOST"
@@ -399,6 +415,109 @@ def fetch_product_order_ids_of_order(token, order_id):
     url = API_BASE + f"/v1/pay-order/seller/orders/{order_id}/product-order-ids"
     js = _get_json(url, token, None)
     return [str(x) for x in (js.get("data") or [])]
+
+
+def _as_positive_int(value, default=0):
+    """네이버 금액/수량 응답을 양의 정수로 안전하게 변환한다."""
+    try:
+        converted = int(value)
+    except (TypeError, ValueError):
+        return default
+    return converted if converted > 0 else default
+
+
+def build_transaction_statement_order(order_id, details):
+    """상품주문 상세 응답을 거래명세서 화면용 주문 1건으로 정규화한다.
+
+    네이버 주문 자체에 적용된 할인 결과(totalPaymentAmount)를 품목별 금액으로
+    보존한다. 수량으로 나누어 떨어지지 않는 금액도 문서 계산 모듈의
+    gross_amount_override로 정확한 행 합계를 유지할 수 있도록 함께 반환한다.
+    """
+    requested_id = str(order_id or "").strip()
+    if not requested_id:
+        raise ValueError("네이버 주문번호를 입력해주세요.")
+    if not details:
+        raise ValueError("입력한 주문번호의 상품 주문 정보를 찾지 못했습니다.")
+
+    items = []
+    orderer_name = ""
+    receiver_name = ""
+    payment_date = ""
+    blocked = []
+    for detail in details:
+        order = detail.get("order") or {}
+        product_order = detail.get("productOrder") or {}
+        response_order_id = str(
+            _first(order, "orderId") or _first(product_order, "orderId")
+        ).strip()
+        if response_order_id and response_order_id != requested_id:
+            continue
+
+        status = str(_first(product_order, "productOrderStatus")).upper()
+        claim_status = str(_first(product_order, "claimStatus")).upper()
+        if (status in TRANSACTION_STATEMENT_BLOCKED_STATUSES
+                or claim_status in TRANSACTION_STATEMENT_BLOCKED_CLAIM_STATUSES):
+            blocked.append(claim_status or status)
+            continue
+
+        quantity = _as_positive_int(_first(product_order, "quantity"), default=1)
+        gross_amount = _as_positive_int(
+            _first(product_order, "totalPaymentAmount", "totalProductAmount")
+        )
+        if not gross_amount:
+            unit_price = _as_positive_int(_first(product_order, "unitPrice"))
+            option_price = _as_positive_int(_first(product_order, "optionPrice"))
+            gross_amount = (unit_price + option_price) * quantity
+        if not gross_amount:
+            raise ValueError("주문 상품의 결제금액을 확인할 수 없습니다.")
+
+        name = str(_first(product_order, "productName")).strip()
+        if not name:
+            raise ValueError("주문 상품명을 확인할 수 없습니다.")
+        orderer_name = orderer_name or str(_first(order, "ordererName")).strip()
+        address = product_order.get("shippingAddress") or {}
+        receiver_name = receiver_name or str(_first(address, "name", "receiverName")).strip()
+        payment_date = payment_date or str(_first(order, "paymentDate", "orderDate")).strip()
+        # 단가는 화면 표시용 반올림값이고, 문서 합계는 gross_amount로 계산한다.
+        display_unit_price = int((gross_amount + quantity // 2) // quantity)
+        items.append({
+            "product_order_id": str(_first(product_order, "productOrderId")).strip(),
+            "name": name,
+            "specification": str(_first(product_order, "productOption", "optionInfo")).strip(),
+            "quantity": quantity,
+            "gross_unit_price": display_unit_price,
+            "gross_amount": gross_amount,
+            "status": status,
+        })
+
+    if blocked:
+        labels = ", ".join(sorted(set(blocked)))
+        raise ValueError(
+            "취소·반품·교환 완료 상품이 포함된 주문은 자동으로 거래명세서를 "
+            f"발급할 수 없습니다. (상태: {labels})"
+        )
+    if not items:
+        raise ValueError("발급할 수 있는 주문 상품을 찾지 못했습니다.")
+    return {
+        "order_id": requested_id,
+        "orderer_name": orderer_name,
+        "receiver_name": receiver_name,
+        "customer_name": orderer_name or receiver_name,
+        "payment_date": payment_date,
+        "items": items,
+    }
+
+
+def fetch_order_for_transaction_statement(token, order_id):
+    """주문번호 입력 → 상품주문번호 → 상세 조회를 한 번에 수행한다."""
+    normalized_order_id = str(order_id or "").strip()
+    if not normalized_order_id:
+        raise ValueError("네이버 주문번호를 입력해주세요.")
+    product_order_ids = fetch_product_order_ids_of_order(token, normalized_order_id)
+    if not product_order_ids:
+        raise ValueError("입력한 주문번호의 상품주문번호를 찾지 못했습니다.")
+    details = fetch_product_order_details(token, product_order_ids)
+    return build_transaction_statement_order(normalized_order_id, details)
 
 
 def dispatch_orders_by_tracking(token, records, company=KPOST_COMPANY_CODE,

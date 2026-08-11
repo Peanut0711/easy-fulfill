@@ -75,6 +75,7 @@ class ItemInput:
     gross_unit_price: str | int | Decimal = 0
     quantity: int = 1
     api_name: str = ""
+    gross_amount_override: str | int | Decimal | None = None
 
 
 @dataclass(frozen=True)
@@ -134,12 +135,12 @@ def discount_rate_for(goods_total: int) -> Decimal:
 
 def calculate_document(
     items: list[ItemInput] | tuple[ItemInput, ...], *, negotiated: bool = False,
-    free_shipping: bool = False,
+    free_shipping: bool = False, order_import: bool = False,
 ) -> CalculationResult:
     if not items:
         raise DocumentValidationError("품목을 한 개 이상 입력해주세요.")
 
-    normalized: list[tuple[ItemInput, int, int]] = []
+    normalized: list[tuple[ItemInput, int, int, int | None]] = []
     goods_total = 0
     for index, item in enumerate(items, start=1):
         name = str(item.document_name or "").strip()
@@ -152,10 +153,15 @@ def calculate_document(
         if quantity < 1 or str(item.quantity).strip() != str(quantity):
             raise DocumentValidationError(f"{index}번 품목의 수량은 1개 이상 정수여야 합니다.")
         gross_unit = _positive_won(item.gross_unit_price, f"{index}번 품목 단가")
-        normalized.append((item, gross_unit, quantity))
-        goods_total += gross_unit * quantity
+        gross_amount_override = None
+        if order_import and item.gross_amount_override not in (None, ""):
+            gross_amount_override = _positive_won(
+                item.gross_amount_override, f"{index}번 품목 주문금액"
+            )
+        normalized.append((item, gross_unit, quantity, gross_amount_override))
+        goods_total += gross_amount_override if gross_amount_override is not None else gross_unit * quantity
 
-    if negotiated:
+    if negotiated or order_import:
         rate = Decimal("0")
     elif goods_total > NEGOTIATION_LIMIT:
         raise NegotiationRequired("500만 원 초과 주문은 협의 완료 확인 후 생성할 수 있습니다.")
@@ -167,12 +173,20 @@ def calculate_document(
     tax_total = 0
     discounted_goods_total = 0
     multiplier = Decimal("1") - rate
-    for item, original_gross, quantity in normalized:
-        gross_unit = round_won(Decimal(original_gross) * multiplier)
-        supply_unit = round_won(Decimal(gross_unit) / VAT_DIVISOR)
-        tax_unit = gross_unit - supply_unit
-        supply_amount = supply_unit * quantity
-        tax_amount = tax_unit * quantity
+    for item, original_gross, quantity, gross_amount_override in normalized:
+        if order_import and gross_amount_override is not None:
+            gross_amount = gross_amount_override
+            gross_unit = round_won(Decimal(gross_amount) / quantity)
+            supply_amount = round_won(Decimal(gross_amount) / VAT_DIVISOR)
+            tax_amount = gross_amount - supply_amount
+            supply_unit = round_won(Decimal(supply_amount) / quantity)
+            tax_unit = gross_unit - supply_unit
+        else:
+            gross_unit = round_won(Decimal(original_gross) * multiplier)
+            supply_unit = round_won(Decimal(gross_unit) / VAT_DIVISOR)
+            tax_unit = gross_unit - supply_unit
+            supply_amount = supply_unit * quantity
+            tax_amount = tax_unit * quantity
         calculated.append(
             CalculatedItem(
                 document_name=str(item.document_name).strip(),
@@ -188,9 +202,9 @@ def calculate_document(
         )
         supply_total += supply_amount
         tax_total += tax_amount
-        discounted_goods_total += gross_unit * quantity
+        discounted_goods_total += supply_amount + tax_amount
 
-    shipping = SHIPPING_GROSS if goods_total <= 100_000 and not (negotiated or free_shipping) else 0
+    shipping = SHIPPING_GROSS if goods_total <= 100_000 and not (negotiated or free_shipping or order_import) else 0
     if shipping:
         supply_total += SHIPPING_SUPPLY
         tax_total += SHIPPING_TAX
@@ -376,13 +390,16 @@ def generate_document(
     *,
     negotiated: bool = False,
     free_shipping: bool = False,
+    order_import: bool = False,
     payment_method: str = "직거래",
     delivery_term: str = "",
     templates_dir: str | Path | None = None,
     output_dir: str | Path | None = None,
 ) -> tuple[Path, CalculationResult]:
     _validate_header(organization, name, trade_date)
-    result = calculate_document(items, negotiated=negotiated, free_shipping=free_shipping)
+    result = calculate_document(
+        items, negotiated=negotiated, free_shipping=free_shipping, order_import=order_import
+    )
     base = Path(__file__).resolve().parent
     templates = Path(templates_dir) if templates_dir else base / "templates"
     output = Path(output_dir) if output_dir else base / "output"

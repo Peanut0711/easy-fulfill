@@ -94,6 +94,23 @@ class CalculationTests(unittest.TestCase):
         self.assertEqual(result.discount_rate, Decimal("0.05"))
         self.assertEqual([x.gross_unit_price for x in result.items], [66_500, 47_501])
 
+    def test_naver_order_import_keeps_actual_total_without_extra_discount_or_shipping(self):
+        result = calculate_document([
+            ItemInput("주문 상품", gross_unit_price=5_000, quantity=2, gross_amount_override=9_999)
+        ], order_import=True)
+        self.assertEqual(result.discount_rate, Decimal("0"))
+        self.assertEqual(result.discount_amount, 0)
+        self.assertEqual(result.shipping_gross, 0)
+        self.assertEqual(result.grand_total, 9_999)
+        self.assertEqual(result.items[0].supply_amount + result.items[0].tax_amount, 9_999)
+
+    def test_naver_order_import_does_not_require_over_limit_negotiation(self):
+        result = calculate_document([
+            ItemInput("주문 상품", gross_unit_price=6_000_000, quantity=1, gross_amount_override=6_000_000)
+        ], order_import=True)
+        self.assertEqual(result.grand_total, 6_000_000)
+        self.assertEqual(result.discount_rate, Decimal("0"))
+
 
 class WorkbookTests(unittest.TestCase):
     def test_templates_do_not_contain_sample_customer_or_items(self):
@@ -184,6 +201,63 @@ class NaverProductTests(unittest.TestCase):
             "discounted_price": 10000,
             "price": 10000,
         }])
+
+
+class NaverTransactionStatementOrderTests(unittest.TestCase):
+    def _detail(self, *, status="DELIVERED", total=9_999, quantity=2):
+        return {
+            "order": {
+                "orderId": "202608120001",
+                "ordererName": "홍길동",
+                "paymentDate": "2026-08-12T10:20:30.000+09:00",
+            },
+            "productOrder": {
+                "productOrderId": "202608120002",
+                "productOrderStatus": status,
+                "productName": "STM32 개발보드",
+                "productOption": "색상: 검정",
+                "quantity": quantity,
+                "totalPaymentAmount": total,
+                "shippingAddress": {"name": "홍수취"},
+            },
+        }
+
+    def test_build_transaction_statement_order_prefers_orderer_and_keeps_exact_paid_amount(self):
+        order = naver_commerce.build_transaction_statement_order(
+            "202608120001", [self._detail()]
+        )
+        self.assertEqual(order["customer_name"], "홍길동")
+        self.assertEqual(order["payment_date"], "2026-08-12T10:20:30.000+09:00")
+        self.assertEqual(order["items"], [{
+            "product_order_id": "202608120002",
+            "name": "STM32 개발보드",
+            "specification": "색상: 검정",
+            "quantity": 2,
+            "gross_unit_price": 5_000,
+            "gross_amount": 9_999,
+            "status": "DELIVERED",
+        }])
+
+    def test_build_transaction_statement_order_falls_back_to_receiver_name(self):
+        detail = self._detail()
+        detail["order"]["ordererName"] = ""
+        order = naver_commerce.build_transaction_statement_order("202608120001", [detail])
+        self.assertEqual(order["customer_name"], "홍수취")
+
+    def test_build_transaction_statement_order_blocks_cancelled_or_returned_order(self):
+        with self.assertRaisesRegex(ValueError, "취소·반품·교환 완료"):
+            naver_commerce.build_transaction_statement_order(
+                "202608120001", [self._detail(status="RETURNED")]
+            )
+
+    def test_fetch_transaction_statement_order_resolves_product_order_ids_then_details(self):
+        detail = self._detail()
+        with patch.object(naver_commerce, "fetch_product_order_ids_of_order", return_value=["202608120002"]) as ids:
+            with patch.object(naver_commerce, "fetch_product_order_details", return_value=[detail]) as details:
+                order = naver_commerce.fetch_order_for_transaction_statement("token", "202608120001")
+        ids.assert_called_once_with("token", "202608120001")
+        details.assert_called_once_with("token", ["202608120002"])
+        self.assertEqual(order["items"][0]["gross_amount"], 9_999)
 
 
 class WorkbookGenerationTests(unittest.TestCase):
