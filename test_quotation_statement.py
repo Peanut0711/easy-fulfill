@@ -111,6 +111,15 @@ class CalculationTests(unittest.TestCase):
         self.assertEqual(result.grand_total, 6_000_000)
         self.assertEqual(result.discount_rate, Decimal("0"))
 
+    def test_naver_order_import_adds_only_the_actual_customer_shipping_fee(self):
+        result = calculate_document([
+            ItemInput("주문 상품", gross_unit_price=5_000, quantity=2, gross_amount_override=9_999)
+        ], order_import=True, shipping_gross_override=2_500)
+        self.assertEqual(result.shipping_gross, 2_500)
+        self.assertEqual(result.shipping_supply, 2_273)
+        self.assertEqual(result.shipping_tax, 227)
+        self.assertEqual(result.grand_total, 12_499)
+
 
 class WorkbookTests(unittest.TestCase):
     def test_templates_do_not_contain_sample_customer_or_items(self):
@@ -228,6 +237,7 @@ class NaverTransactionStatementOrderTests(unittest.TestCase):
         )
         self.assertEqual(order["customer_name"], "홍길동")
         self.assertEqual(order["payment_date"], "2026-08-12T10:20:30.000+09:00")
+        self.assertEqual(order["shipping_gross"], 0)
         self.assertEqual(order["items"], [{
             "product_order_id": "202608120002",
             "name": "STM32 개발보드",
@@ -258,6 +268,25 @@ class NaverTransactionStatementOrderTests(unittest.TestCase):
         ids.assert_called_once_with("token", "202608120001")
         details.assert_called_once_with("token", ["202608120002"])
         self.assertEqual(order["items"][0]["gross_amount"], 9_999)
+
+    def test_build_transaction_statement_order_includes_shipping_once_per_package(self):
+        first = self._detail()
+        first["productOrder"].update({
+            "packageNumber": "묶음배송-1",
+            "deliveryFeeAmount": 3_000,
+            "sectionDeliveryFee": 200,
+            "deliveryDiscountAmount": 500,
+        })
+        second = self._detail(total=20_000, quantity=1)
+        second["productOrder"].update({
+            "productOrderId": "202608120003",
+            "packageNumber": "묶음배송-1",
+            "deliveryFeeAmount": 3_000,
+            "sectionDeliveryFee": 200,
+            "deliveryDiscountAmount": 500,
+        })
+        order = naver_commerce.build_transaction_statement_order("202608120001", [first, second])
+        self.assertEqual(order["shipping_gross"], 2_700)
 
 
 class WorkbookGenerationTests(unittest.TestCase):
@@ -302,6 +331,26 @@ class WorkbookGenerationTests(unittest.TestCase):
             try:
                 self.assertEqual(path.name, "거래명세서_미입력_홍길동_2026.08.11.xlsx")
                 self.assertEqual(wb.active["B5"].value, "홍길동님 귀하")
+            finally:
+                wb.close()
+
+    def test_statement_writes_imported_actual_shipping_fee_as_a_line(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, result = generate_document(
+                "거래명세서", "테스트 소속", "홍길동", date(2026, 8, 11),
+                [ItemInput("주문 상품", gross_unit_price=5_000, quantity=2, gross_amount_override=9_999)],
+                order_import=True,
+                shipping_gross_override=2_500,
+                templates_dir=TEMPLATES,
+                output_dir=directory,
+            )
+            wb = load_workbook(path, data_only=False)
+            try:
+                ws = wb.active
+                self.assertEqual(ws["B11"].value, "배송비")
+                self.assertEqual(ws["M11"].value, 2_273)
+                self.assertEqual(ws["T11"].value, 227)
+                self.assertEqual(result.grand_total, 12_499)
             finally:
                 wb.close()
 

@@ -25,8 +25,6 @@ from openpyxl.utils import get_column_letter, range_boundaries
 WON = Decimal("1")
 VAT_DIVISOR = Decimal("1.1")
 SHIPPING_GROSS = 3000
-SHIPPING_SUPPLY = 2727
-SHIPPING_TAX = 273
 NEGOTIATION_LIMIT = 5_000_000
 WON_NUMBER_FORMAT = '"₩"#,##0'
 PAYMENT_METHODS = {
@@ -102,6 +100,8 @@ class CalculationResult:
     discount_rate: Decimal
     discount_amount: int
     shipping_gross: int
+    shipping_supply: int
+    shipping_tax: int
     supply_total: int
     tax_total: int
     grand_total: int
@@ -123,6 +123,17 @@ def _positive_won(value: str | int | Decimal, label: str) -> int:
     return amount
 
 
+def _nonnegative_won(value: str | int | Decimal, label: str) -> int:
+    try:
+        cleaned = str(value).replace(",", "").strip()
+        amount = round_won(Decimal(cleaned))
+    except (InvalidOperation, ValueError):
+        raise DocumentValidationError(f"{label}은(는) 올바른 금액이어야 합니다.") from None
+    if amount < 0:
+        raise DocumentValidationError(f"{label}은(는) 0원 이상이어야 합니다.")
+    return amount
+
+
 def discount_rate_for(goods_total: int) -> Decimal:
     if goods_total <= 100_000:
         return Decimal("0")
@@ -136,6 +147,7 @@ def discount_rate_for(goods_total: int) -> Decimal:
 def calculate_document(
     items: list[ItemInput] | tuple[ItemInput, ...], *, negotiated: bool = False,
     free_shipping: bool = False, order_import: bool = False,
+    shipping_gross_override: str | int | Decimal | None = None,
 ) -> CalculationResult:
     if not items:
         raise DocumentValidationError("품목을 한 개 이상 입력해주세요.")
@@ -204,10 +216,17 @@ def calculate_document(
         tax_total += tax_amount
         discounted_goods_total += supply_amount + tax_amount
 
-    shipping = SHIPPING_GROSS if goods_total <= 100_000 and not (negotiated or free_shipping or order_import) else 0
+    if shipping_gross_override is not None:
+        shipping = _nonnegative_won(shipping_gross_override, "배송비")
+    else:
+        shipping = SHIPPING_GROSS if goods_total <= 100_000 and not (negotiated or free_shipping or order_import) else 0
+    shipping_supply = 0
+    shipping_tax = 0
     if shipping:
-        supply_total += SHIPPING_SUPPLY
-        tax_total += SHIPPING_TAX
+        shipping_supply = round_won(Decimal(shipping) / VAT_DIVISOR)
+        shipping_tax = shipping - shipping_supply
+        supply_total += shipping_supply
+        tax_total += shipping_tax
 
     grand_total = supply_total + tax_total
     return CalculationResult(
@@ -216,6 +235,8 @@ def calculate_document(
         discount_rate=rate,
         discount_amount=goods_total - discounted_goods_total,
         shipping_gross=shipping,
+        shipping_supply=shipping_supply,
+        shipping_tax=shipping_tax,
         supply_total=supply_total,
         tax_total=tax_total,
         grand_total=grand_total,
@@ -326,9 +347,9 @@ def _write_lines(ws, start_row: int, result: CalculationResult, columns: dict[st
     if result.shipping_gross:
         ws[f"{columns['name']}{row}"] = "배송비"
         ws[f"{columns['quantity']}{row}"] = 1
-        ws[f"{columns['unit']}{row}"] = SHIPPING_SUPPLY
-        ws[f"{columns['supply']}{row}"] = SHIPPING_SUPPLY
-        ws[f"{columns['tax']}{row}"] = SHIPPING_TAX
+        ws[f"{columns['unit']}{row}"] = result.shipping_supply
+        ws[f"{columns['supply']}{row}"] = result.shipping_supply
+        ws[f"{columns['tax']}{row}"] = result.shipping_tax
         row += 1
     return row
 
@@ -389,6 +410,7 @@ def generate_document(
     negotiated: bool = False,
     free_shipping: bool = False,
     order_import: bool = False,
+    shipping_gross_override: str | int | Decimal | None = None,
     payment_method: str = "직거래",
     delivery_term: str = "",
     templates_dir: str | Path | None = None,
@@ -396,7 +418,8 @@ def generate_document(
 ) -> tuple[Path, CalculationResult]:
     _validate_header(organization, name, trade_date)
     result = calculate_document(
-        items, negotiated=negotiated, free_shipping=free_shipping, order_import=order_import
+        items, negotiated=negotiated, free_shipping=free_shipping, order_import=order_import,
+        shipping_gross_override=shipping_gross_override,
     )
     base = Path(__file__).resolve().parent
     templates = Path(templates_dir) if templates_dir else base / "templates"

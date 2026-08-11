@@ -426,6 +426,22 @@ def _as_positive_int(value, default=0):
     return converted if converted > 0 else default
 
 
+def _customer_shipping_gross(product_order, delivery=None):
+    """상품주문 응답에서 고객이 실제 부담한 배송비를 계산한다."""
+    delivery = delivery or {}
+    delivery_fee = _as_positive_int(
+        _first(product_order, "deliveryFeeAmount") or _first(delivery, "deliveryFeeAmount")
+    )
+    regional_fee = _as_positive_int(
+        _first(product_order, "sectionDeliveryFee") or _first(delivery, "sectionDeliveryFee")
+    )
+    delivery_discount = _as_positive_int(
+        _first(product_order, "deliveryDiscountAmount")
+        or _first(delivery, "deliveryDiscountAmount")
+    )
+    return max(0, delivery_fee + regional_fee - delivery_discount)
+
+
 def build_transaction_statement_order(order_id, details):
     """상품주문 상세 응답을 거래명세서 화면용 주문 1건으로 정규화한다.
 
@@ -444,6 +460,7 @@ def build_transaction_statement_order(order_id, details):
     receiver_name = ""
     payment_date = ""
     blocked = []
+    shipping_by_package = {}
     for detail in details:
         order = detail.get("order") or {}
         product_order = detail.get("productOrder") or {}
@@ -459,6 +476,15 @@ def build_transaction_statement_order(order_id, details):
                 or claim_status in TRANSACTION_STATEMENT_BLOCKED_CLAIM_STATUSES):
             blocked.append(claim_status or status)
             continue
+
+        package_key = str(_first(product_order, "packageNumber")).strip()
+        if not package_key:
+            package_key = str(_first(product_order, "productOrderId")).strip()
+        package_key = package_key or f"line-{len(shipping_by_package)}"
+        shipping_by_package[package_key] = max(
+            shipping_by_package.get(package_key, 0),
+            _customer_shipping_gross(product_order, detail.get("delivery") or {}),
+        )
 
         quantity = _as_positive_int(_first(product_order, "quantity"), default=1)
         gross_amount = _as_positive_int(
@@ -504,6 +530,7 @@ def build_transaction_statement_order(order_id, details):
         "receiver_name": receiver_name,
         "customer_name": orderer_name or receiver_name,
         "payment_date": payment_date,
+        "shipping_gross": sum(shipping_by_package.values()),
         "items": items,
     }
 

@@ -230,6 +230,7 @@ class QuotationStatementWidget(QWidget):
         self._updating_table = False
         self._negotiation_mode = False
         self._naver_order_import = False
+        self._naver_order_shipping_gross = 0
         self._build_ui()
         self.add_item_row()
 
@@ -501,7 +502,11 @@ class QuotationStatementWidget(QWidget):
             order_import = self._is_naver_order_import()
             if order_import:
                 self._negotiation_mode = False
-                result = calculate_document(items, order_import=True)
+                result = calculate_document(
+                    items,
+                    order_import=True,
+                    shipping_gross_override=self._naver_order_shipping_gross,
+                )
             else:
                 raw_result = calculate_document(items, negotiated=True)
                 over_limit = raw_result.goods_total_before_discount > NEGOTIATION_LIMIT
@@ -672,10 +677,15 @@ class QuotationStatementWidget(QWidget):
         if imported_date.isValid():
             self.trade_date.setDate(imported_date)
         self._naver_order_import = True
+        self._naver_order_shipping_gross = int(order.get("shipping_gross") or 0)
         self.free_shipping_check.setVisible(False)
+        shipping_message = (
+            f"실제 배송비 {self._naver_order_shipping_gross:,}원을 포함했습니다."
+            if self._naver_order_shipping_gross else "고객 부담 배송비가 없어 배송비 행을 만들지 않습니다."
+        )
         self.naver_order_status.setText(
             f"주문번호 {order.get('order_id', '')}의 상품 {len(lines)}개를 적용했습니다. "
-            "추가 할인과 고정 배송비는 적용하지 않습니다."
+            f"{shipping_message} 추가 할인은 적용하지 않습니다."
         )
         self.refresh_summary()
 
@@ -713,6 +723,7 @@ class QuotationStatementWidget(QWidget):
         self.free_shipping_check.setChecked(False)
         self._negotiation_mode = False
         self._naver_order_import = False
+        self._naver_order_shipping_gross = 0
         self.naver_order_status.setText(
             "주문을 불러오면 상품·옵션·수량·실제 결제금액을 적용하며 추가 할인과 고정 배송비는 적용하지 않습니다."
         )
@@ -729,7 +740,11 @@ class QuotationStatementWidget(QWidget):
             if self._negotiation_mode and not negotiated:
                 raise NegotiationRequired("500만 원 초과 주문은 협의 완료를 확인해야 합니다.")
             result = calculate_document(
-                items, negotiated=negotiated, free_shipping=free_shipping, order_import=order_import
+                items,
+                negotiated=negotiated,
+                free_shipping=free_shipping,
+                order_import=order_import,
+                shipping_gross_override=(self._naver_order_shipping_gross if order_import else None),
             )
             organization = self.organization_edit.text().strip()
             name = self.name_edit.text().strip()
@@ -768,6 +783,7 @@ class QuotationStatementWidget(QWidget):
                 negotiated=negotiated,
                 free_shipping=free_shipping,
                 order_import=order_import,
+                shipping_gross_override=(self._naver_order_shipping_gross if order_import else None),
                 payment_method=self.payment_method.currentText(),
                 delivery_term=self.delivery_edit.text(),
                 templates_dir=self._base_dir / "templates",
