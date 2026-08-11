@@ -5123,6 +5123,8 @@ class MainWindow(QMainWindow):
             self._refresh_db_sheet_sync_path_labels()
         elif name == "tab_tracking":
             self._enter_tracking_tab()
+        elif name == "tab_documents" and getattr(self, "_document_widget", None) is not None:
+            self._document_widget.prefetch_products()
 
     def _on_db_sync_refresh_paths_clicked(self):
         self._refresh_db_sheet_sync_path_labels(reset_manual_overrides=True)

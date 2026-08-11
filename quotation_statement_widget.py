@@ -5,7 +5,8 @@ from __future__ import annotations
 from decimal import Decimal
 from pathlib import Path
 
-from PySide6.QtCore import QDate, QThread, Qt, Signal
+from PySide6.QtCore import QDate, QThread, QUrl, Qt, Signal
+from PySide6.QtGui import QColor, QDesktopServices
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -47,6 +48,7 @@ COL_SPEC = 3
 COL_QUANTITY = 4
 COL_PRICE = 5
 ROLE_API_PRICE = Qt.ItemDataRole.UserRole + 1
+SMARTSTORE_PRODUCT_URL_TEMPLATE = "https://smartstore.naver.com/higenis/products/{product_no}"
 
 
 class ProductSearchThread(QThread):
@@ -84,8 +86,8 @@ class ProductChoiceDialog(QDialog):
         self.filter_edit.setPlaceholderText("결과 안에서 다시 검색")
         layout.addWidget(self.filter_edit)
 
-        self.table = QTableWidget(0, 3)
-        self.table.setHorizontalHeaderLabels(["상품번호", "스마트스토어 상품명", "기준가격"])
+        self.table = QTableWidget(0, 4)
+        self.table.setHorizontalHeaderLabels(["상품번호", "스마트스토어 상품명", "기준가격", "상품 페이지"])
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -93,6 +95,7 @@ class ProductChoiceDialog(QDialog):
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         layout.addWidget(self.table)
 
         buttons = QDialogButtonBox()
@@ -105,6 +108,7 @@ class ProductChoiceDialog(QDialog):
         self.table.itemSelectionChanged.connect(
             lambda: self.apply_button.setEnabled(self.table.currentRow() >= 0)
         )
+        self.table.cellClicked.connect(self._open_product_link)
         buttons.accepted.connect(self._accept_selection)
         buttons.rejected.connect(self.reject)
         self._populate(query)
@@ -127,9 +131,34 @@ class ProductChoiceDialog(QDialog):
             price_item = QTableWidgetItem(f"{price:,}원")
             price_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             self.table.setItem(row, 2, price_item)
+            product_url = self._smartstore_product_url(product)
+            link_item = QTableWidgetItem("열기" if product_url else "-")
+            link_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            if product_url:
+                link_item.setData(Qt.ItemDataRole.UserRole, product_url)
+                link_item.setToolTip(product_url)
+                link_font = link_item.font()
+                link_font.setUnderline(True)
+                link_item.setFont(link_font)
+                link_item.setForeground(QColor("#2563eb"))
+            self.table.setItem(row, 3, link_item)
         self.table.clearSelection()
         self.table.setCurrentCell(-1, -1)
         self.apply_button.setEnabled(False)
+
+    @staticmethod
+    def _smartstore_product_url(product):
+        product_no = str(product.get("product_no") or "").strip()
+        if not product_no.isdigit():
+            return ""
+        return SMARTSTORE_PRODUCT_URL_TEMPLATE.format(product_no=product_no)
+
+    def _open_product_link(self, row, column):
+        if column != 3:
+            return
+        url = self.table.item(row, column).data(Qt.ItemDataRole.UserRole)
+        if url and not QDesktopServices.openUrl(QUrl(str(url))):
+            QMessageBox.warning(self, "상품 페이지", "기본 브라우저에서 상품 페이지를 열 수 없습니다.")
 
     def _accept_selection(self):
         row = self.table.currentRow()
@@ -146,6 +175,10 @@ class QuotationStatementWidget(QWidget):
         self._on_created = on_created
         self._base_dir = Path(base_dir or Path(__file__).resolve().parent)
         self._search_thread = None
+        self._prefetch_thread = None
+        self._prefetch_result = None
+        self._prefetch_complete = False
+        self._pending_search = None
         self._search_target_row = -1
         self._updating_table = False
         self._negotiation_mode = False
@@ -207,6 +240,8 @@ class QuotationStatementWidget(QWidget):
         self.table.setHorizontalHeaderLabels(
             ["상태", "API 상품명 (확인용)", "문서용 상품명", "규격", "수량", "VAT포함 단가"]
         )
+        for column in range(self.table.columnCount()):
+            self.table.horizontalHeaderItem(column).setTextAlignment(Qt.AlignmentFlag.AlignCenter)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.table.setAlternatingRowColors(True)
@@ -241,9 +276,9 @@ class QuotationStatementWidget(QWidget):
         action_row = QHBoxLayout()
         action_row.addStretch(1)
         self.reset_button = QPushButton("초기화")
-        self.create_button = QPushButton("문서 생성")
+        self.create_button = QPushButton("엑셀 만들기")
         self.create_button.setMinimumWidth(120)
-        self.pdf_button = QPushButton("PDF로 출력")
+        self.pdf_button = QPushButton("PDF 만들기")
         self.pdf_button.setMinimumWidth(120)
         action_row.addWidget(self.reset_button)
         action_row.addWidget(self.create_button)
@@ -280,11 +315,18 @@ class QuotationStatementWidget(QWidget):
             api_item.setFlags(api_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.table.setItem(row, COL_API_NAME, api_item)
             self.table.setItem(row, COL_DOCUMENT_NAME, self._editable_item())
-            self.table.setItem(row, COL_SPEC, self._editable_item())
-            self.table.setItem(row, COL_PRICE, self._editable_item())
-            self.table.setItem(row, COL_QUANTITY, self._editable_item("1"))
+            specification = self._editable_item()
+            specification.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.table.setItem(row, COL_SPEC, specification)
+            price = self._editable_item()
+            price.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.table.setItem(row, COL_PRICE, price)
+            quantity = self._editable_item("1")
+            quantity.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.table.setItem(row, COL_QUANTITY, quantity)
             status = QTableWidgetItem("수동")
             status.setFlags(status.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            status.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             self.table.setItem(row, COL_STATUS, status)
             self.table.setCurrentCell(row, COL_DOCUMENT_NAME)
         finally:
@@ -398,8 +440,28 @@ class QuotationStatementWidget(QWidget):
         if self._product_search_worker is None:
             QMessageBox.information(self, "상품 찾기", "상품 API를 사용할 수 없습니다. 수동 입력은 계속 사용할 수 있습니다.")
             return
+        if self._prefetch_thread and self._prefetch_thread.isRunning():
+            self._pending_search = (query, row)
+            self.search_status.setText("상품 목록을 준비 중입니다. 완료되면 검색합니다…")
+            return
         if self._search_thread and self._search_thread.isRunning():
             return
+        self._start_product_search(query, row)
+
+    def prefetch_products(self):
+        """문서 탭 첫 진입 시 상품 목록을 미리 세션 캐시에 적재한다."""
+        if self._product_search_worker is None:
+            return
+        if self._prefetch_complete or (self._prefetch_thread and self._prefetch_thread.isRunning()):
+            return
+        self._prefetch_result = None
+        self.search_status.setText("스마트스토어 상품 목록을 준비하고 있습니다…")
+        self._prefetch_thread = ProductSearchThread(self._product_search_worker, "", self)
+        self._prefetch_thread.result_ready.connect(self._on_prefetch_result)
+        self._prefetch_thread.finished.connect(self._on_prefetch_finished)
+        self._prefetch_thread.start()
+
+    def _start_product_search(self, query, row):
         self._search_target_row = row
         self.search_button.setEnabled(False)
         self.search_status.setText("스마트스토어 상품을 조회하고 있습니다…")
@@ -407,6 +469,26 @@ class QuotationStatementWidget(QWidget):
         self._search_thread.result_ready.connect(lambda result: self._on_search_result(query, result))
         self._search_thread.finished.connect(lambda: self.search_button.setEnabled(True))
         self._search_thread.start()
+
+    def _on_prefetch_result(self, result):
+        self._prefetch_result = result
+
+    def _on_prefetch_finished(self):
+        result = self._prefetch_result or {"ok": False, "error": "상품 목록을 불러오지 못했습니다."}
+        self._prefetch_thread = None
+        if not result.get("ok"):
+            self._pending_search = None
+            self.search_status.setText(
+                f"상품 목록 준비 실패: {result.get('error', '알 수 없는 오류')} — 수동 입력은 가능합니다."
+            )
+            return
+        count = int(result.get("count") or 0)
+        self._prefetch_complete = True
+        self.search_status.setText(f"스마트스토어 상품 {count:,}개 준비 완료")
+        pending = self._pending_search
+        self._pending_search = None
+        if pending:
+            self._start_product_search(*pending)
 
     def _on_search_result(self, query, result):
         if not result.get("ok"):

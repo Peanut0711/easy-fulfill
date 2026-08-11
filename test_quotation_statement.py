@@ -162,6 +162,34 @@ class NaverProductTests(unittest.TestCase):
 
 
 class WorkbookGenerationTests(unittest.TestCase):
+    def test_quote_amount_label_preserves_the_original_font_sizes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, _ = generate_document(
+                "견적서", "테스트 소속", "홍길동", date(2026, 8, 11), [item(30_000)],
+                templates_dir=TEMPLATES, output_dir=directory,
+            )
+            wb = load_workbook(path, rich_text=True)
+            try:
+                label = wb.active["B12"].value
+                self.assertEqual(str(label), "견적금액 (공급가액 + 세액) ")
+                self.assertEqual([part.font.sz for part in label], [14.0, 9.0])
+            finally:
+                wb.close()
+
+    def test_statement_total_label_preserves_the_original_font_sizes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, _ = generate_document(
+                "거래명세서", "테스트 소속", "홍길동", date(2026, 8, 11), [item(30_000)],
+                templates_dir=TEMPLATES, output_dir=directory,
+            )
+            wb = load_workbook(path, rich_text=True)
+            try:
+                label = wb.active["B7"].value
+                self.assertEqual(str(label), "합계 (부가세 포함) ")
+                self.assertEqual([part.font.sz for part in label], [14.0, 9.0])
+            finally:
+                wb.close()
+
     def test_shipping_uses_an_added_line_when_base_rows_are_full(self):
         items = [item(10_000, name=f"소액 품목 {n}") for n in range(1, 8)]
         with tempfile.TemporaryDirectory() as directory:

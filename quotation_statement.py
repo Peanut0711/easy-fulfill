@@ -17,6 +17,8 @@ import re
 import subprocess
 
 from openpyxl import load_workbook
+from openpyxl.cell.rich_text import CellRichText, TextBlock
+from openpyxl.cell.text import InlineFont
 from openpyxl.utils import get_column_letter, range_boundaries
 
 
@@ -313,6 +315,36 @@ def _prepare_sheet(template: Path, line_count: int, *, quote: bool):
     return wb, ws, total_row + extra, extra
 
 
+def _write_quote_amount_label(ws) -> None:
+    """원본 견적서처럼 제목과 괄호 설명의 글자 크기를 구분한다."""
+    base_font = ws["B12"].font
+    ws["B12"] = CellRichText(
+        TextBlock(
+            InlineFont(rFont=base_font.name, sz=14, b=base_font.b, i=base_font.i),
+            "견적금액 ",
+        ),
+        TextBlock(
+            InlineFont(rFont=base_font.name, sz=9, b=base_font.b, i=base_font.i),
+            "(공급가액 + 세액) ",
+        ),
+    )
+
+
+def _write_statement_total_label(ws) -> None:
+    """원본 거래명세서처럼 합계와 부가세 설명의 글자 크기를 구분한다."""
+    base_font = ws["B7"].font
+    ws["B7"] = CellRichText(
+        TextBlock(
+            InlineFont(rFont=base_font.name, sz=14, b=base_font.b, i=base_font.i),
+            "합계 ",
+        ),
+        TextBlock(
+            InlineFont(rFont=base_font.name, sz=9, b=base_font.b, i=base_font.i),
+            "(부가세 포함) ",
+        ),
+    )
+
+
 def generate_document(
     document_type: str,
     organization: str,
@@ -346,6 +378,7 @@ def generate_document(
             ws["B4"] = str(organization).strip()
             ws["D6"] = f"{str(name).strip()}님 귀하"
             ws["D7"] = trade_date.strftime("%Y.%m.%d")
+            _write_quote_amount_label(ws)
             ws["R12"] = result.grand_total
             _write_lines(
                 ws,
@@ -363,6 +396,7 @@ def generate_document(
             ws["B5"] = f"{str(organization).strip()} {str(name).strip()}님 귀하"
             # 날짜 일련번호를 표시하는 일부 뷰어도 있으므로 문서에는 고정 문자열로 기록한다.
             ws["B6"] = trade_date.strftime("%Y.%m.%d")
+            _write_statement_total_label(ws)
             ws["H7"] = result.grand_total
             _write_lines(
                 ws,
@@ -385,20 +419,42 @@ def generate_document(
 
 
 def export_xlsx_to_pdf(xlsx_path: str | Path) -> Path:
-    """Excel COM으로 XLSX의 인쇄영역을 그대로 PDF로 내보낸다."""
+    """A4 기준 Excel 인쇄영역을 PDF로 내보내고 기본 프린터를 복원한다."""
     source = Path(xlsx_path).resolve()
     if not source.is_file():
         raise PdfExportError(f"엑셀 파일을 찾을 수 없습니다: {source}")
     target = source.with_suffix(".pdf")
     script = r'''
 $ErrorActionPreference = 'Stop'
+$originalPrinter = $null
+$pdfPrinter = $null
 $excel = $null
 $book = $null
 try {
+    $pdfPrinter = Get-CimInstance Win32_Printer -Filter "Name = 'Microsoft Print to PDF'"
+    if ($null -eq $pdfPrinter) {
+        throw 'A4 PDF 출력을 위한 Microsoft Print to PDF 프린터를 찾을 수 없습니다.'
+    }
+    $originalPrinter = Get-CimInstance Win32_Printer | Where-Object Default | Select-Object -First 1
+    if ($null -eq $originalPrinter) {
+        throw '현재 Windows 기본 프린터를 확인할 수 없습니다.'
+    }
+    & "$env:SystemRoot\System32\rundll32.exe" 'printui.dll,PrintUIEntry' '/y' '/n' $pdfPrinter.Name
+    Start-Sleep -Milliseconds 500
+    $selectedPrinter = Get-CimInstance Win32_Printer | Where-Object Default | Select-Object -First 1
+    if ($null -eq $selectedPrinter -or $selectedPrinter.Name -ne $pdfPrinter.Name) {
+        throw 'A4 PDF 출력용 프린터를 선택하지 못했습니다.'
+    }
     $excel = New-Object -ComObject Excel.Application
     $excel.Visible = $false
     $excel.DisplayAlerts = $false
     $book = $excel.Workbooks.Open($env:EASY_FULFILL_XLSX_PATH, 0, $true)
+    $sheet = $book.Worksheets.Item(1)
+    $sheet.PageSetup.PaperSize = 9
+    $sheet.PageSetup.Orientation = 1
+    $sheet.PageSetup.Zoom = $false
+    $sheet.PageSetup.FitToPagesWide = 1
+    $sheet.PageSetup.FitToPagesTall = 1
     $book.ExportAsFixedFormat(0, $env:EASY_FULFILL_PDF_PATH, 0, $true, $false)
 } finally {
     if ($book -ne $null) {
@@ -408,6 +464,10 @@ try {
     if ($excel -ne $null) {
         $excel.Quit()
         [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($excel)
+    }
+    if ($originalPrinter -ne $null) {
+        & "$env:SystemRoot\System32\rundll32.exe" 'printui.dll,PrintUIEntry' '/y' '/n' $originalPrinter.Name
+        Start-Sleep -Milliseconds 500
     }
 }
 '''
