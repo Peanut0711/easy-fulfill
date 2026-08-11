@@ -124,6 +124,7 @@ TRACKING_AUTO_REFRESH_DEFAULT_MIN = 60
 # 네이버 커머스API 문의 알림: client_id/secret 은 비공개 시트(설정 탭)에만 저장한다.
 CONFIG_KEY_NAVER_CLIENT_ID = "naver_client_id"
 CONFIG_KEY_NAVER_CLIENT_SECRET = "naver_client_secret"
+_NAVER_DOCUMENT_PRODUCT_CACHE = None  # 문서 탭 실행 중에만 유지하는 상품 목록
 # 쿠팡 WING OpenAPI 문의 알림: vendorId/accessKey/secretKey 도 비공개 「설정」 탭에만 저장.
 CONFIG_KEY_COUPANG_VENDOR_ID = "coupang_vendor_id"
 CONFIG_KEY_COUPANG_ACCESS_KEY = "coupang_access_key"
@@ -1513,6 +1514,40 @@ def run_naver_order_fetch_worker(days):
         rows = naver_commerce.fetch_orders_for_shipping(
             client_id, client_secret, from_dt, now_dt, debug=False)
         return {"ok": True, "rows": rows, "count": len(rows)}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+def run_naver_product_search_worker(query):
+    """스마트스토어 판매 상품을 이름 일부로 찾아 문서 탭에 반환한다."""
+    global _NAVER_DOCUMENT_PRODUCT_CACHE
+    if gspread is None:
+        return {"ok": False, "error": "gspread 패키지가 필요합니다."}
+    try:
+        from google_sheets_oauth import get_authorized_gspread_client
+        import naver_commerce
+    except ImportError as e:
+        return {"ok": False, "error": str(e)}
+    try:
+        if _NAVER_DOCUMENT_PRODUCT_CACHE is None:
+            gc = get_authorized_gspread_client()
+            cfg = _read_config_values_map(_standalone_open_config_ws(gc))
+            client_id = cfg.get(CONFIG_KEY_NAVER_CLIENT_ID, "")
+            client_secret = cfg.get(CONFIG_KEY_NAVER_CLIENT_SECRET, "")
+            if not (client_id and client_secret):
+                return {
+                    "ok": False,
+                    "error": "네이버 client_id/secret 이 설정되지 않았습니다. 관리자 ‘키 설정’에서 등록하세요.",
+                }
+            token = naver_commerce.get_access_token(client_id, client_secret)
+            _NAVER_DOCUMENT_PRODUCT_CACHE = naver_commerce.fetch_sale_products(token)
+
+        tokens = [part.casefold() for part in str(query or "").split() if part]
+        products = [
+            product for product in _NAVER_DOCUMENT_PRODUCT_CACHE
+            if all(token in str(product.get("name") or "").casefold() for token in tokens)
+        ]
+        return {"ok": True, "products": products[:300], "count": len(products)}
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
@@ -4000,12 +4035,15 @@ class MainWindow(QMainWindow):
         self._order_ship_splitter_initialized = False
 
     def _apply_tab_order(self):
-        """탭을 주문·발송 / 배송추적 / DB동기화 / 환경설정 / 관리자 순으로 재배치합니다.
+        """합의된 7개 상위 탭 순서를 런타임에서 보장합니다.
         (UI 파일의 정의 순서와 무관하게 런타임에서 보장)"""
         tw = getattr(self.ui, "tabWidget", None)
         if tw is None:
             return
-        desired = ["tab", "tab_tracking", "tab_db_sheet_sync", "tab_2", "tab_admin"]
+        desired = [
+            "tab", "tab_tracking", "tab_db_sheet_sync", "tab_2", "tab_admin",
+            "tab_quick_invoice", "tab_documents",
+        ]
         bar = tw.tabBar()
         for target in range(len(desired)):
             name = desired[target]
@@ -4946,6 +4984,8 @@ class MainWindow(QMainWindow):
             self.ui.pushButton_quick_excel_gen.clicked.connect(self.generate_quick_excel)
         # 퀵엑셀(수동 주문 추가) 그룹은 단건 송장 탭에 상시 인라인으로 노출한다.
         self._mount_quick_excel_inline()
+        # 견적서·거래명세서 기능은 마지막 「문서 만들기」 탭에 독립 위젯으로 장착한다.
+        self._mount_document_widget()
         if hasattr(self.ui, "pushButton_quick_excel_reset"):
             self.ui.pushButton_quick_excel_reset.clicked.connect(self._reset_quick_excel_fields)
         # 연동·API 키(관리자): 배송추적 팝업에서 환경설정 탭으로 이동. 기존 핸들러 재사용.
@@ -5569,6 +5609,31 @@ class MainWindow(QMainWindow):
             return
         # 하단 세로 스페이서 바로 앞(마지막 위젯 자리)에 넣는다.
         lay.insertWidget(max(lay.count() - 1, 0), gb, 0, Qt.AlignmentFlag.AlignLeft)
+
+    def _mount_document_widget(self):
+        """문서 기능 오류가 다른 주문·배송 탭의 시작을 막지 않도록 격리해 장착한다."""
+        layout = getattr(self.ui, "verticalLayout_documents", None)
+        if layout is None or getattr(self, "_document_widget", None) is not None:
+            return
+        try:
+            from quotation_statement_widget import QuotationStatementWidget
+
+            self._document_widget = QuotationStatementWidget(
+                product_search_worker=run_naver_product_search_worker,
+                on_created=self.show_excel_created_message,
+                base_dir=Path(__file__).resolve().parent,
+                parent=self,
+            )
+            layout.addWidget(self._document_widget)
+        except Exception as exc:
+            self._document_widget = None
+            error = QLabel(
+                "문서 만들기 기능을 불러오지 못했습니다. 기존 기능은 계속 사용할 수 있습니다.\n"
+                f"오류: {exc}"
+            )
+            error.setWordWrap(True)
+            layout.addWidget(error)
+            print(f"! 문서 만들기 탭 초기화 실패: {exc}")
 
     def _reset_quick_excel_fields(self):
         """「초기화」 → 수동 주문 입력란을 모두 비웁니다(스토어 선택은 유지)."""

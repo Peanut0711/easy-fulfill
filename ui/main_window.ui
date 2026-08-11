@@ -1491,6 +1491,25 @@
         </item>
        </layout>
       </widget>
+      <widget class="QWidget" name="tab_documents">
+       <attribute name="title">
+        <string>문서 만들기</string>
+       </attribute>
+       <layout class="QVBoxLayout" name="verticalLayout_documents">
+        <property name="leftMargin">
+         <number>12</number>
+        </property>
+        <property name="topMargin">
+         <number>12</number>
+        </property>
+        <property name="rightMargin">
+         <number>12</number>
+        </property>
+        <property name="bottomMargin">
+         <number>12</number>
+        </property>
+       </layout>
+      </widget>
      </widget>
     </item>
    </layout>

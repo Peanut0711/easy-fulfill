@@ -32,6 +32,7 @@ API_BASE = "https://api.commerce.naver.com/external"
 TOKEN_URL = API_BASE + "/v1/oauth2/token"
 QNAS_URL = API_BASE + "/v1/contents/qnas"            # 상품문의
 INQUIRIES_URL = API_BASE + "/v1/pay-user/inquiries"  # 고객문의
+PRODUCT_SEARCH_URL = API_BASE + "/v1/products/search"  # 판매 상품 목록
 DEFAULT_TIMEOUT = 15
 MAX_PAGES = 20  # 과도 호출 방지용 안전장치
 KST = "+09:00"
@@ -188,6 +189,44 @@ def _post_json(url, token, payload):
     resp = requests.post(url, headers=headers, json=payload, timeout=DEFAULT_TIMEOUT)
     _raise_for_status_with_body(resp)
     return resp.json()
+
+
+def fetch_sale_products(token, max_pages=MAX_PAGES):
+    """판매 중 스마트스토어 상품을 문서 검색용의 단순한 dict 목록으로 반환한다.
+
+    상품 목록 API는 상품명 자유검색을 제공하지 않으므로 최대 500개씩 조회하고,
+    이름 키워드 필터는 호출 측에서 수행한다. 쇼핑윈도 채널은 제외한다.
+    """
+    _require()
+    products = []
+    page = 1
+    size = 500
+    while page <= max_pages:
+        js = _post_json(PRODUCT_SEARCH_URL, token, {
+            "productStatusTypes": ["SALE"],
+            "page": page,
+            "size": size,
+            "orderType": "NAME",
+        })
+        contents = js.get("contents") or []
+        for group in contents:
+            for product in (group.get("channelProducts") or []):
+                if product.get("channelServiceType") != "STOREFARM":
+                    continue
+                sale_price = int(product.get("salePrice") or 0)
+                discounted_price = int(product.get("discountedPrice") or 0)
+                products.append({
+                    "product_no": str(product.get("channelProductNo") or ""),
+                    "name": str(product.get("name") or "").strip(),
+                    "sale_price": sale_price,
+                    "discounted_price": discounted_price,
+                    "price": discounted_price if discounted_price > 0 else sale_price,
+                })
+        total = int(js.get("totalElements") or 0)
+        if not contents or len(contents) < size or (total and page * size >= total):
+            break
+        page += 1
+    return products
 
 
 def _first(d, *keys):
