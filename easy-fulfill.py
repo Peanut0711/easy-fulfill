@@ -17,7 +17,7 @@ import shutil
 from PySide6.QtWidgets import (QApplication, QMainWindow, QFileDialog, QMessageBox, 
                               QInputDialog, QLineEdit, QTableWidgetItem, QLabel, 
                               QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QWidget,
-                              QProgressBar, QFrame, QGraphicsOpacityEffect, QListWidget,
+                               QProgressBar, QProgressDialog, QFrame, QGraphicsOpacityEffect, QListWidget,
                               QAbstractItemView, QGroupBox, QCheckBox, QSpinBox, QMenu,
                               QStyle, QProxyStyle, QPlainTextEdit, QFormLayout,
                               QSplitter, QTextEdit)
@@ -2357,8 +2357,10 @@ class DetailHtmlEditorDialog(QDialog):
         self._block_ranges = []
         self._selected_blocks = set()
         self._selection_anchor = None
+        self._selection_range = None
         self._block_delete_history = []
         self._pending_restored_selection = None
+        self._pending_restored_range = None
         self.setWindowTitle("상세페이지 HTML 편집 및 미리보기")
         self.setWindowFlag(Qt.WindowMaximizeButtonHint, True)
         self.resize(1280, 760)
@@ -2375,7 +2377,26 @@ class DetailHtmlEditorDialog(QDialog):
         settings = self.preview.settings()
         settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, True)
         settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True)
-        splitter.addWidget(self.preview)
+        preview_panel = QWidget()
+        preview_layout = QVBoxLayout(preview_panel)
+        preview_layout.setContentsMargins(0, 0, 0, 0)
+        preview_modes = QHBoxLayout()
+        preview_modes.addWidget(QLabel("미리보기"))
+        self.preview_pc = QPushButton("PC")
+        self.preview_mobile = QPushButton("모바일")
+        self.preview_pc.setCheckable(True)
+        self.preview_mobile.setCheckable(True)
+        preview_modes.addWidget(self.preview_pc)
+        preview_modes.addWidget(self.preview_mobile)
+        preview_modes.addStretch(1)
+        preview_layout.addLayout(preview_modes)
+        self.preview_canvas = QFrame()
+        self.preview_canvas.setStyleSheet("QFrame { background:#e9ecef; }")
+        preview_canvas_layout = QHBoxLayout(self.preview_canvas)
+        preview_canvas_layout.setContentsMargins(12, 0, 12, 0)
+        preview_canvas_layout.addWidget(self.preview, 0, Qt.AlignHCenter)
+        preview_layout.addWidget(self.preview_canvas, 1)
+        splitter.addWidget(preview_panel)
         splitter.addWidget(self.editor)
         splitter.setSizes([640, 640])
         layout.addWidget(splitter, 1)
@@ -2403,6 +2424,8 @@ class DetailHtmlEditorDialog(QDialog):
         self.editor.textChanged.connect(self._refresh)
         self.preview.loadFinished.connect(self._install_preview_block_selector)
         self.preview.titleChanged.connect(self._on_preview_title_changed)
+        self.preview_pc.clicked.connect(lambda: self._set_preview_mode(False))
+        self.preview_mobile.clicked.connect(lambda: self._set_preview_mode(True))
         reset.clicked.connect(self._reset_to_original)
         copy.clicked.connect(lambda: QApplication.clipboard().setText(self.editor.toPlainText()))
         save.clicked.connect(self._save)
@@ -2414,10 +2437,22 @@ class DetailHtmlEditorDialog(QDialog):
         undo_action.setShortcutContext(Qt.WidgetWithChildrenShortcut)
         undo_action.triggered.connect(self._undo_editor)
         self.addAction(undo_action)
+        save_action = QAction("저장", self)
+        save_action.setShortcut(QKeySequence.Save)
+        save_action.setShortcutContext(Qt.WidgetWithChildrenShortcut)
+        save_action.triggered.connect(self._save)
+        self.addAction(save_action)
         self.maximize.clicked.connect(self._toggle_maximize)
         close.clicked.connect(self.accept)
         QApplication.instance().installEventFilter(self)
+        self._set_preview_mode(False)
         self._refresh()
+
+    def _set_preview_mode(self, mobile):
+        self.preview_pc.setChecked(not mobile)
+        self.preview_mobile.setChecked(mobile)
+        self.preview.setMinimumWidth(390 if mobile else 0)
+        self.preview.setMaximumWidth(390 if mobile else 16777215)
 
     def eventFilter(self, watched, event):
         if event.type() != QEvent.KeyPress or not self._selected_blocks:
@@ -2437,6 +2472,7 @@ class DetailHtmlEditorDialog(QDialog):
     def _clear_block_selection(self):
         self._selected_blocks.clear()
         self._selection_anchor = None
+        self._selection_range = None
         self._paint_selected_blocks()
         self._update_editor_highlights()
         self._update_block_controls()
@@ -2445,8 +2481,13 @@ class DetailHtmlEditorDialog(QDialog):
         source = self.editor.toPlainText()
         self._block_ranges = self._html_block_ranges(source)
         restored = self._pending_restored_selection or set()
+        restored_range = self._pending_restored_range
         self._pending_restored_selection = None
+        self._pending_restored_range = None
         self._selected_blocks = {index for index in restored if index < len(self._block_ranges)}
+        self._selection_range = restored_range if restored_range and all(
+            index in self._selected_blocks for index in range(restored_range[0], restored_range[1] + 1)
+        ) else None
         self._selection_anchor = min(self._selected_blocks) if self._selected_blocks else None
         safe_preview = re.sub(r"<script\b[^>]*>.*?</script\s*>", "", source, flags=re.IGNORECASE | re.DOTALL)
         safe_preview = re.sub(r"\s+on[a-z]+\s*=\s*(['\"]).*?\1", "", safe_preview, flags=re.IGNORECASE | re.DOTALL)
@@ -2554,6 +2595,10 @@ class DetailHtmlEditorDialog(QDialog):
             (() => {
                 const root = document.body.firstElementChild;
                 if (!root) return;
+                root.style.userSelect = 'none';
+                root.style.webkitUserSelect = 'none';
+                root.querySelectorAll('img').forEach(image => image.draggable = false);
+                root.addEventListener('dragstart', event => event.preventDefault());
                 const selector = 'p,h1,h2,h3,h4,h5,h6,li,table,hr,img';
                 const blocks = [...root.querySelectorAll(selector)].filter(element => !element.parentElement?.closest(selector));
                 blocks.forEach((element, index) => {
@@ -2561,6 +2606,79 @@ class DetailHtmlEditorDialog(QDialog):
                     element.style.outlineOffset = '2px';
                     element.style.cursor = 'pointer';
                 });
+                const overlay = document.createElement('div');
+                overlay.id = 'easy-fulfill-selection-range';
+                const paintOverlay = (element, rect) => Object.assign(element.style, {
+                    position: 'absolute',
+                    pointerEvents: 'none',
+                    boxSizing: 'border-box',
+                    border: '2px solid #1976d2',
+                    background: 'rgba(25, 118, 210, .08)',
+                    zIndex: '2147483647',
+                    display: 'block',
+                    left: `${rect.left}px`,
+                    top: `${rect.top}px`,
+                    width: `${rect.right - rect.left}px`,
+                    height: `${rect.bottom - rect.top}px`
+                });
+                overlay.style.display = 'none';
+                document.body.appendChild(overlay);
+                const selectionRect = element => {
+                    const rect = element.getBoundingClientRect();
+                    const list = element.tagName === 'LI' ? element.parentElement?.closest('ul,ol') : null;
+                    const listRect = list?.getBoundingClientRect();
+                    return {
+                        left: (listRect ? listRect.left : rect.left) + window.scrollX,
+                        top: rect.top + window.scrollY,
+                        right: rect.right + window.scrollX,
+                        bottom: rect.bottom + window.scrollY
+                    };
+                };
+                const clearBlockOverlays = () => document.querySelectorAll('.easy-fulfill-selection-block').forEach(item => item.remove());
+                window.__easyFulfillPaintBlocks = (indices, groupedIndices) => {
+                    const selectedBlocks = new Set(indices);
+                    const groupedBlocks = new Set(groupedIndices);
+                    clearBlockOverlays();
+                    blocks.forEach(element => {
+                        const selected = selectedBlocks.has(Number(element.dataset.efBlock));
+                        const grouped = groupedBlocks.has(Number(element.dataset.efBlock));
+                        if (selected && !grouped) {
+                            const blockOverlay = document.createElement('div');
+                            blockOverlay.className = 'easy-fulfill-selection-block';
+                            const rect = selectionRect(element);
+                            const gap = 2;
+                            paintOverlay(blockOverlay, {
+                                left: rect.left - gap,
+                                top: rect.top - gap,
+                                right: rect.right + gap,
+                                bottom: rect.bottom + gap
+                            });
+                            document.body.appendChild(blockOverlay);
+                        }
+                    });
+                    const groupedElements = blocks.filter(element => groupedBlocks.has(Number(element.dataset.efBlock)));
+                    if (groupedElements.length < 2) {
+                        overlay.style.display = 'none';
+                    } else {
+                        const rects = groupedElements.map(selectionRect);
+                        const gap = 4;
+                        paintOverlay(overlay, {
+                            left: Math.min(...rects.map(rect => rect.left)) - gap,
+                            top: Math.min(...rects.map(rect => rect.top)) - gap,
+                            right: Math.max(...rects.map(rect => rect.right)) + gap,
+                            bottom: Math.max(...rects.map(rect => rect.bottom)) + gap
+                        });
+                    }
+                    window.__easyFulfillLastPaint = { indices, groupedIndices };
+                };
+                const repaint = () => {
+                    const last = window.__easyFulfillLastPaint;
+                    if (last) window.__easyFulfillPaintBlocks(last.indices, last.groupedIndices);
+                };
+                window.addEventListener('resize', repaint);
+                document.addEventListener('load', event => {
+                    if (event.target instanceof HTMLImageElement) repaint();
+                }, true);
                 let dragStart = null;
                 let dragCurrent = null;
                 let dragOrigin = null;
@@ -2575,11 +2693,8 @@ class DetailHtmlEditorDialog(QDialog):
                 const paintDragRange = (start, end) => {
                     const first = Math.min(start, end);
                     const last = Math.max(start, end);
-                    blocks.forEach(element => {
-                        const selected = Number(element.dataset.efBlock) >= first && Number(element.dataset.efBlock) <= last;
-                        element.style.outline = selected ? '3px solid #e53935' : '';
-                        element.style.backgroundColor = selected ? 'rgba(255, 235, 59, .16)' : '';
-                    });
+                    const indices = Array.from({ length: last - first + 1 }, (_, offset) => first + offset);
+                    window.__easyFulfillPaintBlocks(indices, indices);
                 };
                 root.addEventListener('mousedown', event => {
                     const block = blockAt(event.target);
@@ -2655,9 +2770,12 @@ class DetailHtmlEditorDialog(QDialog):
             first, last = sorted((start, selected))
             self._selected_blocks = set(range(first, last + 1))
             self._selection_anchor = start
+            self._selection_range = (first, last)
         elif click.get("ctrl"):
             if selected in self._selected_blocks:
                 self._selected_blocks.remove(selected)
+                if self._selection_range and self._selection_range[0] <= selected <= self._selection_range[1]:
+                    self._selection_range = None
             else:
                 self._selected_blocks.add(selected)
             if self._selection_anchor is None:
@@ -2665,42 +2783,54 @@ class DetailHtmlEditorDialog(QDialog):
         elif click.get("shift") and self._selection_anchor is not None:
             first, last = sorted((self._selection_anchor, selected))
             self._selected_blocks = set(range(first, last + 1))
+            self._selection_range = (first, last)
         else:
             self._selected_blocks = {selected}
             self._selection_anchor = selected
+            self._selection_range = None
         self._paint_selected_blocks()
         self._update_editor_highlights(scroll_to=selected)
         self._update_block_controls()
 
     def _paint_selected_blocks(self):
         selected = json.dumps(sorted(self._selected_blocks))
+        grouped = json.dumps(
+            list(range(self._selection_range[0], self._selection_range[1] + 1)) if self._selection_range else []
+        )
         self.preview.page().runJavaScript(f"""
             (() => {{
-                const selectedBlocks = new Set({selected});
-                document.querySelectorAll('[data-ef-block]').forEach(element => {{
-                    const isSelected = selectedBlocks.has(Number(element.dataset.efBlock));
-                    element.style.outline = isSelected ? '3px solid #e53935' : '';
-                    element.style.backgroundColor = isSelected ? 'rgba(255, 235, 59, .16)' : '';
-                }});
+                if (window.__easyFulfillPaintBlocks) window.__easyFulfillPaintBlocks({selected}, {grouped});
             }})();
         """)
 
     def _update_block_controls(self):
         if self._selected_blocks:
-            numbers = sorted(index + 1 for index in self._selected_blocks)
-            shown = ", ".join(map(str, numbers[:8])) + (f" 외 {len(numbers) - 8}개" if len(numbers) > 8 else "")
-            self.block_status.setText(f"선택된 라인 {len(numbers)}개: {shown} · Delete 키로 선택 영역 삭제")
+            self.block_status.setText(f"선택된 라인 {len(self._selected_blocks)}개, Delete 키로 선택 영역 삭제")
         else:
             self.block_status.setText("클릭: 단일 · 드래그/Shift+클릭: 범위 · Ctrl+클릭: 개별 추가/해제")
         self.delete_blocks.setEnabled(bool(self._selected_blocks))
         self.undo_delete.setEnabled(self.editor.document().isUndoAvailable())
 
+    @staticmethod
+    def _block_deletion_range(source, start, end):
+        """컴포넌트가 한 줄 전체라면 빈 줄이 남지 않도록 개행까지 포함한다."""
+        line_start = source.rfind("\n", 0, start) + 1
+        line_end = source.find("\n", end)
+        content_end = len(source) if line_end < 0 else line_end
+        if not source[line_start:start].strip() and not source[end:content_end].strip():
+            return line_start, len(source) if line_end < 0 else line_end + 1
+        return start, end
+
     def _delete_selected_blocks(self):
         if not self._selected_blocks:
             return
         selected = set(self._selected_blocks)
-        ranges = [self._block_ranges[index] for index in sorted(self._selected_blocks)]
+        selected_range = self._selection_range
         source = self.editor.toPlainText()
+        ranges = [
+            self._block_deletion_range(source, *self._block_ranges[index])
+            for index in sorted(self._selected_blocks)
+        ]
         cursor = QTextCursor(self.editor.document())
         self.editor.blockSignals(True)
         try:
@@ -2717,6 +2847,7 @@ class DetailHtmlEditorDialog(QDialog):
             "before": source,
             "after": self.editor.toPlainText(),
             "selection": selected,
+            "range": selected_range,
         })
 
     def _undo_editor(self):
@@ -2726,6 +2857,7 @@ class DetailHtmlEditorDialog(QDialog):
         deleted = self._block_delete_history[-1] if self._block_delete_history else None
         if deleted and deleted["after"] == current:
             self._pending_restored_selection = set(deleted["selection"])
+            self._pending_restored_range = deleted.get("range")
         self.editor.undo()
         if deleted and self.editor.toPlainText() == deleted["before"]:
             self._block_delete_history.pop()
@@ -2733,6 +2865,7 @@ class DetailHtmlEditorDialog(QDialog):
     def _reset_to_original(self):
         self._block_delete_history.clear()
         self._pending_restored_selection = None
+        self._pending_restored_range = None
         self.editor.setPlainText(self.original_html)
 
     def _save(self):
@@ -5728,8 +5861,8 @@ class MainWindow(QMainWindow):
         self.lineEdit_detail_naver_create = QLineEdit()
         self.lineEdit_detail_naver_create.setPlaceholderText("네이버 스마트스토어 상품번호")
         self.pushButton_detail_create = QPushButton("HTML 생성")
-        self.pushButton_detail_open_preview = QPushButton("미리보기 열기")
-        self.pushButton_detail_open_html = QPushButton("HTML 편집 및 미리보기")
+        self.pushButton_detail_open_preview = QPushButton("미리보기")
+        self.pushButton_detail_open_html = QPushButton("HTML 편집")
         self.pushButton_detail_open_folder = QPushButton("결과 폴더 열기")
         create_actions = QHBoxLayout()
         create_actions.addWidget(self.pushButton_detail_create)
@@ -5739,13 +5872,14 @@ class MainWindow(QMainWindow):
         create_form.addRow("네이버 상품번호", self.lineEdit_detail_naver_create)
         create_form.addRow("작업", create_actions)
         create_form.addRow(QLabel("쿠팡 신규 등록 화면에는 생성된 HTML을 사용자가 직접 붙여 넣습니다."))
+        self.detail_create_progress = None
 
-        replace_box = QGroupBox("기존 쿠팡 상품 상세 채우기")
+        replace_box = QGroupBox("쿠팡 상품 HTML 적용")
         replace_form = QFormLayout(replace_box)
         self.lineEdit_detail_naver_replace = QLineEdit()
         self.lineEdit_detail_naver_replace.setPlaceholderText("네이버 스마트스토어 상품번호")
         self.lineEdit_detail_vendor_inventory = QLineEdit()
-        self.lineEdit_detail_vendor_inventory.setPlaceholderText("쿠팡 vendorInventoryId")
+        self.lineEdit_detail_vendor_inventory.setPlaceholderText("쿠팡 등록상품 ID")
         self.pushButton_detail_stage = QPushButton("WING에 HTML 채우기")
         self.pushButton_detail_finish = QPushButton("WING 작업 종료")
         self.pushButton_detail_finish.setEnabled(False)
@@ -5753,7 +5887,7 @@ class MainWindow(QMainWindow):
         replace_actions.addWidget(self.pushButton_detail_stage)
         replace_actions.addWidget(self.pushButton_detail_finish)
         replace_form.addRow("네이버 상품번호", self.lineEdit_detail_naver_replace)
-        replace_form.addRow("쿠팡 vendorInventoryId", self.lineEdit_detail_vendor_inventory)
+        replace_form.addRow("쿠팡 등록상품 ID", self.lineEdit_detail_vendor_inventory)
         replace_form.addRow("작업", replace_actions)
         replace_form.addRow(QLabel("기본 등록 → HTML 작성 전환과 HTML 입력까지만 자동 수행합니다. 저장은 WING에서 직접 누르세요."))
 
@@ -5762,8 +5896,10 @@ class MainWindow(QMainWindow):
         log_header.addStretch(1)
         self.pushButton_detail_log_clear = QPushButton("로그 지우기")
         self.pushButton_detail_log_copy = QPushButton("로그 복사")
+        self.pushButton_detail_log_save = QPushButton("로그 저장")
         log_header.addWidget(self.pushButton_detail_log_clear)
         log_header.addWidget(self.pushButton_detail_log_copy)
+        log_header.addWidget(self.pushButton_detail_log_save)
         self.textEdit_detail_log = QPlainTextEdit()
         self.textEdit_detail_log.setReadOnly(True)
         self.textEdit_detail_log.setPlaceholderText("상세페이지 작업 로그")
@@ -5783,29 +5919,100 @@ class MainWindow(QMainWindow):
         self.pushButton_detail_open_folder.clicked.connect(self._on_detail_open_folder_clicked)
         self.pushButton_detail_stage.clicked.connect(self._on_detail_stage_clicked)
         self.pushButton_detail_finish.clicked.connect(self._on_detail_finish_clicked)
+        self.lineEdit_detail_naver_create.textChanged.connect(
+            lambda value: self._normalize_detail_id_input(
+                self.lineEdit_detail_naver_create, value, "naver"
+            )
+        )
+        self.lineEdit_detail_naver_replace.textChanged.connect(
+            lambda value: self._normalize_detail_id_input(
+                self.lineEdit_detail_naver_replace, value, "naver"
+            )
+        )
+        self.lineEdit_detail_vendor_inventory.textChanged.connect(
+            lambda value: self._normalize_detail_id_input(
+                self.lineEdit_detail_vendor_inventory, value, "coupang"
+            )
+        )
         self.pushButton_detail_log_clear.clicked.connect(self.textEdit_detail_log.clear)
         self.pushButton_detail_log_copy.clicked.connect(self._on_detail_log_copy_clicked)
+        self.pushButton_detail_log_save.clicked.connect(self._on_detail_log_save_clicked)
 
     def _detail_log(self, text):
         self.textEdit_detail_log.appendPlainText(text.rstrip())
 
+    @staticmethod
+    def _detail_upload_progress(output):
+        matches = re.findall(r"\[(\d+)/(\d+)\]", output)
+        return tuple(map(int, matches[-1])) if matches else None
+
     def _detail_session_label(self):
-        path = Path(__file__).resolve().parent / "output" / "coupang-browser-profile" / "easy-fulfill-auth-state.bin"
-        return "저장된 로그인 세션 있음 · 작업 시 자동 확인" if path.exists() else "저장된 로그인 세션 없음"
+        profile = Path(__file__).resolve().parent / "output" / "coupang-browser-profile"
+        if not (profile / "easy-fulfill-auth-state.bin").exists():
+            return "저장된 로그인 세션 없음"
+        seller_path = profile / "seller-name.txt"
+        seller = seller_path.read_text(encoding="utf-8").strip() if seller_path.exists() else ""
+        return f"저장된 로그인 세션: {seller}" if seller else "저장된 로그인 세션 있음"
 
     def _on_detail_log_copy_clicked(self):
         QApplication.clipboard().setText(self.textEdit_detail_log.toPlainText())
         self._detail_log("[작업 로그] 클립보드에 복사했습니다.")
 
-    def _detail_product_no(self, line_edit, label):
+    def _on_detail_log_save_clicked(self):
+        log_dir = Path(__file__).resolve().parent / "logs" / "detail-page"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        path = log_dir / f"detail-page-{datetime.now():%Y%m%d-%H%M%S}.log"
+        path.write_text(self.textEdit_detail_log.toPlainText(), encoding="utf-8")
+        self._detail_log(f"[작업 로그] 저장했습니다: {path}")
+        QMessageBox.information(self, "작업 로그", f"로그를 저장했습니다.\n{path}")
+
+    @staticmethod
+    def _detail_id_from_input(value, kind):
+        value = value.strip()
+        if value.isdigit():
+            return value
+        if kind == "naver":
+            match = re.fullmatch(
+                r"https?://(?:www\.)?smartstore\.naver\.com/[^/?#]+/products/(\d+)(?:[/?#].*)?",
+                value,
+                re.IGNORECASE,
+            )
+        else:
+            valid_url = re.fullmatch(
+                r"https?://wing\.coupang\.com/tenants/seller-web/vendor-inventory/modify\?[^#]+",
+                value,
+                re.IGNORECASE,
+            )
+            match = re.search(r"(?:[?&])vendorInventoryId=(\d+)(?:[&#]|$)", value, re.IGNORECASE) if valid_url else None
+        return match.group(1) if match else None
+
+    def _detail_product_no(self, line_edit, label, kind):
         value = line_edit.text().strip()
-        if not value.isdigit():
-            QMessageBox.warning(self, "상세페이지", f"{label}는 숫자만 입력하세요.")
+        product_no = self._detail_id_from_input(value, kind)
+        if not product_no:
+            QMessageBox.warning(self, "상세페이지", f"{label}를 확인하세요.")
             return None
-        return value
+        line_edit.setText(product_no)
+        return product_no
+
+    def _normalize_detail_id_input(self, line_edit, value, kind):
+        parsed = self._detail_id_from_input(value, kind)
+        if parsed and parsed != value:
+            line_edit.setText(parsed)
 
     def _detail_output_dir(self, product_no):
         return Path(__file__).resolve().parent / "output" / "detail-preview" / product_no
+
+    def _detail_create_progress_dialog(self):
+        if self.detail_create_progress is None:
+            progress = QProgressDialog(self)
+            progress.setWindowTitle("HTML 생성")
+            progress.setWindowModality(Qt.WindowModality.NonModal)
+            progress.setAutoClose(False)
+            progress.setAutoReset(False)
+            progress.setCancelButton(None)
+            self.detail_create_progress = progress
+        return self.detail_create_progress
 
     def _start_detail_process(self, title, arguments, hold_wing=False):
         if self._detail_process is not None and self._detail_process.state() != QProcess.ProcessState.NotRunning:
@@ -5823,6 +6030,11 @@ class MainWindow(QMainWindow):
         self._detail_process_holding_wing = hold_wing
         self._detail_process_title = title
         self._detail_process_output = ""
+        if title == "신규 등록용 HTML 생성":
+            progress = self._detail_create_progress_dialog()
+            progress.setRange(0, 0)
+            progress.setLabelText("HTML 생성 준비 중...")
+            progress.show()
         self._detail_log(f"[{title}] 시작")
         process.start(sys.executable, arguments)
 
@@ -5832,6 +6044,16 @@ class MainWindow(QMainWindow):
         text = bytes(self._detail_process.readAllStandardOutput()).decode("utf-8", errors="replace")
         self._detail_process_output += text
         self._detail_log(text)
+        if self._detail_process_title == "신규 등록용 HTML 생성":
+            progress = self._detail_upload_progress(self._detail_process_output)
+            if progress:
+                current, total = progress
+                dialog = self._detail_create_progress_dialog()
+                dialog.setRange(0, total)
+                dialog.setValue(current)
+                dialog.setLabelText(
+                    f"쿠팡 이미지 업로드 {current}/{total} ({current * 100 // total}%)"
+                )
 
     def _on_detail_process_finished(self, exit_code, _status):
         self._on_detail_process_output()
@@ -5840,11 +6062,26 @@ class MainWindow(QMainWindow):
         self._detail_process = None
         self._detail_process_holding_wing = False
         self.pushButton_detail_finish.setEnabled(False)
+        if title == "신규 등록용 HTML 생성":
+            progress = self._detail_create_progress_dialog()
+            progress.setRange(0, 100)
+            progress.setValue(100 if exit_code == 0 else 0)
+            progress.setLabelText(
+                "HTML 생성 완료 (100%)" if exit_code == 0 else "HTML 생성 실패 — 작업 로그를 확인하세요."
+            )
+            if exit_code == 0:
+                QTimer.singleShot(2_000, lambda: progress.hide() if self._detail_process is None else None)
         if title == "쿠팡 로그인 연결" and exit_code == 0:
             try:
                 result = json.loads(output.splitlines()[-1])
-                seller = result.get("seller") or "판매자 정보"
-                self.label_detail_session.setText(f"저장된 로그인 세션: {seller}")
+                seller = (result.get("seller") or "").strip()
+                if seller:
+                    profile = Path(__file__).resolve().parent / "output" / "coupang-browser-profile"
+                    profile.mkdir(parents=True, exist_ok=True)
+                    (profile / "seller-name.txt").write_text(seller, encoding="utf-8")
+                self.label_detail_session.setText(
+                    f"저장된 로그인 세션: {seller}" if seller else "저장된 로그인 세션 있음"
+                )
             except (json.JSONDecodeError, IndexError):
                 self.label_detail_session.setText("저장된 로그인 세션 있음")
         elif title == "쿠팡 로그인 세션 삭제" and exit_code == 0:
@@ -5863,8 +6100,24 @@ class MainWindow(QMainWindow):
         self._start_detail_process("쿠팡 로그인 세션 삭제", ["coupang_session.py", "--clear"])
 
     def _on_detail_create_clicked(self):
-        product_no = self._detail_product_no(self.lineEdit_detail_naver_create, "네이버 상품번호")
+        product_no = self._detail_product_no(self.lineEdit_detail_naver_create, "네이버 상품번호", "naver")
         if product_no:
+            existing_html = self._detail_output_dir(product_no) / "coupang-paste.html"
+            if existing_html.exists():
+                message = QMessageBox(self)
+                message.setWindowTitle("HTML 다시 생성")
+                message.setIcon(QMessageBox.Icon.Warning)
+                message.setText("이미 생성된 HTML이 있습니다.")
+                message.setInformativeText(
+                    "다시 생성하면 기존 HTML 편집 내용이 초기화될 수 있습니다.\n다시 생성할까요?"
+                )
+                regenerate = message.addButton("다시 생성", QMessageBox.ButtonRole.DestructiveRole)
+                cancel = message.addButton("취소", QMessageBox.ButtonRole.RejectRole)
+                message.setDefaultButton(cancel)
+                message.setEscapeButton(cancel)
+                message.exec()
+                if message.clickedButton() is not regenerate:
+                    return
             self._detail_created_product_no = product_no
             self._start_detail_process("신규 등록용 HTML 생성", ["naver_to_coupang_html.py", product_no, "--upload"])
 
@@ -5876,12 +6129,12 @@ class MainWindow(QMainWindow):
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
 
     def _on_detail_open_preview_clicked(self):
-        product_no = self._detail_product_no(self.lineEdit_detail_naver_create, "네이버 상품번호")
+        product_no = self._detail_product_no(self.lineEdit_detail_naver_create, "네이버 상품번호", "naver")
         if product_no:
-            self._open_detail_file(product_no, "coupang-cdn-preview.html")
+            self._open_detail_file(product_no, "coupang-paste.html")
 
     def _on_detail_open_html_clicked(self):
-        product_no = self._detail_product_no(self.lineEdit_detail_naver_create, "네이버 상품번호")
+        product_no = self._detail_product_no(self.lineEdit_detail_naver_create, "네이버 상품번호", "naver")
         if product_no:
             self._open_detail_editor(product_no)
 
@@ -5893,7 +6146,7 @@ class MainWindow(QMainWindow):
         DetailHtmlEditorDialog(path, self).exec()
 
     def _on_detail_open_folder_clicked(self):
-        product_no = self._detail_product_no(self.lineEdit_detail_naver_create, "네이버 상품번호")
+        product_no = self._detail_product_no(self.lineEdit_detail_naver_create, "네이버 상품번호", "naver")
         if product_no:
             path = self._detail_output_dir(product_no)
             if not path.exists():
@@ -5902,8 +6155,8 @@ class MainWindow(QMainWindow):
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
 
     def _on_detail_stage_clicked(self):
-        product_no = self._detail_product_no(self.lineEdit_detail_naver_replace, "네이버 상품번호")
-        vendor_id = self._detail_product_no(self.lineEdit_detail_vendor_inventory, "쿠팡 vendorInventoryId")
+        product_no = self._detail_product_no(self.lineEdit_detail_naver_replace, "네이버 상품번호", "naver")
+        vendor_id = self._detail_product_no(self.lineEdit_detail_vendor_inventory, "쿠팡 등록상품 ID", "coupang")
         if product_no and vendor_id:
             self.pushButton_detail_finish.setEnabled(True)
             self._start_detail_process("기존 쿠팡 상품 HTML 채우기", ["coupang_detail_replace.py", product_no, vendor_id], hold_wing=True)
