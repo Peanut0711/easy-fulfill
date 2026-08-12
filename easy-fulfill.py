@@ -50,6 +50,7 @@ from PySide6.QtGui import (
     QPen,
     QPalette,
     QTextCursor,
+    QKeySequence,
 )
 from PySide6.QtWebEngineCore import QWebEngineSettings
 from PySide6.QtWebEngineWidgets import QWebEngineView
@@ -61,6 +62,7 @@ import json
 import hashlib
 import traceback
 import xml.etree.ElementTree as ET
+from html.parser import HTMLParser
 
 try:
     import gspread
@@ -2340,6 +2342,8 @@ class DetailHtmlEditorDialog(QDialog):
     """쿠팡에 붙여 넣을 상세 HTML을 검토·수정한다."""
 
     _SMARTSTORE_URL_PATTERN = re.compile(r'https?://(?:www\.)?smartstore\.naver\.com[^\s<>"\']*', re.IGNORECASE)
+    _VOID_TAGS = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"}
+    _SELECTABLE_TAGS = {"p", "h1", "h2", "h3", "h4", "h5", "h6", "li", "table", "hr", "img"}
 
     @staticmethod
     def _qt_text_position(text, position):
@@ -2350,6 +2354,11 @@ class DetailHtmlEditorDialog(QDialog):
         super().__init__(parent)
         self.path = Path(path)
         self.original_html = self.path.read_text(encoding="utf-8")
+        self._block_ranges = []
+        self._selected_blocks = set()
+        self._selection_anchor = None
+        self._block_delete_history = []
+        self._pending_restored_selection = None
         self.setWindowTitle("상세페이지 HTML 편집 및 미리보기")
         self.setWindowFlag(Qt.WindowMaximizeButtonHint, True)
         self.resize(1280, 760)
@@ -2364,7 +2373,7 @@ class DetailHtmlEditorDialog(QDialog):
         self.editor.setLineWrapMode(QPlainTextEdit.NoWrap)
         self.preview = QWebEngineView()
         settings = self.preview.settings()
-        settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, False)
+        settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, True)
         settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True)
         splitter.addWidget(self.preview)
         splitter.addWidget(self.editor)
@@ -2373,11 +2382,17 @@ class DetailHtmlEditorDialog(QDialog):
 
         actions = QHBoxLayout()
         actions.addStretch(1)
+        self.block_status = QLabel("클릭: 단일 · 드래그/Shift+클릭: 범위 · Ctrl+클릭: 개별 추가/해제")
+        self.delete_blocks = QPushButton("선택 영역 삭제 (Del)")
+        self.undo_delete = QPushButton("실행 취소 (Ctrl+Z)")
         reset = QPushButton("원본으로 되돌리기")
         copy = QPushButton("HTML 복사")
         save = QPushButton("저장")
         self.maximize = QPushButton("최대화")
         close = QPushButton("닫기")
+        actions.addWidget(self.block_status, 1)
+        actions.addWidget(self.delete_blocks)
+        actions.addWidget(self.undo_delete)
         actions.addWidget(reset)
         actions.addWidget(copy)
         actions.addWidget(save)
@@ -2386,16 +2401,55 @@ class DetailHtmlEditorDialog(QDialog):
         layout.addLayout(actions)
 
         self.editor.textChanged.connect(self._refresh)
-        reset.clicked.connect(lambda: self.editor.setPlainText(self.original_html))
+        self.preview.loadFinished.connect(self._install_preview_block_selector)
+        self.preview.titleChanged.connect(self._on_preview_title_changed)
+        reset.clicked.connect(self._reset_to_original)
         copy.clicked.connect(lambda: QApplication.clipboard().setText(self.editor.toPlainText()))
         save.clicked.connect(self._save)
+        self.delete_blocks.clicked.connect(self._delete_selected_blocks)
+        self.undo_delete.clicked.connect(self._undo_editor)
+        self.editor.undoAvailable.connect(self.undo_delete.setEnabled)
+        undo_action = QAction("실행 취소", self)
+        undo_action.setShortcut(QKeySequence.Undo)
+        undo_action.setShortcutContext(Qt.WidgetWithChildrenShortcut)
+        undo_action.triggered.connect(self._undo_editor)
+        self.addAction(undo_action)
         self.maximize.clicked.connect(self._toggle_maximize)
         close.clicked.connect(self.accept)
+        QApplication.instance().installEventFilter(self)
         self._refresh()
+
+    def eventFilter(self, watched, event):
+        if event.type() != QEvent.KeyPress or not self._selected_blocks:
+            return super().eventFilter(watched, event)
+        if event.key() == Qt.Key_Escape:
+            focused = QApplication.focusWidget()
+            if focused is self or (focused is not None and self.isAncestorOf(focused)):
+                self._clear_block_selection()
+                return True
+        if event.key() == Qt.Key_Delete:
+            focused = QApplication.focusWidget()
+            if focused is self.preview or (focused is not None and self.preview.isAncestorOf(focused)):
+                self._delete_selected_blocks()
+                return True
+        return super().eventFilter(watched, event)
+
+    def _clear_block_selection(self):
+        self._selected_blocks.clear()
+        self._selection_anchor = None
+        self._paint_selected_blocks()
+        self._update_block_controls()
 
     def _refresh(self):
         source = self.editor.toPlainText()
-        self.preview.setHtml(source, QUrl.fromLocalFile(str(self.path)))
+        self._block_ranges = self._html_block_ranges(source)
+        restored = self._pending_restored_selection or set()
+        self._pending_restored_selection = None
+        self._selected_blocks = {index for index in restored if index < len(self._block_ranges)}
+        self._selection_anchor = min(self._selected_blocks) if self._selected_blocks else None
+        safe_preview = re.sub(r"<script\b[^>]*>.*?</script\s*>", "", source, flags=re.IGNORECASE | re.DOTALL)
+        safe_preview = re.sub(r"\s+on[a-z]+\s*=\s*(['\"]).*?\1", "", safe_preview, flags=re.IGNORECASE | re.DOTALL)
+        self.preview.setHtml(safe_preview, QUrl.fromLocalFile(str(self.path)))
         matches = list(self._SMARTSTORE_URL_PATTERN.finditer(source))
         selections = []
         for match in matches:
@@ -2418,6 +2472,241 @@ class DetailHtmlEditorDialog(QDialog):
         else:
             self.warning.setText("네이버 스마트스토어 주소가 없습니다.")
             self.warning.setStyleSheet("color:#237804")
+        self._update_block_controls()
+
+    @classmethod
+    def _html_block_ranges(cls, source):
+        """화면의 문단·제목·이미지 등 개별 라인 범위를 찾아 미리보기와 연결한다."""
+        line_offsets = [0]
+        for match in re.finditer("\n", source):
+            line_offsets.append(match.end())
+
+        class BlockParser(HTMLParser):
+            def __init__(self):
+                super().__init__(convert_charrefs=False)
+                self.stack = []
+                self.blocks = []
+
+            def source_position(self):
+                line, column = self.getpos()
+                return line_offsets[line - 1] + column
+
+            def handle_starttag(self, tag, _attrs):
+                start = self.source_position()
+                block_index = None
+                has_selectable_ancestor = any(index is not None for _tag, index in self.stack)
+                if tag in cls._SELECTABLE_TAGS and not has_selectable_ancestor:
+                    block_index = len(self.blocks)
+                    self.blocks.append([start, None])
+                if tag in cls._VOID_TAGS:
+                    if block_index is not None:
+                        self.blocks[block_index][1] = start + len(self.get_starttag_text())
+                    return
+                self.stack.append((tag, block_index))
+
+            def handle_startendtag(self, tag, attrs):
+                self.handle_starttag(tag, attrs)
+
+            def handle_endtag(self, tag):
+                for index in range(len(self.stack) - 1, -1, -1):
+                    if self.stack[index][0] == tag:
+                        _tag, block_index = self.stack[index]
+                        self.stack = self.stack[:index]
+                        if block_index is not None:
+                            end = source.find(">", self.source_position()) + 1
+                            self.blocks[block_index][1] = end
+                        return
+
+        parser = BlockParser()
+        parser.feed(source)
+        return [(start, end) for start, end in parser.blocks if end is not None]
+
+    def _install_preview_block_selector(self, loaded):
+        if not loaded:
+            return
+        self.preview.page().runJavaScript("""
+            (() => {
+                const root = document.body.firstElementChild;
+                if (!root) return;
+                const selector = 'p,h1,h2,h3,h4,h5,h6,li,table,hr,img';
+                const blocks = [...root.querySelectorAll(selector)].filter(element => !element.parentElement?.closest(selector));
+                blocks.forEach((element, index) => {
+                    element.dataset.efBlock = String(index);
+                    element.style.outlineOffset = '2px';
+                    element.style.cursor = 'pointer';
+                });
+                let dragStart = null;
+                let dragCurrent = null;
+                let dragOrigin = null;
+                let dragging = false;
+                let suppressClick = false;
+                const notify = value => {
+                    value.sequence = (window.__easyFulfillBlockSequence || 0) + 1;
+                    window.__easyFulfillBlockSequence = value.sequence;
+                    document.title = 'easy-fulfill-block:' + JSON.stringify(value);
+                };
+                const blockAt = target => target?.closest?.('[data-ef-block]');
+                const paintDragRange = (start, end) => {
+                    const first = Math.min(start, end);
+                    const last = Math.max(start, end);
+                    blocks.forEach(element => {
+                        const selected = Number(element.dataset.efBlock) >= first && Number(element.dataset.efBlock) <= last;
+                        element.style.outline = selected ? '3px solid #e53935' : '';
+                        element.style.backgroundColor = selected ? 'rgba(255, 235, 59, .16)' : '';
+                    });
+                };
+                root.addEventListener('mousedown', event => {
+                    const block = blockAt(event.target);
+                    if (!block || event.button !== 0) return;
+                    event.preventDefault();
+                    dragStart = Number(block.dataset.efBlock);
+                    dragCurrent = dragStart;
+                    dragOrigin = { x: event.clientX, y: event.clientY };
+                    dragging = false;
+                }, true);
+                document.addEventListener('mousemove', event => {
+                    if (dragStart === null) return;
+                    event.preventDefault();
+                    if (!dragging && Math.hypot(event.clientX - dragOrigin.x, event.clientY - dragOrigin.y) >= 5) {
+                        dragging = true;
+                        document.body.style.userSelect = 'none';
+                    }
+                    if (!dragging) return;
+                    const block = blockAt(event.target);
+                    if (block) dragCurrent = Number(block.dataset.efBlock);
+                    paintDragRange(dragStart, dragCurrent);
+                }, true);
+                document.addEventListener('mouseup', event => {
+                    if (dragStart === null) return;
+                    const start = dragStart;
+                    const end = dragCurrent;
+                    dragStart = null;
+                    dragCurrent = null;
+                    document.body.style.userSelect = '';
+                    if (dragging) {
+                        dragging = false;
+                        suppressClick = true;
+                        notify({ index: end, dragStart: start, drag: true });
+                    }
+                }, true);
+                root.addEventListener('click', event => {
+                    const block = event.target.closest('[data-ef-block]');
+                    if (!block) return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    if (suppressClick) {
+                        suppressClick = false;
+                        return;
+                    }
+                    const value = {
+                        index: Number(block.dataset.efBlock),
+                        shift: event.shiftKey,
+                        ctrl: event.ctrlKey
+                    };
+                    notify(value);
+                }, true);
+            })();
+        """, lambda _result: self._paint_selected_blocks())
+
+    def _on_preview_title_changed(self, title):
+        prefix = "easy-fulfill-block:"
+        if not title.startswith(prefix):
+            return
+        try:
+            click = json.loads(title[len(prefix):])
+            selected = int(click["index"])
+        except (ValueError, KeyError, json.JSONDecodeError):
+            return
+        if not 0 <= selected < len(self._block_ranges):
+            return
+        if click.get("drag"):
+            try:
+                start = int(click["dragStart"])
+            except (ValueError, KeyError):
+                return
+            if not 0 <= start < len(self._block_ranges):
+                return
+            first, last = sorted((start, selected))
+            self._selected_blocks = set(range(first, last + 1))
+            self._selection_anchor = start
+        elif click.get("ctrl"):
+            if selected in self._selected_blocks:
+                self._selected_blocks.remove(selected)
+            else:
+                self._selected_blocks.add(selected)
+            if self._selection_anchor is None:
+                self._selection_anchor = selected
+        elif click.get("shift") and self._selection_anchor is not None:
+            first, last = sorted((self._selection_anchor, selected))
+            self._selected_blocks = set(range(first, last + 1))
+        else:
+            self._selected_blocks = {selected}
+            self._selection_anchor = selected
+        self._paint_selected_blocks()
+        self._update_block_controls()
+
+    def _paint_selected_blocks(self):
+        selected = json.dumps(sorted(self._selected_blocks))
+        self.preview.page().runJavaScript(f"""
+            (() => {{
+                const selectedBlocks = new Set({selected});
+                document.querySelectorAll('[data-ef-block]').forEach(element => {{
+                    const isSelected = selectedBlocks.has(Number(element.dataset.efBlock));
+                    element.style.outline = isSelected ? '3px solid #e53935' : '';
+                    element.style.backgroundColor = isSelected ? 'rgba(255, 235, 59, .16)' : '';
+                }});
+            }})();
+        """)
+
+    def _update_block_controls(self):
+        if self._selected_blocks:
+            numbers = sorted(index + 1 for index in self._selected_blocks)
+            shown = ", ".join(map(str, numbers[:8])) + (f" 외 {len(numbers) - 8}개" if len(numbers) > 8 else "")
+            self.block_status.setText(f"선택된 라인 {len(numbers)}개: {shown} · Del로 함께 제거")
+        else:
+            self.block_status.setText("클릭: 단일 · 드래그/Shift+클릭: 범위 · Ctrl+클릭: 개별 추가/해제")
+        self.delete_blocks.setEnabled(bool(self._selected_blocks))
+        self.undo_delete.setEnabled(self.editor.document().isUndoAvailable())
+
+    def _delete_selected_blocks(self):
+        if not self._selected_blocks:
+            return
+        selected = set(self._selected_blocks)
+        ranges = [self._block_ranges[index] for index in sorted(self._selected_blocks)]
+        source = self.editor.toPlainText()
+        cursor = QTextCursor(self.editor.document())
+        self.editor.blockSignals(True)
+        try:
+            cursor.beginEditBlock()
+            for start, end in reversed(ranges):
+                cursor.setPosition(self._qt_text_position(source, start))
+                cursor.setPosition(self._qt_text_position(source, end), QTextCursor.KeepAnchor)
+                cursor.removeSelectedText()
+            cursor.endEditBlock()
+        finally:
+            self.editor.blockSignals(False)
+        self._refresh()
+        self._block_delete_history.append({
+            "before": source,
+            "after": self.editor.toPlainText(),
+            "selection": selected,
+        })
+
+    def _undo_editor(self):
+        if not self.editor.document().isUndoAvailable():
+            return
+        current = self.editor.toPlainText()
+        deleted = self._block_delete_history[-1] if self._block_delete_history else None
+        if deleted and deleted["after"] == current:
+            self._pending_restored_selection = set(deleted["selection"])
+        self.editor.undo()
+        if deleted and self.editor.toPlainText() == deleted["before"]:
+            self._block_delete_history.pop()
+
+    def _reset_to_original(self):
+        self._block_delete_history.clear()
+        self._pending_restored_selection = None
+        self.editor.setPlainText(self.original_html)
 
     def _save(self):
         self.path.write_text(self.editor.toPlainText(), encoding="utf-8")
