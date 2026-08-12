@@ -5856,7 +5856,7 @@ class MainWindow(QMainWindow):
         session_layout.addWidget(self.pushButton_detail_login)
         session_layout.addWidget(self.pushButton_detail_clear_session)
 
-        create_box = QGroupBox("신규 등록용 HTML 만들기")
+        create_box = QGroupBox("상품 상세 HTML 만들기")
         create_form = QFormLayout(create_box)
         self.lineEdit_detail_naver_create = QLineEdit()
         self.lineEdit_detail_naver_create.setPlaceholderText("네이버 스마트스토어 상품번호")
@@ -6030,7 +6030,7 @@ class MainWindow(QMainWindow):
         self._detail_process_holding_wing = hold_wing
         self._detail_process_title = title
         self._detail_process_output = ""
-        if title == "신규 등록용 HTML 생성":
+        if title == "상품 상세 HTML 생성":
             progress = self._detail_create_progress_dialog()
             progress.setRange(0, 0)
             progress.setLabelText("HTML 생성 준비 중...")
@@ -6044,7 +6044,7 @@ class MainWindow(QMainWindow):
         text = bytes(self._detail_process.readAllStandardOutput()).decode("utf-8", errors="replace")
         self._detail_process_output += text
         self._detail_log(text)
-        if self._detail_process_title == "신규 등록용 HTML 생성":
+        if self._detail_process_title == "상품 상세 HTML 생성":
             progress = self._detail_upload_progress(self._detail_process_output)
             if progress:
                 current, total = progress
@@ -6062,7 +6062,7 @@ class MainWindow(QMainWindow):
         self._detail_process = None
         self._detail_process_holding_wing = False
         self.pushButton_detail_finish.setEnabled(False)
-        if title == "신규 등록용 HTML 생성":
+        if title == "상품 상세 HTML 생성":
             progress = self._detail_create_progress_dialog()
             progress.setRange(0, 100)
             progress.setValue(100 if exit_code == 0 else 0)
@@ -6087,7 +6087,7 @@ class MainWindow(QMainWindow):
         elif title == "쿠팡 로그인 세션 삭제" and exit_code == 0:
             self.label_detail_session.setText("저장된 로그인 세션 없음")
         self._detail_log(f"[{title}] {'완료' if exit_code == 0 else f'실패 ({exit_code})'}")
-        if title == "신규 등록용 HTML 생성" and exit_code == 0 and self._detail_created_product_no:
+        if title == "상품 상세 HTML 생성" and exit_code == 0 and self._detail_created_product_no:
             self._open_detail_editor(self._detail_created_product_no)
 
     def _on_detail_login_clicked(self):
@@ -6119,7 +6119,7 @@ class MainWindow(QMainWindow):
                 if message.clickedButton() is not regenerate:
                     return
             self._detail_created_product_no = product_no
-            self._start_detail_process("신규 등록용 HTML 생성", ["naver_to_coupang_html.py", product_no, "--upload"])
+            self._start_detail_process("상품 상세 HTML 생성", ["naver_to_coupang_html.py", product_no, "--upload"])
 
     def _open_detail_file(self, product_no, name):
         path = self._detail_output_dir(product_no) / name
@@ -6158,6 +6158,15 @@ class MainWindow(QMainWindow):
         product_no = self._detail_product_no(self.lineEdit_detail_naver_replace, "네이버 상품번호", "naver")
         vendor_id = self._detail_product_no(self.lineEdit_detail_vendor_inventory, "쿠팡 등록상품 ID", "coupang")
         if product_no and vendor_id:
+            html_path = self._detail_output_dir(product_no) / "coupang-paste.html"
+            if not html_path.exists():
+                QMessageBox.warning(
+                    self,
+                    "상세페이지",
+                    "저장된 HTML이 없습니다.\n상품 상세 HTML 만들기에서 HTML을 생성한 뒤 편집·저장해 주세요.",
+                )
+                return
+            self._detail_log(f"[쿠팡 상품 HTML 적용] 저장된 HTML 사용: {html_path}")
             self.pushButton_detail_finish.setEnabled(True)
             self._start_detail_process("기존 쿠팡 상품 HTML 채우기", ["coupang_detail_replace.py", product_no, vendor_id], hold_wing=True)
 
