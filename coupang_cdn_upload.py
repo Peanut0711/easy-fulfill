@@ -245,14 +245,17 @@ def wait_for_login(page):
 
 def launch_coupang_context(playwright, headless=False):
     PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+    launch_options = {"headless": headless}
+    if not headless:
+        launch_options.update(args=["--window-size=1600,1000"], no_viewport=True)
     try:
-        return playwright.chromium.launch_persistent_context(str(PROFILE_DIR), headless=headless)
+        return playwright.chromium.launch_persistent_context(str(PROFILE_DIR), **launch_options)
     except Exception as error:
         if "Executable doesn't exist" not in str(error):
             raise
         print("쿠팡 WING용 Chromium을 처음 설치합니다. 잠시 기다려 주세요.")
         subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=True)
-        return playwright.chromium.launch_persistent_context(str(PROFILE_DIR), headless=headless)
+        return playwright.chromium.launch_persistent_context(str(PROFILE_DIR), **launch_options)
 
 
 def launch_coupang_upload_context(playwright):
