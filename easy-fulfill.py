@@ -6023,6 +6023,7 @@ class MainWindow(QMainWindow):
         process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
         environment = QProcessEnvironment.systemEnvironment()
         environment.insert("PYTHONIOENCODING", "utf-8")
+        environment.insert("PYTHONUNBUFFERED", "1")
         process.setProcessEnvironment(environment)
         process.readyReadStandardOutput.connect(self._on_detail_process_output)
         process.finished.connect(self._on_detail_process_finished)
