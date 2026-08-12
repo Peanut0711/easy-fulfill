@@ -2438,6 +2438,7 @@ class DetailHtmlEditorDialog(QDialog):
         self._selected_blocks.clear()
         self._selection_anchor = None
         self._paint_selected_blocks()
+        self._update_editor_highlights()
         self._update_block_controls()
 
     def _refresh(self):
@@ -2451,16 +2452,7 @@ class DetailHtmlEditorDialog(QDialog):
         safe_preview = re.sub(r"\s+on[a-z]+\s*=\s*(['\"]).*?\1", "", safe_preview, flags=re.IGNORECASE | re.DOTALL)
         self.preview.setHtml(safe_preview, QUrl.fromLocalFile(str(self.path)))
         matches = list(self._SMARTSTORE_URL_PATTERN.finditer(source))
-        selections = []
-        for match in matches:
-            cursor = QTextCursor(self.editor.document())
-            cursor.setPosition(self._qt_text_position(source, match.start()))
-            cursor.setPosition(self._qt_text_position(source, match.end()), QTextCursor.KeepAnchor)
-            selection = QTextEdit.ExtraSelection()
-            selection.cursor = cursor
-            selection.format.setBackground(QColor("#fff59d"))
-            selections.append(selection)
-        self.editor.setExtraSelections(selections)
+        self._update_editor_highlights(matches=matches)
         if matches:
             urls = [match.group() for match in matches]
             shown = "\n".join(urls[:3])
@@ -2473,6 +2465,40 @@ class DetailHtmlEditorDialog(QDialog):
             self.warning.setText("네이버 스마트스토어 주소가 없습니다.")
             self.warning.setStyleSheet("color:#237804")
         self._update_block_controls()
+
+    def _update_editor_highlights(self, matches=None, scroll_to=None):
+        """미리보기 선택 범위와 스마트스토어 URL을 HTML 편집창에 함께 표시한다."""
+        source = self.editor.toPlainText()
+        selections = []
+        for index in sorted(self._selected_blocks):
+            if not 0 <= index < len(self._block_ranges):
+                continue
+            start, end = self._block_ranges[index]
+            cursor = QTextCursor(self.editor.document())
+            cursor.setPosition(self._qt_text_position(source, start))
+            cursor.setPosition(self._qt_text_position(source, end), QTextCursor.KeepAnchor)
+            selection = QTextEdit.ExtraSelection()
+            selection.cursor = cursor
+            selection.format.setBackground(QColor("#dbeafe"))
+            selections.append(selection)
+
+        if matches is None:
+            matches = self._SMARTSTORE_URL_PATTERN.finditer(source)
+        for match in matches:
+            cursor = QTextCursor(self.editor.document())
+            cursor.setPosition(self._qt_text_position(source, match.start()))
+            cursor.setPosition(self._qt_text_position(source, match.end()), QTextCursor.KeepAnchor)
+            selection = QTextEdit.ExtraSelection()
+            selection.cursor = cursor
+            selection.format.setBackground(QColor("#fff59d"))
+            selections.append(selection)
+        self.editor.setExtraSelections(selections)
+
+        if scroll_to is not None and 0 <= scroll_to < len(self._block_ranges):
+            cursor = QTextCursor(self.editor.document())
+            cursor.setPosition(self._qt_text_position(source, self._block_ranges[scroll_to][0]))
+            self.editor.setTextCursor(cursor)
+            self.editor.ensureCursorVisible()
 
     @classmethod
     def _html_block_ranges(cls, source):
@@ -2643,6 +2669,7 @@ class DetailHtmlEditorDialog(QDialog):
             self._selected_blocks = {selected}
             self._selection_anchor = selected
         self._paint_selected_blocks()
+        self._update_editor_highlights(scroll_to=selected)
         self._update_block_controls()
 
     def _paint_selected_blocks(self):
@@ -2662,7 +2689,7 @@ class DetailHtmlEditorDialog(QDialog):
         if self._selected_blocks:
             numbers = sorted(index + 1 for index in self._selected_blocks)
             shown = ", ".join(map(str, numbers[:8])) + (f" 외 {len(numbers) - 8}개" if len(numbers) > 8 else "")
-            self.block_status.setText(f"선택된 라인 {len(numbers)}개: {shown} · Del로 함께 제거")
+            self.block_status.setText(f"선택된 라인 {len(numbers)}개: {shown} · Delete 키로 선택 영역 삭제")
         else:
             self.block_status.setText("클릭: 단일 · 드래그/Shift+클릭: 범위 · Ctrl+클릭: 개별 추가/해제")
         self.delete_blocks.setEnabled(bool(self._selected_blocks))
