@@ -98,8 +98,10 @@ TRACKING_MANAGEMENT_COL = 12
 TRACKING_MANAGEMENT_ACTIVE = "추적중"
 TRACKING_MANAGEMENT_CANDIDATE = "폐기후보"
 TRACKING_MANAGEMENT_DISCARDED = "폐기(미발송)"
+TRACKING_MANAGEMENT_MANUAL_STOP = "수동 중지"
 TRACKING_MANAGEMENT_EXCLUDED = {
     TRACKING_MANAGEMENT_CANDIDATE, TRACKING_MANAGEMENT_DISCARDED,
+    TRACKING_MANAGEMENT_MANUAL_STOP,
 }
 # 인쇄 뒤 수거가 지연되는 정상 건을 보호하기 위해 영업일 기준 2일+1일을 기다린다.
 TRACKING_DISCARD_CANDIDATE_HOURS = 48
@@ -200,6 +202,8 @@ def _tracking_management_state(row, status, where="", error_code="", now_dt=None
     """출력 뒤 미발송 또는 부평물류센터 정체 송장의 자동 관리상태를 계산한다."""
     current = (row[TRACKING_MANAGEMENT_COL]
                if len(row) > TRACKING_MANAGEMENT_COL else "").strip()
+    if current == TRACKING_MANAGEMENT_MANUAL_STOP:
+        return current
     eligible = (status in ("운송장출력", "추적정보 없음")
                 or error_code == "ERR-125"
                 or (status == "도착" and TRACKING_DISCARD_STALE_ARRIVAL_LOCATION in (where or ""))
@@ -989,6 +993,62 @@ def run_tracking_list_worker():
         gc = get_authorized_gspread_client()
         ws = _standalone_open_tracking_ws(gc)
         return {"ok": True, "values": ws.get_all_values()}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+def run_tracking_management_update_worker(reginos, management):
+    """선택 송장의 관리상태를 공유 시트에 일괄 반영합니다."""
+    if gspread is None:
+        return {"ok": False, "error": "gspread 패키지가 필요합니다. (pip install gspread)"}
+    if management not in (TRACKING_MANAGEMENT_ACTIVE, TRACKING_MANAGEMENT_MANUAL_STOP):
+        return {"ok": False, "error": "지원하지 않는 관리상태입니다."}
+    keys = {_normalize_tracking_no(regino) for regino in reginos or []}
+    keys.discard("")
+    if not keys:
+        return {"ok": False, "error": "등기번호가 비어 있습니다."}
+    try:
+        from google_sheets_oauth import get_authorized_gspread_client
+    except ImportError as e:
+        return {"ok": False, "error": str(e)}
+    try:
+        ws = _standalone_open_tracking_ws(get_authorized_gspread_client())
+        updates = []
+        found = set()
+        for ridx, row in enumerate(ws.get_all_values()[1:], start=2):
+            key = _normalize_tracking_no(row[0] if row else "")
+            if key in keys:
+                found.add(key)
+                updates.append({"range": f"M{ridx}", "values": [[management]]})
+        if updates:
+            ws.batch_update(updates, value_input_option="RAW")
+        return {"ok": True, "updated": len(found), "missing": len(keys) - len(found)}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+def run_tracking_notes_update_worker(notes):
+    """{등기번호: 비고}를 공유 시트의 비고(K) 열에 일괄 저장합니다."""
+    if gspread is None:
+        return {"ok": False, "error": "gspread 패키지가 필요합니다. (pip install gspread)"}
+    notes = {_normalize_tracking_no(regino): str(note or "")
+             for regino, note in (notes or {}).items() if _normalize_tracking_no(regino)}
+    if not notes:
+        return {"ok": True, "updated": 0}
+    try:
+        from google_sheets_oauth import get_authorized_gspread_client
+    except ImportError as e:
+        return {"ok": False, "error": str(e)}
+    try:
+        ws = _standalone_open_tracking_ws(get_authorized_gspread_client())
+        updates = []
+        for ridx, row in enumerate(ws.get_all_values()[1:], start=2):
+            regino = _normalize_tracking_no(row[0] if row else "")
+            if regino in notes:
+                updates.append({"range": f"K{ridx}", "values": [[notes[regino]]]})
+        if updates:
+            ws.batch_update(updates, value_input_option="RAW")
+        return {"ok": True, "updated": len(updates)}
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
@@ -1868,6 +1928,34 @@ class TrackingListThread(QThread):
 
     def run(self):
         self.result_ready.emit(run_tracking_list_worker())
+
+
+class TrackingManagementUpdateThread(QThread):
+    """선택 송장의 수동 추적 중지/재개를 백그라운드로 저장합니다."""
+
+    result_ready = Signal(dict)
+
+    def __init__(self, reginos, management, parent=None):
+        super().__init__(parent)
+        self._reginos = reginos
+        self._management = management
+
+    def run(self):
+        self.result_ready.emit(
+            run_tracking_management_update_worker(self._reginos, self._management))
+
+
+class TrackingNotesUpdateThread(QThread):
+    """배송추적 비고 편집값을 백그라운드로 저장합니다."""
+
+    result_ready = Signal(dict)
+
+    def __init__(self, notes, parent=None):
+        super().__init__(parent)
+        self._notes = notes
+
+    def run(self):
+        self.result_ready.emit(run_tracking_notes_update_worker(self._notes))
 
 
 class CourierReceiptExportThread(QThread):
@@ -3032,6 +3120,11 @@ class MainWindow(QMainWindow):
         # 배송추적 목록(표) 뷰
         self._tracking_list_thread = None
         self._tracking_list_values = []  # 시트에서 읽어온 원본(헤더 포함)
+        self._tracking_management_update_thread = None
+        self._tracking_notes_update_thread = None
+        self._tracking_notes_pending = {}
+        self._tracking_notes_inflight = {}
+        self._populating_tracking_table = False
         # 택배사 제출용 당일 접수목록 내보내기(하루 1회, 관리자)
         self._courier_export_thread = None
         # 목록 자동 갱신: 배송추적 탭을 보고 있을 때 주기적으로 시트를 다시 읽음(버튼 대체)
@@ -3652,10 +3745,16 @@ class MainWindow(QMainWindow):
     # ── 배송추적 목록(표) ────────────────────────────────────────────────
     # 표시 컬럼: (시트 컬럼 인덱스, 헤더 라벨)
     _TRACKING_TABLE_COLUMNS = [
-        (0, "등기번호"), (4, "수취인명"), (2, "스토어"), (3, "주문번호"),
-        (6, "배송상태"), (7, "완료"), (8, "마지막위치"),
-        (11, "최근이벤트"), (12, "관리상태"), (9, "최근조회"), (10, "비고"),
+        (4, "수취인명"), (6, "배송상태"), (8, "마지막위치"),
+        (11, "최근이벤트"), (12, "관리상태"), (7, "완료"),
+        (3, "주문번호"), (0, "등기번호"), (2, "스토어"),
+        (9, "최근조회"), (10, "메모"),
     ]
+
+    @classmethod
+    def _tracking_table_col(cls, source_col):
+        return next(i for i, (idx, _label) in enumerate(cls._TRACKING_TABLE_COLUMNS)
+                    if idx == source_col)
     # 허브(물류센터·집중국) 판별 키워드 — '도착 후 정체'가 가장 위험.
     # '우편집중국'·'교환센터'는 실제 핵심 허브라 반드시 포함(누락 시 이동정체로 오분류).
     _RISK_HUB_KEYWORDS = ("물류", "허브", "터미널", "집중국", "교환센터")
@@ -3718,24 +3817,32 @@ class MainWindow(QMainWindow):
         self._load_tracking_list()
 
     def _on_tracking_context_menu(self, pos):
-        """행 우클릭 메뉴: 단건 우체국 조회 / 우체국 웹조회(버튼 대체)."""
+        """행 우클릭 메뉴: 단건 조회·웹조회·수동 추적 중지/재개."""
         table = getattr(self.ui, "tableWidget_tracking", None)
         if table is None:
             return
         item = table.itemAt(pos)
         if item is not None:
-            table.setCurrentCell(item.row(), 0)
+            table.setCurrentCell(item.row(), self._tracking_table_col(0))
         regino = self._selected_tracking_regino()
         if not regino:
             return
+        management = self._tracking_management_for_regino(regino)
         menu = QMenu(table)
-        act_query = menu.addAction("이 송장만 우체국 조회")
+        act_query = None
+        if management != TRACKING_MANAGEMENT_MANUAL_STOP:
+            act_query = menu.addAction("이 송장만 우체국 조회")
         act_web = menu.addAction("우체국 웹조회 열기")
+        menu.addSeparator()
+        manual_stop = management != TRACKING_MANAGEMENT_MANUAL_STOP
+        act_management = menu.addAction("추적 중지" if manual_stop else "추적 재개")
         chosen = menu.exec(table.viewport().mapToGlobal(pos))
         if chosen == act_query:
             self._on_tracking_refresh_one_clicked()
         elif chosen == act_web:
             QDesktopServices.openUrl(QUrl(self._kpost_trace_web_url.format(regino=regino)))
+        elif chosen == act_management:
+            self._change_tracking_management([regino], manual_stop)
 
     def _load_tracking_list(self):
         """공유 시트에서 송장추적 목록을 백그라운드로 읽어옵니다."""
@@ -3784,10 +3891,26 @@ class MainWindow(QMainWindow):
             rows = [r for r in data_rows if _cell(r, 1).startswith(today)]
         elif mode == "전체":
             rows = list(data_rows)
+        elif mode == "완료":
+            rows = [r for r in data_rows if _cell(r, 7).strip().upper() == "Y"]
+        elif mode == "추적 중지":
+            rows = [r for r in data_rows
+                    if _cell(r, TRACKING_MANAGEMENT_COL) == TRACKING_MANAGEMENT_MANUAL_STOP]
+        elif mode == "폐기 후보":
+            rows = [r for r in data_rows
+                    if _cell(r, TRACKING_MANAGEMENT_COL) == TRACKING_MANAGEMENT_CANDIDATE]
+        elif mode == "폐기":
+            rows = [r for r in data_rows
+                    if _cell(r, TRACKING_MANAGEMENT_COL) == TRACKING_MANAGEMENT_DISCARDED]
         else:  # 배송중(=미완료): 완료여부 != Y
             rows = [r for r in data_rows
                     if _cell(r, 7).strip().upper() != "Y"
                     and _cell(r, TRACKING_MANAGEMENT_COL) not in TRACKING_MANAGEMENT_EXCLUDED]
+        search = ""
+        if hasattr(self.ui, "lineEdit_tracking_recipient_search"):
+            search = self.ui.lineEdit_tracking_recipient_search.text().strip().casefold()
+        if search:
+            rows = [r for r in rows if search in _cell(r, 4).casefold()]
 
         # 위험 판정: 미완료 + 마지막 이벤트(없으면 등록) 후 분류별 기준(영업시간) 무이동.
         now_dt = datetime.now()
@@ -3798,24 +3921,30 @@ class MainWindow(QMainWindow):
         cols = self._TRACKING_TABLE_COLUMNS
         prev_regino = self._selected_tracking_regino()  # 자동 갱신 시 선택 유지용
         table.setSortingEnabled(False)
-        table.clearContents()
-        table.setColumnCount(len(cols))
-        table.setHorizontalHeaderLabels([label for _, label in cols])
-        table.setRowCount(len(rows))
-        for r, row in enumerate(rows):
-            done = _cell(row, 7).strip().upper() == "Y"
-            ref = self._parse_event_dt(_cell(row, 11)) or self._parse_event_dt(_cell(row, 1))
-            risk, _elapsed = self._evaluate_risk(
-                _cell(row, 6), _cell(row, 8), done, ref, now_dt,
-                _cell(row, TRACKING_MANAGEMENT_COL))
-            if risk:
-                counts[risk] += 1
-            bg = bg_hub if risk == "허브정체" else (bg_warn if risk else None)
-            for c, (src_idx, _label) in enumerate(cols):
-                item = QTableWidgetItem(_cell(row, src_idx))
-                if bg is not None:
-                    item.setBackground(bg)
-                table.setItem(r, c, item)
+        self._populating_tracking_table = True
+        try:
+            table.clearContents()
+            table.setColumnCount(len(cols))
+            table.setHorizontalHeaderLabels([label for _, label in cols])
+            table.setRowCount(len(rows))
+            for r, row in enumerate(rows):
+                done = _cell(row, 7).strip().upper() == "Y"
+                ref = self._parse_event_dt(_cell(row, 11)) or self._parse_event_dt(_cell(row, 1))
+                risk, _elapsed = self._evaluate_risk(
+                    _cell(row, 6), _cell(row, 8), done, ref, now_dt,
+                    _cell(row, TRACKING_MANAGEMENT_COL))
+                if risk:
+                    counts[risk] += 1
+                bg = bg_hub if risk == "허브정체" else (bg_warn if risk else None)
+                for c, (src_idx, _label) in enumerate(cols):
+                    item = QTableWidgetItem(_cell(row, src_idx))
+                    if src_idx != 10:
+                        item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                    if bg is not None:
+                        item.setBackground(bg)
+                    table.setItem(r, c, item)
+        finally:
+            self._populating_tracking_table = False
         table.setSortingEnabled(True)
         table.resizeColumnsToContents()
         header = table.horizontalHeader()
@@ -3823,9 +3952,9 @@ class MainWindow(QMainWindow):
             header.setStretchLastSection(True)
         if prev_regino:  # 자동 갱신 후 이전 선택 행 복원
             for r in range(table.rowCount()):
-                it = table.item(r, 0)
+                it = table.item(r, self._tracking_table_col(0))
                 if it is not None and it.text().strip() == prev_regino:
-                    table.setCurrentCell(r, 0)
+                    table.setCurrentCell(r, self._tracking_table_col(0))
                     break
         if hasattr(self.ui, "label_tracking_count"):
             total_risk = sum(counts.values())
@@ -3860,15 +3989,108 @@ class MainWindow(QMainWindow):
         r = table.currentRow()
         if r < 0:
             return ""
-        item = table.item(r, 0)  # 0열 = 등기번호
+        item = table.item(r, self._tracking_table_col(0))
         return item.text().strip() if item is not None else ""
 
-    def _on_tracking_cell_double_clicked(self, row, _col):
+    def _selected_tracking_reginos(self):
+        table = getattr(self.ui, "tableWidget_tracking", None)
+        if table is None or table.selectionModel() is None:
+            return []
+        regino_col = self._tracking_table_col(0)
+        return [table.item(index.row(), regino_col).text().strip()
+                for index in table.selectionModel().selectedRows()
+                if table.item(index.row(), regino_col) is not None]
+
+    def _tracking_management_for_regino(self, regino):
+        for row in self._tracking_list_values[1:]:
+            if _normalize_tracking_no(row[0] if row else "") == regino:
+                return row[TRACKING_MANAGEMENT_COL].strip() if len(row) > TRACKING_MANAGEMENT_COL else ""
+        return ""
+
+    def _on_tracking_stop_selected_clicked(self):
+        self._change_tracking_management(self._selected_tracking_reginos(), True)
+
+    def _change_tracking_management(self, reginos, stop):
+        if gspread is None:
+            QMessageBox.warning(self, "배송추적", "gspread 패키지가 필요합니다. (pip install gspread)")
+            return
+        if self._tracking_management_update_thread is not None:
+            return
+        reginos = list(dict.fromkeys(reginos))
+        if not reginos:
+            QMessageBox.information(self, "추적 중지", "먼저 표에서 행을 선택해 주세요.")
+            return
+        action = "중지" if stop else "재개"
+        if QMessageBox.question(
+                self, f"추적 {action}",
+                f"선택한 {len(reginos)}건의 배송 추적을 {action}할까요?\n\n"
+                "중지한 건은 자동 새로고침과 위험 알림에서 제외됩니다.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+            return
+        management = TRACKING_MANAGEMENT_MANUAL_STOP if stop else TRACKING_MANAGEMENT_ACTIVE
+        thread = TrackingManagementUpdateThread(reginos, management, self)
+        self._tracking_management_update_thread = thread
+        self._set_tracking_summary(f"선택 {len(reginos)}건 추적 {action} 중…")
+        thread.result_ready.connect(self._on_tracking_management_update_finished)
+        thread.finished.connect(self._cleanup_tracking_management_update_thread)
+        thread.finished.connect(thread.deleteLater)
+        thread.start()
+
+    def _on_tracking_management_update_finished(self, payload):
+        if payload.get("ok"):
+            self._set_tracking_summary(f"추적 상태 변경 {payload.get('updated', 0)}건 완료")
+            self._load_tracking_list()
+        else:
+            QMessageBox.warning(self, "배송추적", f"추적 상태를 변경하지 못했습니다.\n\n{payload.get('error', '')}")
+
+    def _cleanup_tracking_management_update_thread(self):
+        self._tracking_management_update_thread = None
+
+    def _on_tracking_item_changed(self, item):
+        table = getattr(self.ui, "tableWidget_tracking", None)
+        if self._populating_tracking_table or table is None:
+            return
+        if table.column(item) != self._tracking_table_col(10):
+            return
+        regino_item = table.item(table.row(item), self._tracking_table_col(0))
+        if regino_item is None:
+            return
+        regino = regino_item.text().strip()
+        if not regino:
+            return
+        self._tracking_notes_pending[regino] = item.text()
+        self._flush_tracking_notes()
+
+    def _flush_tracking_notes(self):
+        if self._tracking_notes_update_thread is not None or not self._tracking_notes_pending:
+            return
+        self._tracking_notes_inflight = self._tracking_notes_pending
+        self._tracking_notes_pending = {}
+        thread = TrackingNotesUpdateThread(self._tracking_notes_inflight, self)
+        self._tracking_notes_update_thread = thread
+        thread.result_ready.connect(self._on_tracking_notes_update_finished)
+        thread.finished.connect(self._cleanup_tracking_notes_update_thread)
+        thread.finished.connect(thread.deleteLater)
+        thread.start()
+
+    def _on_tracking_notes_update_finished(self, payload):
+        if not payload.get("ok"):
+            QMessageBox.warning(self, "배송추적", f"비고를 저장하지 못했습니다.\n\n{payload.get('error', '')}")
+
+    def _cleanup_tracking_notes_update_thread(self):
+        self._tracking_notes_update_thread = None
+        self._tracking_notes_inflight = {}
+        self._flush_tracking_notes()
+
+    def _on_tracking_cell_double_clicked(self, row, col):
         """행 더블클릭 → 그 등기번호의 우체국 배송조회 웹페이지를 엽니다."""
+        if col == self._tracking_table_col(10):
+            return  # 비고 열은 인라인 편집용
         table = getattr(self.ui, "tableWidget_tracking", None)
         if table is None:
             return
-        item = table.item(row, 0)
+        item = table.item(row, self._tracking_table_col(0))
         regino = item.text().strip() if item is not None else ""
         if regino:
             QDesktopServices.openUrl(QUrl(self._kpost_trace_web_url.format(regino=regino)))
@@ -5769,6 +5991,9 @@ class MainWindow(QMainWindow):
         if hasattr(self.ui, "pushButton_refresh_tracking_exceptions"):
             self.ui.pushButton_refresh_tracking_exceptions.clicked.connect(
                 self.on_refresh_tracking_exceptions_clicked)
+        if hasattr(self.ui, "pushButton_tracking_stop_selected"):
+            self.ui.pushButton_tracking_stop_selected.clicked.connect(
+                self._on_tracking_stop_selected_clicked)
         # 배송추적 설정은 「관리자」 탭에 상시 구성(팝업·설정 버튼 제거). 시작 시 1회 빌드.
         self._build_admin_tracking_settings()
         # 주문·발송 탭 초기 상태: 앱 로고 + 회색 상태 텍스트 + 생성 버튼 비활성
@@ -5790,6 +6015,7 @@ class MainWindow(QMainWindow):
             self.ui.tableWidget_tracking.cellDoubleClicked.connect(
                 self._on_tracking_cell_double_clicked
             )
+            self.ui.tableWidget_tracking.itemChanged.connect(self._on_tracking_item_changed)
             # 단건 조회는 우클릭 메뉴로(버튼 제거)
             self.ui.tableWidget_tracking.setContextMenuPolicy(
                 Qt.ContextMenuPolicy.CustomContextMenu
@@ -5799,6 +6025,10 @@ class MainWindow(QMainWindow):
             )
         if hasattr(self.ui, "comboBox_tracking_filter"):
             self.ui.comboBox_tracking_filter.currentIndexChanged.connect(
+                self._populate_tracking_table
+            )
+        if hasattr(self.ui, "lineEdit_tracking_recipient_search"):
+            self.ui.lineEdit_tracking_recipient_search.textChanged.connect(
                 self._populate_tracking_table
             )
         # 우체국 인증키·슬랙·정체기준 설정 위젯은 설정 팝업에서 연결됨

@@ -1428,9 +1428,45 @@
             </item>
             <item>
              <property name="text">
+              <string>추적 중지</string>
+             </property>
+            </item>
+            <item>
+             <property name="text">
+              <string>폐기 후보</string>
+             </property>
+            </item>
+            <item>
+             <property name="text">
+              <string>폐기</string>
+             </property>
+            </item>
+            <item>
+             <property name="text">
+              <string>완료</string>
+             </property>
+            </item>
+            <item>
+             <property name="text">
               <string>전체</string>
              </property>
             </item>
+           </widget>
+          </item>
+          <item>
+           <widget class="QLineEdit" name="lineEdit_tracking_recipient_search">
+            <property name="minimumSize">
+             <size>
+              <width>150</width>
+              <height>30</height>
+             </size>
+            </property>
+            <property name="placeholderText">
+             <string>수취인명 검색</string>
+            </property>
+            <property name="clearButtonEnabled">
+             <bool>true</bool>
+            </property>
            </widget>
           </item>
           <item>
@@ -1446,6 +1482,22 @@
             </property>
             <property name="wordWrap">
              <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QPushButton" name="pushButton_tracking_stop_selected">
+            <property name="minimumSize">
+             <size>
+              <width>120</width>
+              <height>34</height>
+             </size>
+            </property>
+            <property name="text">
+             <string>선택 건 추적 중지</string>
+            </property>
+            <property name="toolTip">
+             <string>선택한 송장을 수동 중지합니다. 자동 새로고침과 위험 알림에서 제외됩니다.</string>
             </property>
            </widget>
           </item>
@@ -1498,7 +1550,7 @@
         <item>
          <widget class="QTableWidget" name="tableWidget_tracking">
           <property name="editTriggers">
-           <set>QAbstractItemView::EditTrigger::NoEditTriggers</set>
+           <set>QAbstractItemView::EditTrigger::DoubleClicked</set>
           </property>
           <property name="alternatingRowColors">
            <bool>true</bool>
