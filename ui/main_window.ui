@@ -916,7 +916,7 @@
                 <item>
                  <widget class="QPushButton" name="pushButton_google_open_oauth_folder">
                   <property name="text">
-                   <string>google-oauth 폴더 열기</string>
+                   <string>인증 폴더 열기</string>
                   </property>
                  </widget>
                 </item>
