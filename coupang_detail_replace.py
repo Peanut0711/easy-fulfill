@@ -8,7 +8,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import Error as PlaywrightError, sync_playwright
 
 import coupang_cdn_upload
 
@@ -45,6 +45,15 @@ def confirm_detail_level_change(page):
     except Exception:
         return
     alert.locator("button.confirm").click(timeout=10_000)
+
+
+def close_context(context):
+    """사용자가 WING 창을 먼저 닫은 경우에도 종료를 정상 처리한다."""
+    try:
+        context.close()
+    except PlaywrightError as error:
+        if "has been closed" not in str(error):
+            raise
 
 
 def main():
@@ -88,7 +97,7 @@ def main():
             page.get_by_role("button", name="수정 및 검수 요청").click(timeout=15_000)
             print("수정 및 검수 요청을 보냈습니다.")
         finally:
-            context.close()
+            close_context(context)
 
 
 if __name__ == "__main__":

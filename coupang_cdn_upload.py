@@ -98,8 +98,9 @@ def restore_coupang_session(context):
             origin = origin_state.get("origin", "")
             local_storage = origin_state.get("localStorage", [])
             if local_storage:
+                values = [(item["name"], item["value"]) for item in local_storage]
                 context.add_init_script(
-                    f"if (location.origin === {json.dumps(origin)}) for (const [key, value] of {json.dumps([(item['name'], item['value'])])}) localStorage.setItem(key, value);"
+                    f"if (location.origin === {json.dumps(origin)}) for (const [key, value] of {json.dumps(values)}) localStorage.setItem(key, value);"
                 )
         for origin, values in state.get("easyFulfillSessionStorage", {}).items():
             if values:
@@ -242,16 +243,37 @@ def wait_for_login(page):
         raise RuntimeError(f"로그인 후 예상하지 못한 페이지로 이동했습니다: {page.url}")
 
 
-def launch_coupang_context(playwright):
+def launch_coupang_context(playwright, headless=False):
     PROFILE_DIR.mkdir(parents=True, exist_ok=True)
     try:
-        return playwright.chromium.launch_persistent_context(str(PROFILE_DIR), headless=False)
+        return playwright.chromium.launch_persistent_context(str(PROFILE_DIR), headless=headless)
     except Exception as error:
         if "Executable doesn't exist" not in str(error):
             raise
         print("쿠팡 WING용 Chromium을 처음 설치합니다. 잠시 기다려 주세요.")
         subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=True)
-        return playwright.chromium.launch_persistent_context(str(PROFILE_DIR), headless=False)
+        return playwright.chromium.launch_persistent_context(str(PROFILE_DIR), headless=headless)
+
+
+def launch_coupang_upload_context(playwright):
+    """저장 세션으로는 숨김 업로드하고, 로그인이 필요할 때만 창을 연다."""
+    context = launch_coupang_context(playwright, headless=True)
+    restore_coupang_session(context)
+    page = context.pages[0] if context.pages else context.new_page()
+    page.goto(WING_HOME)
+    page.wait_for_timeout(2_000)
+    if re.match(r"https://wing\.coupang\.com/", page.url):
+        print("저장된 쿠팡 로그인 세션으로 숨김 업로드를 진행합니다.")
+        return context, page
+
+    context.close()
+    print("쿠팡 로그인이 필요해 WING 창을 엽니다. 로그인 후 업로드를 계속합니다.")
+    context = launch_coupang_context(playwright)
+    restore_coupang_session(context)
+    page = context.pages[0] if context.pages else context.new_page()
+    wait_for_login(page)
+    save_coupang_session(context, page)
+    return context, page
 
 
 def self_test():
@@ -295,12 +317,8 @@ def main():
     if not report.get("images"):
         raise RuntimeError("업로드할 이미지가 없습니다.")
     with sync_playwright() as playwright:
-        context = launch_coupang_context(playwright)
-        restore_coupang_session(context)
-        page = context.pages[0] if context.pages else context.new_page()
+        context, page = launch_coupang_upload_context(playwright)
         try:
-            wait_for_login(page)
-            save_coupang_session(context, page)
             mapping = upload_images(context, output_dir, report)
             html_path, map_path, paste_path = write_cdn_html(output_dir, mapping)
             print(json.dumps({"preview": str(html_path), "mapping": str(map_path), "pasteHtml": str(paste_path)}, ensure_ascii=False))
