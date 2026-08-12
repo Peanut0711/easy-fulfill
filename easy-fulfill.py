@@ -84,8 +84,20 @@ TRACKING_SHEET_TITLE = "송장추적"
 TRACKING_SHEET_HEADERS = [
     "등기번호", "등록일시", "스토어", "주문번호", "수취인명",
     "택배사코드", "배송상태", "완료여부", "마지막위치", "최근조회시각", "비고",
-    "최근이벤트시각",
+    "최근이벤트시각", "관리상태",
 ]
+TRACKING_MANAGEMENT_COL = 12
+TRACKING_MANAGEMENT_ACTIVE = "추적중"
+TRACKING_MANAGEMENT_CANDIDATE = "폐기후보"
+TRACKING_MANAGEMENT_DISCARDED = "폐기(미발송)"
+TRACKING_MANAGEMENT_EXCLUDED = {
+    TRACKING_MANAGEMENT_CANDIDATE, TRACKING_MANAGEMENT_DISCARDED,
+}
+# 인쇄 뒤 수거가 지연되는 정상 건을 보호하기 위해 영업일 기준 2일+1일을 기다린다.
+TRACKING_DISCARD_CANDIDATE_HOURS = 48
+TRACKING_DISCARD_CONFIRM_HOURS = 72
+TRACKING_DISCARD_STALE_ARRIVAL_LOCATION = "부평물류센터"
+TRACKING_DISCARD_STALE_RECEIPT_LOCATION = "부평우체국"
 TRACKING_SHEET_PUSH_DEBOUNCE_MS = 1200
 # 택배사 제출용 「당일 접수목록」 xlsx 파일명 접두어(관리자가 하루 1회 택배사에 전달).
 # 예: "하이제니스 26.07.03.xlsx" — 접두어는 고정, 날짜(YY.MM.DD)만 자동.
@@ -176,6 +188,30 @@ def _business_elapsed_hours(ref_dt, now_dt):
     return ((now_dt - ref_dt).total_seconds() - weekend) / 3600.0
 
 
+def _tracking_management_state(row, status, where="", error_code="", now_dt=None):
+    """출력 뒤 미발송 또는 부평물류센터 정체 송장의 자동 관리상태를 계산한다."""
+    current = (row[TRACKING_MANAGEMENT_COL]
+               if len(row) > TRACKING_MANAGEMENT_COL else "").strip()
+    eligible = (status in ("운송장출력", "추적정보 없음")
+                or error_code == "ERR-125"
+                or (status == "도착" and TRACKING_DISCARD_STALE_ARRIVAL_LOCATION in (where or ""))
+                or (status == "인수완료" and TRACKING_DISCARD_STALE_RECEIPT_LOCATION in (where or "")))
+    # 확정 뒤에도 자동 조회는 계속한다. 뒤늦은 물리 이벤트가 생기면 추적중으로 복귀한다.
+    if current == TRACKING_MANAGEMENT_DISCARDED:
+        return current if eligible else TRACKING_MANAGEMENT_ACTIVE
+    if not eligible:
+        return TRACKING_MANAGEMENT_ACTIVE
+    registered_at = _parse_ts(row[1] if len(row) > 1 else "")
+    if registered_at is None:
+        return current or TRACKING_MANAGEMENT_ACTIVE
+    elapsed_h = _business_elapsed_hours(registered_at, now_dt or datetime.now())
+    if elapsed_h >= TRACKING_DISCARD_CONFIRM_HOURS:
+        return TRACKING_MANAGEMENT_DISCARDED
+    if elapsed_h >= TRACKING_DISCARD_CANDIDATE_HOURS:
+        return TRACKING_MANAGEMENT_CANDIDATE
+    return TRACKING_MANAGEMENT_ACTIVE
+
+
 def _inquiry_alerts_allowed(now_dt, start_hour=NAVER_INQUIRY_WORK_START_HOUR,
                             end_hour=NAVER_INQUIRY_WORK_END_HOUR):
     """평일(월~금) 근무시간(start_hour:00~end_hour:00) 안이면 True."""
@@ -199,6 +235,8 @@ def _read_inquiry_work_hours(cfg):
 # 당일 우체국 수거 시각(시). 오늘 등록+운송장출력만 한 건은 이 시각 전엔 조회해도
 # 새 정보가 없으므로 새로고침 대상에서 제외한다(어제 이전 건은 제외 안 함=수거누락 후보).
 KPOST_PICKUP_HOUR = 18
+# 우체국 종추적조회 연속 호출 간격. ERR-131 부하 차단 시 워커가 즉시 중단한다.
+KPOST_TRACKING_REQUEST_DELAY_SEC = 0.1
 # 시작 시 DB동기화 로딩 바: 약 2초+여유 안에 99%까지 선형 증가, 완료 시 즉시 100%
 STARTUP_SYNC_PROGRESS_CAP_MS = 2200
 STARTUP_SYNC_PROGRESS_TICK_MS = 40
@@ -556,6 +594,10 @@ def _standalone_open_tracking_ws(gc):
     spreadsheet = gc.open_by_key(SPREADSHEET_ID)
     for ws in spreadsheet.worksheets():
         if ws.title == TRACKING_SHEET_TITLE:
+            # 기존 시트는 열을 추가해 무중단 마이그레이션한다.
+            if len(ws.row_values(1)) < len(TRACKING_SHEET_HEADERS):
+                ws.update([list(TRACKING_SHEET_HEADERS)], range_name="A1:M1",
+                          value_input_option="RAW")
             return ws
     ws = spreadsheet.add_worksheet(
         title=TRACKING_SHEET_TITLE, rows=2000, cols=len(TRACKING_SHEET_HEADERS)
@@ -650,7 +692,7 @@ def run_tracking_upsert_worker(records):
             else:
                 new_rows.append([
                     key, now, r["스토어"], r["주문번호"], r["수취인명"],
-                    "우체국", "", "", "", "", "", "",
+                    "우체국", "", "", "", "", "", "", TRACKING_MANAGEMENT_ACTIVE,
                 ])
                 key_to_row[key] = (None, None)  # 같은 배치 내 재등록 방지
                 registered += 1
@@ -678,7 +720,8 @@ def _cell_date_tuple(s):
     return None
 
 
-def run_tracking_refresh_worker(regkey, progress_cb=None, auto=False, interval_min=0):
+def run_tracking_refresh_worker(regkey, progress_cb=None, auto=False, interval_min=0,
+                                scope="all"):
     """「송장추적」 시트의 미완료 행만 골라 우체국 종추적조회로 상태를 갱신합니다.
     progress_cb(done, total)이 주어지면 진행 상황을 보고합니다.
     auto=True(백그라운드 자동 새로고침)면 공유 「설정」의 마지막 자동조회 시각을 보고,
@@ -742,7 +785,7 @@ def run_tracking_refresh_worker(regkey, progress_cb=None, auto=False, interval_m
         if len(values) <= 1:
             return {"ok": True, "total": 0, "complete": 0, "progress": 0,
                     "failed": 0, "checked": 0, "aborted": False}
-        # 미완료 행 수집. 단, '오늘 등록 + 운송장출력 + 수거 시각 전'은 헛호출이라 제외.
+        # scope: active=화면의 추적중, exceptions=폐기 후보/확정 재확인, all=자동 갱신.
         # (어제 이전의 운송장출력은 수거 누락 후보이므로 제외하지 않고 조회한다.)
         now_dt = datetime.now()
         today_tuple = (now_dt.year, now_dt.month, now_dt.day)
@@ -756,6 +799,11 @@ def run_tracking_refresh_worker(regkey, progress_cb=None, auto=False, interval_m
             done = (row[7] if len(row) > 7 else "").strip().upper()
             if done == "Y":
                 continue
+            management = (row[TRACKING_MANAGEMENT_COL]
+                          if len(row) > TRACKING_MANAGEMENT_COL else "").strip()
+            excluded = management in TRACKING_MANAGEMENT_EXCLUDED
+            if (scope == "active" and excluded) or (scope == "exceptions" and not excluded):
+                continue
             status = (row[6] if len(row) > 6 else "").strip()
             if before_pickup and status == "운송장출력":
                 item_d = (_cell_date_tuple(row[11] if len(row) > 11 else "")
@@ -763,7 +811,7 @@ def run_tracking_refresh_worker(regkey, progress_cb=None, auto=False, interval_m
                 if item_d == today_tuple:
                     skipped_pre_pickup += 1
                     continue
-            active.append((ridx, tno))
+            active.append((ridx, tno, row))
         if not active:
             return {"ok": True, "total": 0, "complete": 0, "progress": 0,
                     "failed": 0, "checked": 0, "aborted": False,
@@ -774,7 +822,7 @@ def run_tracking_refresh_worker(regkey, progress_cb=None, auto=False, interval_m
         total_active = len(active)
         aborted = False
         checked = 0
-        for done_i, (ridx, tno) in enumerate(active, start=1):
+        for done_i, (ridx, tno, row) in enumerate(active, start=1):
             if progress_cb is not None:
                 try:
                     progress_cb(done_i, total_active)
@@ -795,31 +843,41 @@ def run_tracking_refresh_worker(regkey, progress_cb=None, auto=False, interval_m
                 # ERR-001(조회결과 없음): 아직 추적정보 없음 → 실패가 아님
                 if code == "ERR-001":
                     progress += 1
+                    management = _tracking_management_state(
+                        row, "추적정보 없음", error_code=code, now_dt=now_dt)
                     batch_updates.append({
-                        "range": f"G{ridx}:K{ridx}",
-                        "values": [["추적정보 없음", "N", "", now, ""]],
+                        "range": f"G{ridx}:M{ridx}",
+                        "values": [["추적정보 없음", "N", "", now, "", "", management]],
                     })
-                    time.sleep(0.25)
+                    time.sleep(KPOST_TRACKING_REQUEST_DELAY_SEC)
                     continue
+                management = _tracking_management_state(
+                    row, (row[6] if len(row) > 6 else ""),
+                    error_code=code, now_dt=now_dt)
                 failed += 1
                 batch_updates.append({
                     "range": f"J{ridx}:K{ridx}",
                     "values": [[now, s.get("error", "조회 실패")]],
                 })
-                time.sleep(0.25)
+                if management != (row[TRACKING_MANAGEMENT_COL]
+                                  if len(row) > TRACKING_MANAGEMENT_COL else ""):
+                    batch_updates.append({"range": f"M{ridx}", "values": [[management]]})
+                time.sleep(KPOST_TRACKING_REQUEST_DELAY_SEC)
                 continue
             done_yn = "Y" if s.get("complete") else "N"
             if s.get("complete"):
                 complete += 1
             else:
                 progress += 1
-            # G:L = 배송상태, 완료여부, 마지막위치, 최근조회시각, 비고, 최근이벤트시각
+            management = _tracking_management_state(
+                row, s.get("status", ""), s.get("where", ""), now_dt=now_dt)
+            # G:M = 배송상태, 완료여부, 마지막위치, 최근조회시각, 비고, 최근이벤트시각, 관리상태
             batch_updates.append({
-                "range": f"G{ridx}:L{ridx}",
+                "range": f"G{ridx}:M{ridx}",
                 "values": [[s.get("status", ""), done_yn, s.get("where", ""),
-                            now, "", s.get("time", "")]],
+                            now, "", s.get("time", ""), management]],
             })
-            time.sleep(0.25)
+            time.sleep(KPOST_TRACKING_REQUEST_DELAY_SEC)
         if batch_updates:
             ws.batch_update(batch_updates, value_input_option="RAW")
         return {
@@ -866,9 +924,11 @@ def run_tracking_refresh_one_worker(regkey, regino):
         ws = _standalone_open_tracking_ws(gc)
         values = ws.get_all_values()
         ridx = None
+        tracking_row = []
         for i, row in enumerate(values[1:], start=2):
             if (row[0] if row else "").strip() == regino:
                 ridx = i
+                tracking_row = row
                 break
         if ridx is None:
             return {"ok": False, "error": "시트에서 해당 등기번호를 찾지 못했습니다."}
@@ -877,19 +937,29 @@ def run_tracking_refresh_one_worker(regkey, regino):
         code = (s.get("error_code") or "").upper()
         if not s.get("ok"):
             if code == "ERR-001":
-                ws.batch_update([{"range": f"G{ridx}:K{ridx}",
-                                  "values": [["추적정보 없음", "N", "", now, ""]]}],
+                management = _tracking_management_state(
+                    tracking_row, "추적정보 없음", error_code=code)
+                ws.batch_update([{"range": f"G{ridx}:M{ridx}",
+                                  "values": [["추적정보 없음", "N", "", now, "", "", management]]}],
                                 value_input_option="RAW")
                 return {"ok": True, "regino": regino, "status": "추적정보 없음", "complete": False}
+            management = _tracking_management_state(
+                tracking_row, (tracking_row[6] if len(tracking_row) > 6 else ""),
+                error_code=code)
             ws.batch_update([{"range": f"J{ridx}:K{ridx}",
                               "values": [[now, s.get("error", "조회 실패")]]}],
                             value_input_option="RAW")
+            if management != (tracking_row[TRACKING_MANAGEMENT_COL]
+                              if len(tracking_row) > TRACKING_MANAGEMENT_COL else ""):
+                ws.update([[management]], range_name=f"M{ridx}", value_input_option="RAW")
             return {"ok": True, "regino": regino, "status": "(조회 실패)",
                     "complete": False, "note": s.get("error", "")}
         done_yn = "Y" if s.get("complete") else "N"
-        ws.batch_update([{"range": f"G{ridx}:L{ridx}",
+        management = _tracking_management_state(
+            tracking_row, s.get("status", ""), s.get("where", ""))
+        ws.batch_update([{"range": f"G{ridx}:M{ridx}",
                           "values": [[s.get("status", ""), done_yn, s.get("where", ""),
-                                      now, "", s.get("time", "")]]}],
+                                      now, "", s.get("time", ""), management]]}],
                         value_input_option="RAW")
         return {"ok": True, "regino": regino, "status": s.get("status", ""),
                 "complete": s.get("complete", False)}
@@ -1767,17 +1837,18 @@ class TrackingRefreshThread(QThread):
     result_ready = Signal(dict)
     progress = Signal(int, int)  # (done, total)
 
-    def __init__(self, regkey, parent=None, auto=False, interval_min=0):
+    def __init__(self, regkey, parent=None, auto=False, interval_min=0, scope="all"):
         super().__init__(parent)
         self._regkey = regkey
         self._auto = auto
         self._interval_min = interval_min
+        self._scope = scope
 
     def run(self):
         self.result_ready.emit(
             run_tracking_refresh_worker(
                 self._regkey, progress_cb=self.progress.emit,
-                auto=self._auto, interval_min=self._interval_min,
+                auto=self._auto, interval_min=self._interval_min, scope=self._scope,
             )
         )
 
@@ -3027,7 +3098,7 @@ class MainWindow(QMainWindow):
     _TRACKING_TABLE_COLUMNS = [
         (0, "등기번호"), (4, "수취인명"), (2, "스토어"), (3, "주문번호"),
         (6, "배송상태"), (7, "완료"), (8, "마지막위치"),
-        (11, "최근이벤트"), (9, "최근조회"), (10, "비고"),
+        (11, "최근이벤트"), (12, "관리상태"), (9, "최근조회"), (10, "비고"),
     ]
     # 허브(물류센터·집중국) 판별 키워드 — '도착 후 정체'가 가장 위험.
     # '우편집중국'·'교환센터'는 실제 핵심 허브라 반드시 포함(누락 시 이동정체로 오분류).
@@ -3043,11 +3114,11 @@ class MainWindow(QMainWindow):
         w = where or ""
         return any(k in w for k in self._RISK_REMOTE_KEYWORDS)
 
-    def _risk_bucket(self, status, where, done):
+    def _risk_bucket(self, status, where, done, management=""):
         """잠재 위험 분류(정체 여부는 미반영). 완료/제외면 None.
         반환: None / '허브정체' / '수거누락' / '이동정체'. 분류별로 정체 기준이 달라
         (_stale_threshold) 정체 판정 전에 먼저 어느 버킷인지부터 가린다."""
-        if done:
+        if done or management in TRACKING_MANAGEMENT_EXCLUDED:
             return None
         status = (status or "").strip()
         if status in self._RISK_EXCLUDE_STATUS:
@@ -3066,11 +3137,11 @@ class MainWindow(QMainWindow):
             thr += self._remote_bonus_hours()
         return thr
 
-    def _evaluate_risk(self, status, where, done, ref, now_dt):
+    def _evaluate_risk(self, status, where, done, ref, now_dt, management=""):
         """버킷 분류 + 분류별 영업시간 기준(도서산간 가산 포함) 정체 판정을 합쳐
         (risk, elapsed_h) 반환. risk None 이면 정상(또는 기준 미달).
         elapsed_h 는 영업일 기준 무이동 시간."""
-        bucket = self._risk_bucket(status, where, done)
+        bucket = self._risk_bucket(status, where, done, management)
         if bucket is None or ref is None:
             return None, 0.0
         elapsed_h = _business_elapsed_hours(ref, now_dt)
@@ -3158,7 +3229,9 @@ class MainWindow(QMainWindow):
         elif mode == "전체":
             rows = list(data_rows)
         else:  # 배송중(=미완료): 완료여부 != Y
-            rows = [r for r in data_rows if _cell(r, 7).strip().upper() != "Y"]
+            rows = [r for r in data_rows
+                    if _cell(r, 7).strip().upper() != "Y"
+                    and _cell(r, TRACKING_MANAGEMENT_COL) not in TRACKING_MANAGEMENT_EXCLUDED]
 
         # 위험 판정: 미완료 + 마지막 이벤트(없으면 등록) 후 분류별 기준(영업시간) 무이동.
         now_dt = datetime.now()
@@ -3177,7 +3250,8 @@ class MainWindow(QMainWindow):
             done = _cell(row, 7).strip().upper() == "Y"
             ref = self._parse_event_dt(_cell(row, 11)) or self._parse_event_dt(_cell(row, 1))
             risk, _elapsed = self._evaluate_risk(
-                _cell(row, 6), _cell(row, 8), done, ref, now_dt)
+                _cell(row, 6), _cell(row, 8), done, ref, now_dt,
+                _cell(row, TRACKING_MANAGEMENT_COL))
             if risk:
                 counts[risk] += 1
             bg = bg_hub if risk == "허브정체" else (bg_warn if risk else None)
@@ -3368,7 +3442,8 @@ class MainWindow(QMainWindow):
             ev = self._parse_event_dt(_cell(row, 11))
             ref = ev or self._parse_event_dt(_cell(row, 1))
             risk, elapsed_h = self._evaluate_risk(
-                _cell(row, 6), _cell(row, 8), done, ref, now_dt)
+                _cell(row, 6), _cell(row, 8), done, ref, now_dt,
+                _cell(row, TRACKING_MANAGEMENT_COL))
             if not risk:
                 continue
             out.append({
@@ -4627,7 +4702,14 @@ class MainWindow(QMainWindow):
             self.ui.label_tracking_summary.setText(text)
 
     def on_refresh_tracking_clicked(self):
-        """미완료 송장만 우체국 종추적조회로 조회해 공유 시트의 배송상태를 갱신합니다."""
+        """화면의 추적중 송장만 우체국 종추적조회로 갱신합니다."""
+        self._begin_tracking_refresh("active")
+
+    def on_refresh_tracking_exceptions_clicked(self):
+        """폐기후보·폐기(미발송) 송장만 재확인해 늦은 접수를 복구합니다."""
+        self._begin_tracking_refresh("exceptions")
+
+    def _begin_tracking_refresh(self, scope):
         if gspread is None:
             QMessageBox.warning(self, "배송추적", "gspread 패키지가 필요합니다. (pip install gspread)")
             return
@@ -4635,10 +4717,14 @@ class MainWindow(QMainWindow):
             return  # 이미 조회 중
         # 로컬 키가 없어도 진행: 워커가 공유 「설정」 탭에서 회사 공통 regkey 를 자동 조회한다.
         regkey = self._get_kpost_regkey()
-        if hasattr(self.ui, "pushButton_refresh_tracking"):
-            self.ui.pushButton_refresh_tracking.setEnabled(False)
-        self._set_tracking_summary("배송추적 조회 중…")
-        thread = TrackingRefreshThread(regkey, self)
+        for name in ("pushButton_refresh_tracking", "pushButton_refresh_tracking_exceptions"):
+            if hasattr(self.ui, name):
+                getattr(self.ui, name).setEnabled(False)
+        label = "배송중" if scope == "active" else "폐기/예외 재확인"
+        self._tracking_refresh_label = label
+        self._tracking_refresh_scope = scope
+        self._set_tracking_summary(f"{label} 조회 중…")
+        thread = TrackingRefreshThread(regkey, self, scope=scope)
         self._tracking_refresh_thread = thread
         thread.progress.connect(self._on_tracking_refresh_progress)
         thread.result_ready.connect(self._on_tracking_refresh_finished)
@@ -4647,7 +4733,8 @@ class MainWindow(QMainWindow):
         thread.start()
 
     def _on_tracking_refresh_progress(self, done: int, total: int):
-        self._set_tracking_summary(f"배송추적 조회 중… ({done}/{total})")
+        self._set_tracking_summary(
+            f"{getattr(self, '_tracking_refresh_label', '배송추적')} 조회 중… ({done}/{total})")
 
     def _on_tracking_refresh_finished(self, payload: dict):
         if payload.get("ok"):
@@ -4655,7 +4742,7 @@ class MainWindow(QMainWindow):
             skipped = payload.get("skipped", 0)
             skip_note = f" · 출고대기 {skipped}건 제외" if skipped else ""
             if total == 0:
-                self._set_tracking_summary("추적할 미완료 송장이 없습니다." + skip_note)
+                self._set_tracking_summary("조회할 송장이 없습니다." + skip_note)
             else:
                 t = datetime.now().strftime("%H:%M:%S")
                 msg = (
@@ -4668,7 +4755,7 @@ class MainWindow(QMainWindow):
                 msg += skip_note
                 self._set_tracking_summary(msg)
             # 갱신된 상태를 표에 반영하고, 반영 후 정체 건 슬랙 알림 검토
-            self._slack_notify_after_reload = True
+            self._slack_notify_after_reload = self._tracking_refresh_scope == "active"
             self._load_tracking_list()
         else:
             err = payload.get("error", "")
@@ -4680,8 +4767,9 @@ class MainWindow(QMainWindow):
 
     def _cleanup_tracking_refresh_thread(self):
         self._tracking_refresh_thread = None
-        if hasattr(self.ui, "pushButton_refresh_tracking"):
-            self.ui.pushButton_refresh_tracking.setEnabled(True)
+        for name in ("pushButton_refresh_tracking", "pushButton_refresh_tracking_exceptions"):
+            if hasattr(self.ui, name):
+                getattr(self.ui, name).setEnabled(True)
 
     # ── 송장 배송추적: 자동 새로고침(백그라운드 타이머) ──────────────────────
     def _auto_refresh_interval_min(self):
@@ -5121,6 +5209,9 @@ class MainWindow(QMainWindow):
 
         if hasattr(self.ui, "pushButton_refresh_tracking"):
             self.ui.pushButton_refresh_tracking.clicked.connect(self.on_refresh_tracking_clicked)
+        if hasattr(self.ui, "pushButton_refresh_tracking_exceptions"):
+            self.ui.pushButton_refresh_tracking_exceptions.clicked.connect(
+                self.on_refresh_tracking_exceptions_clicked)
         # 배송추적 설정은 「관리자」 탭에 상시 구성(팝업·설정 버튼 제거). 시작 시 1회 빌드.
         self._build_admin_tracking_settings()
         # 주문·발송 탭 초기 상태: 앱 로고 + 회색 상태 텍스트 + 생성 버튼 비활성

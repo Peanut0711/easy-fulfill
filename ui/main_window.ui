@@ -1453,21 +1453,43 @@
            <widget class="QPushButton" name="pushButton_refresh_tracking">
             <property name="minimumSize">
              <size>
-              <width>90</width>
+              <width>110</width>
               <height>34</height>
              </size>
             </property>
             <property name="maximumSize">
              <size>
-              <width>110</width>
+              <width>130</width>
               <height>16777215</height>
              </size>
             </property>
             <property name="text">
-             <string>새로고침</string>
+             <string>배송중 새로고침</string>
             </property>
             <property name="toolTip">
-             <string>공유 시트의 미완료 송장을 우체국 종추적조회로 조회해 배송 상태를 갱신합니다.</string>
+             <string>화면에 표시된 추적중 송장만 우체국 종추적조회로 갱신합니다.</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QPushButton" name="pushButton_refresh_tracking_exceptions">
+            <property name="minimumSize">
+             <size>
+              <width>120</width>
+              <height>34</height>
+             </size>
+            </property>
+            <property name="maximumSize">
+             <size>
+              <width>150</width>
+              <height>16777215</height>
+             </size>
+            </property>
+            <property name="text">
+             <string>폐기/예외 재확인</string>
+            </property>
+            <property name="toolTip">
+             <string>폐기후보·폐기(미발송) 송장만 다시 조회합니다. 늦은 실제 접수는 추적중으로 복구되며 알림은 보내지 않습니다.</string>
             </property>
            </widget>
           </item>
