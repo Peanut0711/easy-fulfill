@@ -123,6 +123,26 @@ def render_text_component(component):
     return "\n".join(rendered)
 
 
+def render_table_component(component):
+    table = next((node for node in walk(component) if node.tag == "table"), None)
+    if not table:
+        return ""
+    rows = [node for node in walk(table) if node.tag == "tr"]
+    rendered_rows = []
+    for row_index, row in enumerate(rows):
+        cells = [node for node in row.children if isinstance(node, Node) and node.tag in {"td", "th"}]
+        if not cells:
+            continue
+        header = row_index == 0 and all(any(node.tag in {"b", "strong"} for node in walk(cell)) for cell in cells)
+        tag = "th" if header else "td"
+        rendered_cells = []
+        for cell in cells:
+            spans = "".join(f' {name}="{html.escape(cell.attrs[name], quote=True)}"' for name in ("colspan", "rowspan") if cell.attrs.get(name, "1") != "1")
+            rendered_cells.append(f"<{tag}{spans}>{inline_html(cell).strip()}</{tag}>")
+        rendered_rows.append(f"<tr>{''.join(rendered_cells)}</tr>")
+    return f'<section class="table-block"><table><tbody>{"".join(rendered_rows)}</tbody></table></section>' if rendered_rows else ""
+
+
 def load_config():
     sheet = get_authorized_gspread_client().open_by_key(SPREADSHEET_ID).worksheet(CONFIG_SHEET_TITLE)
     return {
@@ -179,6 +199,12 @@ def build_preview(product_no, product):
                 body.append(f'<section class="text-block">{rendered}</section>')
             continue
 
+        if "se-table" in classes(component):
+            rendered = render_table_component(component)
+            if rendered:
+                body.append(rendered)
+            continue
+
         image_nodes = [node for node in walk(component) if node.tag == "img" and node.attrs.get("src")]
         if not image_nodes:
             continue
@@ -217,6 +243,10 @@ def build_preview(product_no, product):
     .grid-2 {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
     .grid-3 {{ grid-template-columns: repeat(3, minmax(0, 1fr)); }}
     img {{ display: block; width: auto; max-width: 100%; height: auto; margin: 0 auto; }}
+    .table-block {{ margin: 0 0 30px; overflow-x: auto; }}
+    table {{ width: 100%; border-collapse: collapse; font-size: 16px; }}
+    th, td {{ padding: 10px 12px; border: 1px solid #d6d6d6; text-align: left; vertical-align: top; }}
+    th {{ background: #f5f5f5; font-weight: 700; }}
     @media (max-width: 560px) {{
       main {{ margin: 0; padding: 28px 18px; }}
       .text-block {{ font-size: 16px; line-height: 1.7; }}
@@ -244,6 +274,7 @@ def build_preview(product_no, product):
         "imageCount": len(image_records),
         "imageBytes": sum(record["bytes"] for record in image_records),
         "imageFormats": dict(Counter(record["format"] for record in image_records)),
+        "tableComponentCount": sum("se-table" in classes(node) for node in components),
         "warnings": ["이미지 안의 글자는 선택 가능한 HTML 텍스트로 변환하지 않았습니다."],
         "images": image_records,
     }
@@ -257,6 +288,9 @@ def self_test():
     parser.feed('<div class="se-component se-text"><p><b>제목</b></p></div>')
     component = next(node for node in walk(parser.root) if "se-component" in classes(node))
     assert render_text_component(component) == "<p><strong>제목</strong></p>"
+    parser.feed('<div class="se-component se-table"><table><tr><td><b>번호</b></td><td><b>설명</b></td></tr><tr><td>1</td><td>RS485</td></tr></table></div>')
+    table = next(node for node in walk(parser.root) if "se-table" in classes(node))
+    assert "<th><strong>번호</strong></th>" in render_table_component(table)
     print("self-test: ok")
 
 

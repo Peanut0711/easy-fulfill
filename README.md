@@ -28,6 +28,24 @@ python easy-fulfill.py
 - 선택된 파일 경로 표시
 - 작업지시서 생성 (개발 중)
 
+## 네이버 상세 → 쿠팡 HTML 작성용 변환
+
+네이버 SmartEditor ONE 상세를 읽어 텍스트는 HTML로, 이미지는 쿠팡 CDN 주소로 변환합니다. 쿠팡의 상품 등록·수정·임시저장은 수행하지 않습니다.
+
+한 상품을 준비만 하려면 다음을 실행합니다.
+
+```bash
+python naver_to_coupang_html.py 13204504134 --prepare-only
+```
+
+여러 상품은 상품번호를 줄바꿈으로 적은 UTF-8 텍스트 파일을 준비한 뒤 실행합니다.
+
+```bash
+python naver_to_coupang_html.py --list product_numbers.txt --upload
+```
+
+처음 실행 시 열린 전용 쿠팡 WING 브라우저에서 로그인합니다. 로그인 세션은 로컬 `output/coupang-browser-profile`에만 저장됩니다. 완료된 상품별 `output/detail-preview/<상품번호>/coupang-paste.html` 파일의 내용을 쿠팡 **기본 등록 → HTML 작성**에 붙여 넣으면 됩니다.
+
 ## 프로젝트 구조
 
 ```
@@ -44,4 +62,4 @@ easy-fulfill/
     └── main_window.ui  # Qt Designer UI 파일
 ```
 
-`google-oauth` 안의 파일은 Git에 올리지 마세요. 설정 방법은 [docs/google-sheets-oauth-implementation.md](docs/google-sheets-oauth-implementation.md)를 참고하세요. 
+`google-oauth` 안의 파일은 Git에 올리지 마세요. 설정 방법은 [docs/google-sheets-oauth-implementation.md](docs/google-sheets-oauth-implementation.md)를 참고하세요.
