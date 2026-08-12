@@ -143,6 +143,11 @@ def render_table_component(component):
     return f'<section class="table-block"><table><tbody>{"".join(rendered_rows)}</tbody></table></section>' if rendered_rows else ""
 
 
+def render_section_title(component):
+    title = node_text(component)
+    return f"<section class=\"section-title\"><h2>{html.escape(title)}</h2></section>" if title else ""
+
+
 def load_config():
     sheet = get_authorized_gspread_client().open_by_key(SPREADSHEET_ID).worksheet(CONFIG_SHEET_TITLE)
     return {
@@ -193,6 +198,16 @@ def build_preview(product_no, product):
     image_index = 0
 
     for component in components:
+        if "se-sectionTitle" in classes(component):
+            rendered = render_section_title(component)
+            if rendered:
+                body.append(rendered)
+            continue
+
+        if "se-horizontalLine" in classes(component):
+            body.append('<hr class="divider">')
+            continue
+
         if "se-text" in classes(component):
             rendered = render_text_component(component)
             if rendered:
@@ -235,6 +250,7 @@ def build_preview(product_no, product):
     main {{ width: 100%; max-width: 780px; margin: 24px auto; padding: 42px 36px; background: white; }}
     .text-block {{ margin: 0 0 28px; font-size: 18px; line-height: 1.75; overflow-wrap: anywhere; }}
     h1 {{ margin: 0 0 28px; font-size: 26px; line-height: 1.4; text-align: center; }}
+    h2 {{ margin: 0 0 20px; font-size: 24px; line-height: 1.4; text-align: center; }}
     p {{ margin: 0 0 12px; }}
     ul, ol {{ margin: 8px 0 16px; padding-left: 1.5em; }}
     li {{ margin: 5px 0; }}
@@ -247,6 +263,7 @@ def build_preview(product_no, product):
     table {{ width: 100%; border-collapse: collapse; font-size: 16px; }}
     th, td {{ padding: 10px 12px; border: 1px solid #d6d6d6; text-align: left; vertical-align: top; }}
     th {{ background: #f5f5f5; font-weight: 700; }}
+    .divider {{ border: 0; border-top: 1px solid #ddd; margin: 0 0 30px; }}
     @media (max-width: 560px) {{
       main {{ margin: 0; padding: 28px 18px; }}
       .text-block {{ font-size: 16px; line-height: 1.7; }}
@@ -275,6 +292,8 @@ def build_preview(product_no, product):
         "imageBytes": sum(record["bytes"] for record in image_records),
         "imageFormats": dict(Counter(record["format"] for record in image_records)),
         "tableComponentCount": sum("se-table" in classes(node) for node in components),
+        "sectionTitleComponentCount": sum("se-sectionTitle" in classes(node) for node in components),
+        "horizontalLineComponentCount": sum("se-horizontalLine" in classes(node) for node in components),
         "warnings": ["이미지 안의 글자는 선택 가능한 HTML 텍스트로 변환하지 않았습니다."],
         "images": image_records,
     }
@@ -291,6 +310,9 @@ def self_test():
     parser.feed('<div class="se-component se-table"><table><tr><td><b>번호</b></td><td><b>설명</b></td></tr><tr><td>1</td><td>RS485</td></tr></table></div>')
     table = next(node for node in walk(parser.root) if "se-table" in classes(node))
     assert "<th><strong>번호</strong></th>" in render_table_component(table)
+    parser.feed('<div class="se-component se-sectionTitle"><p>소제목</p></div>')
+    section_title = next(node for node in walk(parser.root) if "se-sectionTitle" in classes(node))
+    assert render_section_title(section_title) == '<section class="section-title"><h2>소제목</h2></section>'
     print("self-test: ok")
 
 

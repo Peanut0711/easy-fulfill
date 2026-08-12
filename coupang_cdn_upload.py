@@ -120,6 +120,7 @@ def render_paste_html(preview_html: str):
         '<section class="text-block">',
         '<div style="margin:0 0 28px;font-size:18px;line-height:1.75;overflow-wrap:anywhere">',
     )
+    body = body.replace('<section class="section-title">', '<div style="margin:0 0 20px">')
     body = re.sub(
         r'<section class="image-block grid-[123]">',
         '<div style="margin:0 0 30px;text-align:center">',
@@ -128,6 +129,8 @@ def render_paste_html(preview_html: str):
     body = body.replace('<section class="table-block">', '<div style="margin:0 0 30px;overflow-x:auto">')
     body = body.replace("</section>", "</div>")
     body = body.replace('<h1>', '<h1 style="margin:0 0 28px;font-size:26px;line-height:1.4;text-align:center">')
+    body = body.replace('<h2>', '<h2 style="margin:0;font-size:24px;line-height:1.4;text-align:center">')
+    body = body.replace('<hr class="divider">', '<hr style="border:0;border-top:1px solid #ddd;margin:0 0 30px">')
     body = re.sub(
         r"<img (?=src=)",
         '<img style="display:block;max-width:100%;height:auto;margin:0 auto 12px" ',
