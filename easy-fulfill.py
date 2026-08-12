@@ -5227,7 +5227,7 @@ class MainWindow(QMainWindow):
             # 클릭(행 선택) 하이라이트를 진한 파랑 → 옅은 파스텔로(팔레트 방식이라
             # item.setBackground 위험행 색칠을 깨지 않음). 글자색은 진하게 유지.
             _tpal = self.ui.tableWidget_tracking.palette()
-            _tpal.setColor(QPalette.ColorRole.Highlight, QColor("#d8f0e6"))
+            _tpal.setColor(QPalette.ColorRole.Highlight, QColor("#dcefff"))
             _tpal.setColor(QPalette.ColorRole.HighlightedText, QColor("#1a202c"))
             self.ui.tableWidget_tracking.setPalette(_tpal)
             self.ui.tableWidget_tracking.cellDoubleClicked.connect(
