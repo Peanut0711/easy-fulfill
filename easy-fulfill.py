@@ -2341,6 +2341,11 @@ class DetailHtmlEditorDialog(QDialog):
 
     _SMARTSTORE_URL_PATTERN = re.compile(r'https?://(?:www\.)?smartstore\.naver\.com[^\s<>"\']*', re.IGNORECASE)
 
+    @staticmethod
+    def _qt_text_position(text, position):
+        """Python 문자 위치를 Qt QTextCursor의 UTF-16 위치로 바꾼다."""
+        return len(text[:position].encode("utf-16-le")) // 2
+
     def __init__(self, path, parent=None):
         super().__init__(parent)
         self.path = Path(path)
@@ -2361,8 +2366,8 @@ class DetailHtmlEditorDialog(QDialog):
         settings = self.preview.settings()
         settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, False)
         settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True)
-        splitter.addWidget(self.editor)
         splitter.addWidget(self.preview)
+        splitter.addWidget(self.editor)
         splitter.setSizes([640, 640])
         layout.addWidget(splitter, 1)
 
@@ -2394,14 +2399,9 @@ class DetailHtmlEditorDialog(QDialog):
         matches = list(self._SMARTSTORE_URL_PATTERN.finditer(source))
         selections = []
         for match in matches:
-            start, end = match.span()
-            if start and source[start - 1] in {'"', "'"}:
-                start -= 1
-            if end < len(source) and source[end] in {'"', "'"}:
-                end += 1
             cursor = QTextCursor(self.editor.document())
-            cursor.setPosition(start)
-            cursor.setPosition(end, QTextCursor.KeepAnchor)
+            cursor.setPosition(self._qt_text_position(source, match.start()))
+            cursor.setPosition(self._qt_text_position(source, match.end()), QTextCursor.KeepAnchor)
             selection = QTextEdit.ExtraSelection()
             selection.cursor = cursor
             selection.format.setBackground(QColor("#fff59d"))
@@ -5411,7 +5411,7 @@ class MainWindow(QMainWindow):
         create_form = QFormLayout(create_box)
         self.lineEdit_detail_naver_create = QLineEdit()
         self.lineEdit_detail_naver_create.setPlaceholderText("네이버 스마트스토어 상품번호")
-        self.pushButton_detail_create = QPushButton("HTML 생성 및 쿠팡 CDN 업로드")
+        self.pushButton_detail_create = QPushButton("HTML 생성")
         self.pushButton_detail_open_preview = QPushButton("미리보기 열기")
         self.pushButton_detail_open_html = QPushButton("HTML 편집 및 미리보기")
         self.pushButton_detail_open_folder = QPushButton("결과 폴더 열기")
