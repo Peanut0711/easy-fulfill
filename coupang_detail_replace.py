@@ -47,6 +47,22 @@ def confirm_detail_level_change(page):
     alert.locator("button.confirm").click(timeout=10_000)
 
 
+def detail_level_missing_message(vendor_inventory_id: str):
+    return (
+        f"쿠팡 등록상품 ID {vendor_inventory_id}의 수정 화면에서 상세설명 탭을 찾지 못했습니다. "
+        "등록상품 ID가 올바른지, 쿠팡 WING에서 해당 상품을 직접 열 수 있는지 확인하세요."
+    )
+
+
+def select_basic_detail_level(page, vendor_inventory_id: str):
+    try:
+        page.locator('label[for="tab-content-level-0"]').click(timeout=15_000)
+    except PlaywrightError as error:
+        message = detail_level_missing_message(vendor_inventory_id)
+        print(f"[오류] {message}")
+        raise RuntimeError(message) from error
+
+
 def close_context(context):
     """사용자가 WING 창을 먼저 닫은 경우에도 종료를 정상 처리한다."""
     try:
@@ -65,6 +81,7 @@ def main():
     args = parser.parse_args()
     if args.self_test:
         assert DETAIL_URL.format(vendor_inventory_id="123").endswith("vendorInventoryId=123")
+        assert "등록상품 ID 123" in detail_level_missing_message("123")
         print("self-test: ok")
         return
     if not args.naver_product_no or not args.vendor_inventory_id or not args.naver_product_no.isdigit() or not args.vendor_inventory_id.isdigit():
@@ -79,7 +96,7 @@ def main():
             coupang_cdn_upload.wait_for_login(page)
             coupang_cdn_upload.save_coupang_session(context, page)
             page.goto(DETAIL_URL.format(vendor_inventory_id=args.vendor_inventory_id))
-            page.locator('label[for="tab-content-level-0"]').click(timeout=15_000)
+            select_basic_detail_level(page, args.vendor_inventory_id)
             confirm_detail_level_change(page)
             page.wait_for_timeout(1_000)
             page.locator('label[for="tab-content-2"]').click(timeout=15_000)
