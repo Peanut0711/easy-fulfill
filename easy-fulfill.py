@@ -5874,8 +5874,14 @@ class MainWindow(QMainWindow):
         create_form.addRow(QLabel("쿠팡 신규 등록 화면에는 생성된 HTML을 사용자가 직접 붙여 넣습니다."))
         self.detail_create_progress = None
 
-        replace_box = QGroupBox("쿠팡 상품 HTML 적용")
-        replace_form = QFormLayout(replace_box)
+        replace_box = QGroupBox()
+        replace_layout = QVBoxLayout(replace_box)
+        replace_header = QHBoxLayout()
+        replace_header.addWidget(QLabel("쿠팡 상품 HTML 적용"))
+        replace_header.addStretch(1)
+        self.pushButton_detail_clear_inputs = QPushButton("입력 초기화")
+        replace_header.addWidget(self.pushButton_detail_clear_inputs)
+        replace_form = QFormLayout()
         self.lineEdit_detail_naver_replace = QLineEdit()
         self.lineEdit_detail_naver_replace.setPlaceholderText("네이버 스마트스토어 상품번호")
         self.lineEdit_detail_vendor_inventory = QLineEdit()
@@ -5890,6 +5896,8 @@ class MainWindow(QMainWindow):
         replace_form.addRow("쿠팡 등록상품 ID", self.lineEdit_detail_vendor_inventory)
         replace_form.addRow("작업", replace_actions)
         replace_form.addRow(QLabel("기본 등록 → HTML 작성 전환과 HTML 입력까지만 자동 수행합니다. 저장은 WING에서 직접 누르세요."))
+        replace_layout.addLayout(replace_header)
+        replace_layout.addLayout(replace_form)
 
         log_header = QHBoxLayout()
         log_header.addWidget(QLabel("작업 로그"))
@@ -5919,6 +5927,7 @@ class MainWindow(QMainWindow):
         self.pushButton_detail_open_folder.clicked.connect(self._on_detail_open_folder_clicked)
         self.pushButton_detail_stage.clicked.connect(self._on_detail_stage_clicked)
         self.pushButton_detail_finish.clicked.connect(self._on_detail_finish_clicked)
+        self.pushButton_detail_clear_inputs.clicked.connect(self._on_detail_clear_inputs_clicked)
         self.lineEdit_detail_naver_create.textChanged.connect(
             lambda value: self._normalize_detail_id_input(
                 self.lineEdit_detail_naver_create, value, "naver"
@@ -5940,6 +5949,11 @@ class MainWindow(QMainWindow):
 
     def _detail_log(self, text):
         self.textEdit_detail_log.appendPlainText(text.rstrip())
+
+    def _on_detail_clear_inputs_clicked(self):
+        self.lineEdit_detail_naver_create.clear()
+        self.lineEdit_detail_naver_replace.clear()
+        self.lineEdit_detail_vendor_inventory.clear()
 
     @staticmethod
     def _detail_upload_progress(output):
