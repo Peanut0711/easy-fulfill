@@ -60,11 +60,12 @@ def prepare(numbers):
 
 def upload(prepared, results):
     with sync_playwright() as playwright:
-        coupang_cdn_upload.PROFILE_DIR.mkdir(parents=True, exist_ok=True)
-        context = playwright.chromium.launch_persistent_context(str(coupang_cdn_upload.PROFILE_DIR), headless=False)
+        context = coupang_cdn_upload.launch_coupang_context(playwright)
+        coupang_cdn_upload.restore_coupang_session(context)
         page = context.pages[0] if context.pages else context.new_page()
         try:
             coupang_cdn_upload.wait_for_login(page)
+            coupang_cdn_upload.save_coupang_session(context, page)
             for number, report in prepared:
                 try:
                     output_dir = OUTPUT_ROOT / number

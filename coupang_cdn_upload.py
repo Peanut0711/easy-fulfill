@@ -7,12 +7,17 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
 import json
+import os
 import re
+import subprocess
 import sys
 import tempfile
 import time
+from ctypes import wintypes
 from pathlib import Path
+from urllib.parse import urlparse
 
 from PIL import Image
 from playwright.sync_api import sync_playwright
@@ -21,9 +26,91 @@ from playwright.sync_api import sync_playwright
 ROOT = Path(__file__).resolve().parent
 OUTPUT_ROOT = ROOT / "output" / "detail-preview"
 PROFILE_DIR = ROOT / "output" / "coupang-browser-profile"
+AUTH_STATE_PATH = PROFILE_DIR / "easy-fulfill-auth-state.bin"
 UPLOAD_URL = "https://wing.coupang.com/tenants/seller-web/file/resize/uploadV2"
 WING_HOME = "https://wing.coupang.com/"
 CDN_BASE = "https://image.coupangcdn.com/image/"
+
+
+class _DataBlob(ctypes.Structure):
+    _fields_ = [("cbData", wintypes.DWORD), ("pbData", ctypes.POINTER(ctypes.c_byte))]
+
+
+def _data_blob(data: bytes):
+    buffer = (ctypes.c_byte * len(data)).from_buffer_copy(data)
+    return _DataBlob(len(data), buffer), buffer
+
+
+def _protect_for_current_windows_user(data: bytes):
+    source, source_buffer = _data_blob(data)
+    protected = _DataBlob()
+    if not ctypes.windll.crypt32.CryptProtectData(
+        ctypes.byref(source), None, None, None, None, 1, ctypes.byref(protected)
+    ):
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        return ctypes.string_at(protected.pbData, protected.cbData)
+    finally:
+        ctypes.windll.kernel32.LocalFree(protected.pbData)
+
+
+def _unprotect_for_current_windows_user(data: bytes):
+    source, source_buffer = _data_blob(data)
+    plain = _DataBlob()
+    if not ctypes.windll.crypt32.CryptUnprotectData(
+        ctypes.byref(source), None, None, None, None, 1, ctypes.byref(plain)
+    ):
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        return ctypes.string_at(plain.pbData, plain.cbData)
+    finally:
+        ctypes.windll.kernel32.LocalFree(plain.pbData)
+
+
+def save_coupang_session(context, page):
+    """세션 쿠키를 현재 Windows 사용자만 읽을 수 있게 저장한다."""
+    if os.name != "nt":
+        raise RuntimeError("쿠팡 로그인 세션 저장은 Windows에서만 지원합니다.")
+    state = context.storage_state()
+    origin = urlparse(page.url)
+    if origin.scheme == "https" and origin.hostname and origin.hostname.endswith("coupang.com"):
+        state["easyFulfillSessionStorage"] = {
+            f"{origin.scheme}://{origin.netloc}": page.evaluate("Object.fromEntries(Object.entries(sessionStorage))")
+        }
+    AUTH_STATE_PATH.write_bytes(_protect_for_current_windows_user(
+        json.dumps(state, ensure_ascii=False).encode("utf-8")
+    ))
+
+
+def restore_coupang_session(context):
+    """새 Chromium 실행 시 이전 로그인 쿠키를 먼저 되살린다."""
+    if not AUTH_STATE_PATH.exists():
+        return False
+    try:
+        state = json.loads(_unprotect_for_current_windows_user(AUTH_STATE_PATH.read_bytes()).decode("utf-8"))
+        cookies = state.get("cookies", [])
+        for cookie in cookies:
+            if cookie.get("expires", -1) < 0:
+                cookie.pop("expires", None)
+        if cookies:
+            context.add_cookies(cookies)
+        for origin_state in state.get("origins", []):
+            origin = origin_state.get("origin", "")
+            local_storage = origin_state.get("localStorage", [])
+            if local_storage:
+                context.add_init_script(
+                    f"if (location.origin === {json.dumps(origin)}) for (const [key, value] of {json.dumps([(item['name'], item['value'])])}) localStorage.setItem(key, value);"
+                )
+        for origin, values in state.get("easyFulfillSessionStorage", {}).items():
+            if values:
+                context.add_init_script(
+                    f"if (location.origin === {json.dumps(origin)}) for (const [key, value] of {json.dumps(list(values.items()))}) sessionStorage.setItem(key, value);"
+                )
+        return bool(cookies)
+    except Exception:
+        AUTH_STATE_PATH.unlink(missing_ok=True)
+        print("저장된 쿠팡 로그인 세션을 복원하지 못했습니다. 새 로그인이 필요합니다.")
+        return False
 
 
 def load_report(product_no: str):
@@ -155,8 +242,22 @@ def wait_for_login(page):
         raise RuntimeError(f"로그인 후 예상하지 못한 페이지로 이동했습니다: {page.url}")
 
 
+def launch_coupang_context(playwright):
+    PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        return playwright.chromium.launch_persistent_context(str(PROFILE_DIR), headless=False)
+    except Exception as error:
+        if "Executable doesn't exist" not in str(error):
+            raise
+        print("쿠팡 WING용 Chromium을 처음 설치합니다. 잠시 기다려 주세요.")
+        subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=True)
+        return playwright.chromium.launch_persistent_context(str(PROFILE_DIR), headless=False)
+
+
 def self_test():
     assert CDN_BASE + "vendor_inventory/test.jpg" == "https://image.coupangcdn.com/image/vendor_inventory/test.jpg"
+    if os.name == "nt":
+        assert _unprotect_for_current_windows_user(_protect_for_current_windows_user(b"session-test")) == b"session-test"
     paste_html = render_paste_html('<main><section class="image-block grid-2"><img src="a.jpg"></section></main>')
     assert "grid-2" not in paste_html and 'src="a.jpg"' in paste_html
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -194,11 +295,12 @@ def main():
     if not report.get("images"):
         raise RuntimeError("업로드할 이미지가 없습니다.")
     with sync_playwright() as playwright:
-        PROFILE_DIR.mkdir(parents=True, exist_ok=True)
-        context = playwright.chromium.launch_persistent_context(str(PROFILE_DIR), headless=False)
+        context = launch_coupang_context(playwright)
+        restore_coupang_session(context)
         page = context.pages[0] if context.pages else context.new_page()
         try:
             wait_for_login(page)
+            save_coupang_session(context, page)
             mapping = upload_images(context, output_dir, report)
             html_path, map_path, paste_path = write_cdn_html(output_dir, mapping)
             print(json.dumps({"preview": str(html_path), "mapping": str(map_path), "pasteHtml": str(paste_path)}, ensure_ascii=False))

@@ -8,6 +8,7 @@ import html
 import io
 import json
 import re
+from urllib.parse import urlparse
 from collections import Counter
 from html.parser import HTMLParser
 from pathlib import Path
@@ -92,6 +93,16 @@ def inline_html(node):
             parts.append(f"<em>{inline_html(child)}</em>")
         elif child.tag == "br":
             parts.append("<br>")
+        elif child.tag == "a":
+            href = child.attrs.get("href", "").strip()
+            parsed_href = urlparse(href)
+            if parsed_href.scheme in {"http", "https"} and parsed_href.netloc:
+                parts.append(
+                    f'<a href="{html.escape(href, quote=True)}" target="_blank" rel="noopener noreferrer">'
+                    f"{inline_html(child)}</a>"
+                )
+            else:
+                parts.append(inline_html(child))
         else:
             parts.append(inline_html(child))
     return "".join(parts)
@@ -307,6 +318,10 @@ def self_test():
     parser.feed('<div class="se-component se-text"><p><b>제목</b></p></div>')
     component = next(node for node in walk(parser.root) if "se-component" in classes(node))
     assert render_text_component(component) == "<p><strong>제목</strong></p>"
+    parser = TreeParser()
+    parser.feed('<div class="se-component se-text"><p><a href="https://example.com">제조사 문서</a></p></div>')
+    component = next(node for node in walk(parser.root) if "se-component" in classes(node))
+    assert 'href="https://example.com"' in render_text_component(component)
     parser.feed('<div class="se-component se-table"><table><tr><td><b>번호</b></td><td><b>설명</b></td></tr><tr><td>1</td><td>RS485</td></tr></table></div>')
     table = next(node for node in walk(parser.root) if "se-table" in classes(node))
     assert "<th><strong>번호</strong></th>" in render_table_component(table)

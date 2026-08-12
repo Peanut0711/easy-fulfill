@@ -63,11 +63,12 @@ def main():
 
     html_path, html = load_html(args.naver_product_no)
     with sync_playwright() as playwright:
-        coupang_cdn_upload.PROFILE_DIR.mkdir(parents=True, exist_ok=True)
-        context = playwright.chromium.launch_persistent_context(str(coupang_cdn_upload.PROFILE_DIR), headless=False)
+        context = coupang_cdn_upload.launch_coupang_context(playwright)
+        coupang_cdn_upload.restore_coupang_session(context)
         page = context.pages[0] if context.pages else context.new_page()
         try:
             coupang_cdn_upload.wait_for_login(page)
+            coupang_cdn_upload.save_coupang_session(context, page)
             page.goto(DETAIL_URL.format(vendor_inventory_id=args.vendor_inventory_id))
             page.locator('label[for="tab-content-level-0"]').click(timeout=15_000)
             confirm_detail_level_change(page)

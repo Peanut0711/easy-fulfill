@@ -19,7 +19,8 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QFileDialog, QMessageB
                               QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QWidget,
                               QProgressBar, QFrame, QGraphicsOpacityEffect, QListWidget,
                               QAbstractItemView, QGroupBox, QCheckBox, QSpinBox, QMenu,
-                              QStyle, QProxyStyle)
+                              QStyle, QProxyStyle, QPlainTextEdit, QFormLayout,
+                              QSplitter, QTextEdit)
 from PySide6.QtUiTools import QUiLoader
 from PySide6.QtCore import (
     QFile,
@@ -34,6 +35,8 @@ from PySide6.QtCore import (
     QEasingCurve,
     QRectF,
     QEvent,
+    QProcess,
+    QProcessEnvironment,
 )
 from PySide6.QtGui import (
     QPixmap,
@@ -46,7 +49,10 @@ from PySide6.QtGui import (
     QColor,
     QPen,
     QPalette,
+    QTextCursor,
 )
+from PySide6.QtWebEngineCore import QWebEngineSettings
+from PySide6.QtWebEngineWidgets import QWebEngineView
 import requests
 from io import BytesIO
 import warnings
@@ -2330,6 +2336,102 @@ def _is_likely_google_sheets_oauth_error(exc: BaseException) -> bool:
     return False
 
 
+class DetailHtmlEditorDialog(QDialog):
+    """쿠팡에 붙여 넣을 상세 HTML을 검토·수정한다."""
+
+    _SMARTSTORE_URL_PATTERN = re.compile(r'https?://(?:www\.)?smartstore\.naver\.com[^\s<>"\']*', re.IGNORECASE)
+
+    def __init__(self, path, parent=None):
+        super().__init__(parent)
+        self.path = Path(path)
+        self.original_html = self.path.read_text(encoding="utf-8")
+        self.setWindowTitle("상세페이지 HTML 편집 및 미리보기")
+        self.setWindowFlag(Qt.WindowMaximizeButtonHint, True)
+        self.resize(1280, 760)
+
+        layout = QVBoxLayout(self)
+        self.warning = QLabel()
+        self.warning.setWordWrap(True)
+        layout.addWidget(self.warning)
+
+        splitter = QSplitter(Qt.Horizontal)
+        self.editor = QPlainTextEdit(self.original_html)
+        self.editor.setLineWrapMode(QPlainTextEdit.NoWrap)
+        self.preview = QWebEngineView()
+        settings = self.preview.settings()
+        settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, False)
+        settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True)
+        splitter.addWidget(self.editor)
+        splitter.addWidget(self.preview)
+        splitter.setSizes([640, 640])
+        layout.addWidget(splitter, 1)
+
+        actions = QHBoxLayout()
+        actions.addStretch(1)
+        reset = QPushButton("원본으로 되돌리기")
+        copy = QPushButton("HTML 복사")
+        save = QPushButton("저장")
+        self.maximize = QPushButton("최대화")
+        close = QPushButton("닫기")
+        actions.addWidget(reset)
+        actions.addWidget(copy)
+        actions.addWidget(save)
+        actions.addWidget(self.maximize)
+        actions.addWidget(close)
+        layout.addLayout(actions)
+
+        self.editor.textChanged.connect(self._refresh)
+        reset.clicked.connect(lambda: self.editor.setPlainText(self.original_html))
+        copy.clicked.connect(lambda: QApplication.clipboard().setText(self.editor.toPlainText()))
+        save.clicked.connect(self._save)
+        self.maximize.clicked.connect(self._toggle_maximize)
+        close.clicked.connect(self.accept)
+        self._refresh()
+
+    def _refresh(self):
+        source = self.editor.toPlainText()
+        self.preview.setHtml(source, QUrl.fromLocalFile(str(self.path)))
+        matches = list(self._SMARTSTORE_URL_PATTERN.finditer(source))
+        selections = []
+        for match in matches:
+            start, end = match.span()
+            if start and source[start - 1] in {'"', "'"}:
+                start -= 1
+            if end < len(source) and source[end] in {'"', "'"}:
+                end += 1
+            cursor = QTextCursor(self.editor.document())
+            cursor.setPosition(start)
+            cursor.setPosition(end, QTextCursor.KeepAnchor)
+            selection = QTextEdit.ExtraSelection()
+            selection.cursor = cursor
+            selection.format.setBackground(QColor("#fff59d"))
+            selections.append(selection)
+        self.editor.setExtraSelections(selections)
+        if matches:
+            urls = [match.group() for match in matches]
+            shown = "\n".join(urls[:3])
+            more = "" if len(urls) <= 3 else f"\n외 {len(urls) - 3}건"
+            self.warning.setText(
+                f"⚠ 네이버 스마트스토어 주소 {len(urls)}건이 포함되어 있습니다. 쿠팡 등록 전 삭제 또는 수정하세요.\n{shown}{more}"
+            )
+            self.warning.setStyleSheet("color:#b00020;font-weight:600")
+        else:
+            self.warning.setText("네이버 스마트스토어 주소가 없습니다.")
+            self.warning.setStyleSheet("color:#237804")
+
+    def _save(self):
+        self.path.write_text(self.editor.toPlainText(), encoding="utf-8")
+        QMessageBox.information(self, "상세페이지", "수정한 HTML을 저장했습니다.")
+
+    def _toggle_maximize(self):
+        if self.isMaximized():
+            self.showNormal()
+            self.maximize.setText("최대화")
+        else:
+            self.showMaximized()
+            self.maximize.setText("복원")
+
+
 class KpostAddressSearchDialog(QDialog):
     """우체국 KpostPortal(postNew)으로 주소를 검색·선택합니다."""
 
@@ -2456,6 +2558,11 @@ class MainWindow(QMainWindow):
         self._db_sheet_sync_thread = None
         self._db_sync_naver_path_override = None
         self._db_sync_coupang_path_override = None
+        self._detail_process = None
+        self._detail_process_holding_wing = False
+        self._detail_process_title = ""
+        self._detail_process_output = ""
+        self._detail_created_product_no = None
 
         # 송장 배송추적: 등기번호 등록을 모아 디바운스 후 백그라운드 upsert
         self._tracking_op_thread = None
@@ -4187,6 +4294,7 @@ class MainWindow(QMainWindow):
         
         # UI 객체를 인스턴스 변수로 저장
         self.ui = window
+        self._mount_detail_page_tab()
         
         # 메인 윈도우 설정
         self.setCentralWidget(window.centralwidget)
@@ -4209,7 +4317,7 @@ class MainWindow(QMainWindow):
             return
         desired = [
             "tab", "tab_tracking", "tab_quick_invoice", "tab_documents",
-            "tab_db_sheet_sync", "tab_admin", "tab_2",
+            "tab_detail_page", "tab_db_sheet_sync", "tab_admin", "tab_2",
         ]
         bar = tw.tabBar()
         for target in range(len(desired)):
@@ -5280,6 +5388,214 @@ class MainWindow(QMainWindow):
             self.ui.pushButton_db_sync_run.clicked.connect(self._on_db_sheet_sync_run_clicked)
 
         print("버튼과 메뉴 연결 완료")
+
+    def _mount_detail_page_tab(self):
+        """단건 상세 전환만 제공한다. 비밀번호·일괄 저장은 의도적으로 제외한다."""
+        tabs = self.ui.tabWidget
+        page = QWidget()
+        page.setObjectName("tab_detail_page")
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(14)
+
+        session_box = QGroupBox("쿠팡 WING 연결")
+        session_layout = QHBoxLayout(session_box)
+        self.label_detail_session = QLabel(self._detail_session_label())
+        self.pushButton_detail_login = QPushButton("쿠팡 로그인 연결/갱신")
+        self.pushButton_detail_clear_session = QPushButton("로그인 세션 삭제")
+        session_layout.addWidget(self.label_detail_session, 1)
+        session_layout.addWidget(self.pushButton_detail_login)
+        session_layout.addWidget(self.pushButton_detail_clear_session)
+
+        create_box = QGroupBox("신규 등록용 HTML 만들기")
+        create_form = QFormLayout(create_box)
+        self.lineEdit_detail_naver_create = QLineEdit()
+        self.lineEdit_detail_naver_create.setPlaceholderText("네이버 스마트스토어 상품번호")
+        self.pushButton_detail_create = QPushButton("HTML 생성 및 쿠팡 CDN 업로드")
+        self.pushButton_detail_open_preview = QPushButton("미리보기 열기")
+        self.pushButton_detail_open_html = QPushButton("HTML 편집 및 미리보기")
+        self.pushButton_detail_open_folder = QPushButton("결과 폴더 열기")
+        create_actions = QHBoxLayout()
+        create_actions.addWidget(self.pushButton_detail_create)
+        create_actions.addWidget(self.pushButton_detail_open_preview)
+        create_actions.addWidget(self.pushButton_detail_open_html)
+        create_actions.addWidget(self.pushButton_detail_open_folder)
+        create_form.addRow("네이버 상품번호", self.lineEdit_detail_naver_create)
+        create_form.addRow("작업", create_actions)
+        create_form.addRow(QLabel("쿠팡 신규 등록 화면에는 생성된 HTML을 사용자가 직접 붙여 넣습니다."))
+
+        replace_box = QGroupBox("기존 쿠팡 상품 상세 채우기")
+        replace_form = QFormLayout(replace_box)
+        self.lineEdit_detail_naver_replace = QLineEdit()
+        self.lineEdit_detail_naver_replace.setPlaceholderText("네이버 스마트스토어 상품번호")
+        self.lineEdit_detail_vendor_inventory = QLineEdit()
+        self.lineEdit_detail_vendor_inventory.setPlaceholderText("쿠팡 vendorInventoryId")
+        self.pushButton_detail_stage = QPushButton("WING에 HTML 채우기")
+        self.pushButton_detail_finish = QPushButton("WING 작업 종료")
+        self.pushButton_detail_finish.setEnabled(False)
+        replace_actions = QHBoxLayout()
+        replace_actions.addWidget(self.pushButton_detail_stage)
+        replace_actions.addWidget(self.pushButton_detail_finish)
+        replace_form.addRow("네이버 상품번호", self.lineEdit_detail_naver_replace)
+        replace_form.addRow("쿠팡 vendorInventoryId", self.lineEdit_detail_vendor_inventory)
+        replace_form.addRow("작업", replace_actions)
+        replace_form.addRow(QLabel("기본 등록 → HTML 작성 전환과 HTML 입력까지만 자동 수행합니다. 저장은 WING에서 직접 누르세요."))
+
+        log_header = QHBoxLayout()
+        log_header.addWidget(QLabel("작업 로그"))
+        log_header.addStretch(1)
+        self.pushButton_detail_log_clear = QPushButton("로그 지우기")
+        self.pushButton_detail_log_copy = QPushButton("로그 복사")
+        log_header.addWidget(self.pushButton_detail_log_clear)
+        log_header.addWidget(self.pushButton_detail_log_copy)
+        self.textEdit_detail_log = QPlainTextEdit()
+        self.textEdit_detail_log.setReadOnly(True)
+        self.textEdit_detail_log.setPlaceholderText("상세페이지 작업 로그")
+        self.textEdit_detail_log.setMinimumHeight(150)
+        layout.addWidget(session_box)
+        layout.addWidget(create_box)
+        layout.addWidget(replace_box)
+        layout.addLayout(log_header)
+        layout.addWidget(self.textEdit_detail_log, 1)
+        tabs.addTab(page, "상세페이지")
+
+        self.pushButton_detail_login.clicked.connect(self._on_detail_login_clicked)
+        self.pushButton_detail_clear_session.clicked.connect(self._on_detail_clear_session_clicked)
+        self.pushButton_detail_create.clicked.connect(self._on_detail_create_clicked)
+        self.pushButton_detail_open_preview.clicked.connect(self._on_detail_open_preview_clicked)
+        self.pushButton_detail_open_html.clicked.connect(self._on_detail_open_html_clicked)
+        self.pushButton_detail_open_folder.clicked.connect(self._on_detail_open_folder_clicked)
+        self.pushButton_detail_stage.clicked.connect(self._on_detail_stage_clicked)
+        self.pushButton_detail_finish.clicked.connect(self._on_detail_finish_clicked)
+        self.pushButton_detail_log_clear.clicked.connect(self.textEdit_detail_log.clear)
+        self.pushButton_detail_log_copy.clicked.connect(self._on_detail_log_copy_clicked)
+
+    def _detail_log(self, text):
+        self.textEdit_detail_log.appendPlainText(text.rstrip())
+
+    def _detail_session_label(self):
+        path = Path(__file__).resolve().parent / "output" / "coupang-browser-profile" / "easy-fulfill-auth-state.bin"
+        return "저장된 로그인 세션 있음 · 작업 시 자동 확인" if path.exists() else "저장된 로그인 세션 없음"
+
+    def _on_detail_log_copy_clicked(self):
+        QApplication.clipboard().setText(self.textEdit_detail_log.toPlainText())
+        self._detail_log("[작업 로그] 클립보드에 복사했습니다.")
+
+    def _detail_product_no(self, line_edit, label):
+        value = line_edit.text().strip()
+        if not value.isdigit():
+            QMessageBox.warning(self, "상세페이지", f"{label}는 숫자만 입력하세요.")
+            return None
+        return value
+
+    def _detail_output_dir(self, product_no):
+        return Path(__file__).resolve().parent / "output" / "detail-preview" / product_no
+
+    def _start_detail_process(self, title, arguments, hold_wing=False):
+        if self._detail_process is not None and self._detail_process.state() != QProcess.ProcessState.NotRunning:
+            QMessageBox.warning(self, "상세페이지", "다른 상세페이지 작업이 진행 중입니다.")
+            return
+        process = QProcess(self)
+        process.setWorkingDirectory(str(Path(__file__).resolve().parent))
+        process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
+        environment = QProcessEnvironment.systemEnvironment()
+        environment.insert("PYTHONIOENCODING", "utf-8")
+        process.setProcessEnvironment(environment)
+        process.readyReadStandardOutput.connect(self._on_detail_process_output)
+        process.finished.connect(self._on_detail_process_finished)
+        self._detail_process = process
+        self._detail_process_holding_wing = hold_wing
+        self._detail_process_title = title
+        self._detail_process_output = ""
+        self._detail_log(f"[{title}] 시작")
+        process.start(sys.executable, arguments)
+
+    def _on_detail_process_output(self):
+        if self._detail_process is None:
+            return
+        text = bytes(self._detail_process.readAllStandardOutput()).decode("utf-8", errors="replace")
+        self._detail_process_output += text
+        self._detail_log(text)
+
+    def _on_detail_process_finished(self, exit_code, _status):
+        self._on_detail_process_output()
+        output = self._detail_process_output
+        title = self._detail_process_title
+        self._detail_process = None
+        self._detail_process_holding_wing = False
+        self.pushButton_detail_finish.setEnabled(False)
+        if title == "쿠팡 로그인 연결" and exit_code == 0:
+            try:
+                result = json.loads(output.splitlines()[-1])
+                seller = result.get("seller") or "판매자 정보"
+                self.label_detail_session.setText(f"저장된 로그인 세션: {seller}")
+            except (json.JSONDecodeError, IndexError):
+                self.label_detail_session.setText("저장된 로그인 세션 있음")
+        elif title == "쿠팡 로그인 세션 삭제" and exit_code == 0:
+            self.label_detail_session.setText("저장된 로그인 세션 없음")
+        self._detail_log(f"[{title}] {'완료' if exit_code == 0 else f'실패 ({exit_code})'}")
+        if title == "신규 등록용 HTML 생성" and exit_code == 0 and self._detail_created_product_no:
+            self._open_detail_editor(self._detail_created_product_no)
+
+    def _on_detail_login_clicked(self):
+        self._start_detail_process("쿠팡 로그인 연결", ["coupang_session.py", "--login"])
+
+    def _on_detail_clear_session_clicked(self):
+        if QMessageBox.question(self, "로그인 세션 삭제", "이 PC에 저장된 쿠팡 WING 로그인 세션을 삭제할까요?") != QMessageBox.StandardButton.Yes:
+            return
+        self.label_detail_session.setText("저장된 로그인 세션 삭제 중")
+        self._start_detail_process("쿠팡 로그인 세션 삭제", ["coupang_session.py", "--clear"])
+
+    def _on_detail_create_clicked(self):
+        product_no = self._detail_product_no(self.lineEdit_detail_naver_create, "네이버 상품번호")
+        if product_no:
+            self._detail_created_product_no = product_no
+            self._start_detail_process("신규 등록용 HTML 생성", ["naver_to_coupang_html.py", product_no, "--upload"])
+
+    def _open_detail_file(self, product_no, name):
+        path = self._detail_output_dir(product_no) / name
+        if not path.exists():
+            QMessageBox.warning(self, "상세페이지", f"파일이 없습니다. 먼저 HTML을 생성하세요.\n{path}")
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+
+    def _on_detail_open_preview_clicked(self):
+        product_no = self._detail_product_no(self.lineEdit_detail_naver_create, "네이버 상품번호")
+        if product_no:
+            self._open_detail_file(product_no, "coupang-cdn-preview.html")
+
+    def _on_detail_open_html_clicked(self):
+        product_no = self._detail_product_no(self.lineEdit_detail_naver_create, "네이버 상품번호")
+        if product_no:
+            self._open_detail_editor(product_no)
+
+    def _open_detail_editor(self, product_no):
+        path = self._detail_output_dir(product_no) / "coupang-paste.html"
+        if not path.exists():
+            QMessageBox.warning(self, "상세페이지", f"파일이 없습니다. 먼저 HTML을 생성하세요.\n{path}")
+            return
+        DetailHtmlEditorDialog(path, self).exec()
+
+    def _on_detail_open_folder_clicked(self):
+        product_no = self._detail_product_no(self.lineEdit_detail_naver_create, "네이버 상품번호")
+        if product_no:
+            path = self._detail_output_dir(product_no)
+            if not path.exists():
+                QMessageBox.warning(self, "상세페이지", "결과 폴더가 없습니다. 먼저 HTML을 생성하세요.")
+                return
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+
+    def _on_detail_stage_clicked(self):
+        product_no = self._detail_product_no(self.lineEdit_detail_naver_replace, "네이버 상품번호")
+        vendor_id = self._detail_product_no(self.lineEdit_detail_vendor_inventory, "쿠팡 vendorInventoryId")
+        if product_no and vendor_id:
+            self.pushButton_detail_finish.setEnabled(True)
+            self._start_detail_process("기존 쿠팡 상품 HTML 채우기", ["coupang_detail_replace.py", product_no, vendor_id], hold_wing=True)
+
+    def _on_detail_finish_clicked(self):
+        if self._detail_process is not None and self._detail_process_holding_wing:
+            self._detail_process.write(b"\n")
+            self._detail_log("[기존 쿠팡 상품 HTML 채우기] 저장 없이 WING 작업을 종료합니다.")
 
     def _invalidate_google_sheets_client_and_caches(self):
         self._gspread_client = None
