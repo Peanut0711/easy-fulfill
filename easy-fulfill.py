@@ -6089,6 +6089,7 @@ class MainWindow(QMainWindow):
             self.label_detail_session.setText("저장된 로그인 세션 없음")
         self._detail_log(f"[{title}] {'완료' if exit_code == 0 else f'실패 ({exit_code})'}")
         if title == "상품 상세 HTML 생성" and exit_code == 0 and self._detail_created_product_no:
+            self.lineEdit_detail_naver_replace.setText(self._detail_created_product_no)
             self._open_detail_editor(self._detail_created_product_no)
 
     def _on_detail_login_clicked(self):
