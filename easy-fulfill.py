@@ -4133,8 +4133,8 @@ class MainWindow(QMainWindow):
         if tw is None:
             return
         desired = [
-            "tab", "tab_tracking", "tab_db_sheet_sync", "tab_2", "tab_admin",
-            "tab_quick_invoice", "tab_documents",
+            "tab", "tab_tracking", "tab_quick_invoice", "tab_documents",
+            "tab_db_sheet_sync", "tab_admin", "tab_2",
         ]
         bar = tw.tabBar()
         for target in range(len(desired)):
