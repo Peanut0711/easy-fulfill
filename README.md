@@ -46,6 +46,14 @@ python naver_to_coupang_html.py --list product_numbers.txt --upload
 
 처음 실행 시 열린 전용 쿠팡 WING 브라우저에서 로그인합니다. 로그인 세션은 로컬 `output/coupang-browser-profile`에만 저장됩니다. 완료된 상품별 `output/detail-preview/<상품번호>/coupang-paste.html` 파일의 내용을 쿠팡 **기본 등록 → HTML 작성**에 붙여 넣으면 됩니다.
 
+기존 쿠팡 상품의 옵션별 이미지 상세를 공용 HTML로 바꾸는 시험 도구는 다음처럼 실행합니다. 기본 실행은 HTML을 화면에 채운 뒤 저장하지 않고 종료합니다.
+
+```bash
+python coupang_detail_replace.py 13204504134 16078736117
+```
+
+`--apply`는 화면을 확인한 뒤 `APPLY`를 한 번 더 입력해야만 **수정 및 검수 요청**을 보냅니다.
+
 ## 프로젝트 구조
 
 ```
