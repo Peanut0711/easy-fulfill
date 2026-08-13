@@ -90,6 +90,7 @@ from orders.quick import (
     parse_naver_quick_clipboard,
     save_invoice_excel,
 )
+from orders.bulk import build_11st_orders, build_coupang_orders
 
 try:
     import gspread
@@ -6370,67 +6371,11 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, "오류", f"다음 열을 찾을 수 없습니다:\n{', '.join(missing_columns)}")
                 return
             
-            # 주문 정보 정리
-            self.orders = {}
-            
-            # 주문번호별로 주문 정보 정리
-            for _, row in df.iterrows():
-                order_number = str(row[required_columns['주문번호']])
-                if pd.isna(order_number) or order_number.strip() == '':
-                    continue
-                
-                if order_number not in self.orders:
-                    phone_value = row[required_columns['수취인전화번호']]
-                    
-                    self.orders[order_number] = {
-                        '수취인이름': str(row[required_columns['수취인이름']]),
-                        '수취인주소': str(row[required_columns['수취인 주소']]),
-                        '수취인전화번호': str(row[required_columns['수취인전화번호']]) if not pd.isna(row[required_columns['수취인전화번호']]) else '',
-                        '배송메세지': str(row[required_columns['배송메세지']]) if not pd.isna(row[required_columns['배송메세지']]) else '',
-                        '우편번호': str(row[required_columns['우편번호']]) if not pd.isna(row[required_columns['우편번호']]) else '',
-                        '상품목록': [],
-                        '결제액': 0  # 주문별 결제액 초기화 (각 행마다 합산)
-                    }
-                
-                # 각 행마다 결제액 읽어서 합산 (같은 주문번호에 여러 행이 있을 수 있음)
-                if required_columns['결제액'] is not None:
-                    try:
-                        payment_value = row[required_columns['결제액']]
-                        if not pd.isna(payment_value):
-                            # 숫자로 변환 시도
-                            if isinstance(payment_value, str):
-                                # 쉼표 제거 후 숫자 변환
-                                payment_value = payment_value.replace(',', '').strip()
-                            row_payment_amount = float(payment_value)
-                            # 주문 총액에 추가
-                            self.orders[order_number]['결제액'] += row_payment_amount
-                    except (ValueError, TypeError) as e:
-                        print(f"⚠️ 결제액 변환 실패: {payment_value}, 오류: {e}")
-                
-                # 상품 정보 추가
-                product_name = str(row[required_columns['노출상품명(옵션명)']])
-                option = str(row[required_columns['등록옵션명']])
-                quantity = int(row[required_columns['구매수(수량)']]) if not pd.isna(row[required_columns['구매수(수량)']]) else 1
-                
-                # 옵션ID로 상품코드 찾기
-                option_id_raw = row[required_columns['옵션ID']]
-                
-                # NaN 값 처리
-                if pd.isna(option_id_raw):
-                    option_id = ''
-                else:
-                    option_id = self._normalize_key_for_mapping(option_id_raw)
-                
-                product_code = product_code_map.get(option_id, '')  # 매칭되는 상품코드가 없으면 빈 문자열
-                vp_product_no = self._coupang_option_to_vp_product_no.get(option_id, '') if option_id else ''
-                
-                self.orders[order_number]['상품목록'].append({
-                    '상품명': product_name,
-                    '옵션': option,
-                    '수량': quantity,
-                    '상품코드': product_code,
-                    '쿠팡상품번호': vp_product_no,
-                })
+            self.orders = build_coupang_orders(
+                df, required_columns, product_code_map,
+                self._coupang_option_to_vp_product_no,
+                self._normalize_key_for_mapping,
+            )
             
             # 마크다운 형식으로 주문 정보 생성
             markdown_text = ""
@@ -6860,63 +6805,7 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, "오류", f"다음 열을 찾을 수 없습니다:\n{', '.join(missing_columns)}")
                 return
 
-            # 주문 정보 정리
-            self.orders = {}
-
-            # 주문번호별로 주문 정보 정리
-            for _, row in df.iterrows():
-                order_number = str(row[required_columns['주문번호']])
-                if pd.isna(order_number) or order_number.strip() == '' or order_number.strip().lower() == 'nan':
-                    continue
-
-                if order_number not in self.orders:
-                    # 주문금액 가져오기 (L열)
-                    sale_amount = 0
-                    if required_columns['주문금액'] is not None:
-                        try:
-                            sale_value = row[required_columns['주문금액']]
-                            if not pd.isna(sale_value):
-                                if isinstance(sale_value, str):
-                                    sale_value = sale_value.replace(',', '').strip()
-                                sale_amount = float(sale_value)
-                        except (ValueError, TypeError) as e:
-                            print(f"⚠️ 주문금액 변환 실패: {sale_value}, 오류: {e}")
-                            sale_amount = 0
-
-                    def _cell(key):
-                        col = required_columns[key]
-                        if col is None:
-                            return ''
-                        val = row[col]
-                        return str(val) if not pd.isna(val) else ''
-
-                    self.orders[order_number] = {
-                        '수취인명': _cell('수취인'),
-                        '주소': _cell('주소'),
-                        '휴대폰번호': _cell('휴대폰번호'),
-                        '전화번호': _cell('전화번호'),
-                        '우편번호': _cell('우편번호'),
-                        '배송메시지': _cell('배송메시지'),
-                        '상품목록': [],
-                        '주문금액': sale_amount,
-                    }
-
-                # 상품 정보 추가
-                product_name = str(row[required_columns['상품명']])
-                raw_option = row[required_columns['옵션']]
-                if pd.isna(raw_option):
-                    option = '없음'
-                else:
-                    option = str(raw_option).strip()
-                    if option.lower() in ('nan', ''):
-                        option = '없음'
-                quantity = int(row[required_columns['수량']]) if not pd.isna(row[required_columns['수량']]) else 1
-
-                self.orders[order_number]['상품목록'].append({
-                    '상품명': product_name,
-                    '옵션': option,
-                    '수량': quantity,
-                })
+            self.orders = build_11st_orders(df, required_columns)
 
             # 같은 주문자(수취인명)로 주문 통합
             consolidated_orders = {}
