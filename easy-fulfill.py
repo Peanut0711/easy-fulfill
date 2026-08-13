@@ -63,6 +63,33 @@ import hashlib
 import traceback
 import xml.etree.ElementTree as ET
 from html.parser import HTMLParser
+from tracking.service import (
+    CONFIG_KEY_INQUIRY_WORK_END,
+    CONFIG_KEY_INQUIRY_WORK_START,
+    CONFIG_KEY_STALE_HUB,
+    CONFIG_KEY_STALE_PICKUP,
+    CONFIG_KEY_STALE_REMOTE_BONUS,
+    CONFIG_KEY_STALE_TRANSIT,
+    NAVER_INQUIRY_WORK_END_HOUR,
+    NAVER_INQUIRY_WORK_START_HOUR,
+    STALE_CONFIG_KEYS,
+    STALE_DEFAULTS,
+    STALE_REMOTE_BONUS_DEFAULT,
+    TRACKING_MANAGEMENT_ACTIVE,
+    TRACKING_MANAGEMENT_CANDIDATE,
+    TRACKING_MANAGEMENT_COL,
+    TRACKING_MANAGEMENT_DISCARDED,
+    TRACKING_MANAGEMENT_EXCLUDED,
+    TRACKING_MANAGEMENT_MANUAL_STOP,
+    build_risk_digest_text,
+    evaluate_risk,
+    inquiry_alerts_allowed as _inquiry_alerts_allowed,
+    is_weekday as _is_weekday,
+    parse_timestamp as _parse_ts,
+    read_inquiry_work_hours as _read_inquiry_work_hours,
+    risk_signature,
+    tracking_management_state as _tracking_management_state,
+)
 
 try:
     import gspread
@@ -94,20 +121,6 @@ TRACKING_SHEET_HEADERS = [
     "택배사코드", "배송상태", "완료여부", "마지막위치", "최근조회시각", "비고",
     "최근이벤트시각", "관리상태",
 ]
-TRACKING_MANAGEMENT_COL = 12
-TRACKING_MANAGEMENT_ACTIVE = "추적중"
-TRACKING_MANAGEMENT_CANDIDATE = "폐기후보"
-TRACKING_MANAGEMENT_DISCARDED = "폐기(미발송)"
-TRACKING_MANAGEMENT_MANUAL_STOP = "수동 중지"
-TRACKING_MANAGEMENT_EXCLUDED = {
-    TRACKING_MANAGEMENT_CANDIDATE, TRACKING_MANAGEMENT_DISCARDED,
-    TRACKING_MANAGEMENT_MANUAL_STOP,
-}
-# 인쇄 뒤 수거가 지연되는 정상 건을 보호하기 위해 영업일 기준 2일+1일을 기다린다.
-TRACKING_DISCARD_CANDIDATE_HOURS = 48
-TRACKING_DISCARD_CONFIRM_HOURS = 72
-TRACKING_DISCARD_STALE_ARRIVAL_LOCATION = "부평물류센터"
-TRACKING_DISCARD_STALE_RECEIPT_LOCATION = "부평우체국"
 TRACKING_SHEET_PUSH_DEBOUNCE_MS = 1200
 # 택배사 제출용 「당일 접수목록」 xlsx 파일명 접두어(관리자가 하루 1회 택배사에 전달).
 # 예: "하이제니스 26.07.03.xlsx" — 접두어는 고정, 날짜(YY.MM.DD)만 자동.
@@ -119,22 +132,6 @@ CONFIG_SHEET_TITLE = "설정"
 CONFIG_SHEET_HEADERS = ["키", "값"]
 CONFIG_KEY_KPOST_REGKEY = "kpost_regkey"
 CONFIG_KEY_SLACK_WEBHOOK = "slack_webhook_url"
-CONFIG_KEY_STALE_HOURS = "stale_hours"  # (구) 단일 정체 기준 — 분류별 기준으로 대체(미사용, 호환 보존)
-# 분류별 정체 판정 기준 시간(영업시간, 전원 공유). 허브는 분실·사고 의심이라 가장 짧게,
-# 이동정체는 정상 배송도 며칠 걸리므로 가장 길게 둔다.
-CONFIG_KEY_STALE_HUB = "stale_hub_hours"        # 허브정체 기준
-CONFIG_KEY_STALE_PICKUP = "stale_pickup_hours"  # 수거누락 기준
-CONFIG_KEY_STALE_TRANSIT = "stale_transit_hours"  # 이동정체 기준
-STALE_DEFAULTS = {"허브정체": 12, "수거누락": 24, "이동정체": 48}
-STALE_CONFIG_KEYS = {"허브정체": CONFIG_KEY_STALE_HUB,
-                     "수거누락": CONFIG_KEY_STALE_PICKUP,
-                     "이동정체": CONFIG_KEY_STALE_TRANSIT}
-# 도서산간 가산: 종추적 API엔 목적지가 없어, '마지막위치'(우체국명) 텍스트에 제주·울릉 등
-# 지역명이 보이면 정상 배송도 더 걸리므로 이동정체 기준에 N시간을 더해 오탐을 줄인다.
-CONFIG_KEY_STALE_REMOTE_BONUS = "stale_remote_bonus_hours"
-STALE_REMOTE_BONUS_DEFAULT = 24
-CONFIG_KEY_INQUIRY_WORK_START = "inquiry_work_start_hour"  # 문의 알림 허용 시작시각(전원 공유)
-CONFIG_KEY_INQUIRY_WORK_END = "inquiry_work_end_hour"      # 문의 알림 허용 종료시각(전원 공유)
 CONFIG_KEY_DIGEST_DATE = "digest_last_date"  # 일일 다이제스트 발송 날짜(전원 중복 방지)
 CONFIG_KEY_DIGEST_SIG = "digest_last_sig"  # 직전 발송 위험목록 서명(동일 내용 재발송 방지)
 # 배송추적 백그라운드 자동 새로고침(전원 공유). 간격(분)과 마지막 자동조회 시각.
@@ -169,83 +166,6 @@ NAVER_INQUIRY_REMIND_MIN = 60  # 미답변 리마인더 재알림 주기(분)
 # 미답변 알림 허용 시간대(근무시간) 기본값: 평일 10:00~19:00. 그 외에는 알림을 보내지 않고
 # 「최근알림시각」도 건드리지 않는다 → 근무 시작 시각에 밀린 미답변이 한 번에 환기된다.
 # 설정 팝업에서 사용자가 시작/종료 시각을 바꿀 수 있고, 공유 「설정」 탭으로 전원 적용된다.
-NAVER_INQUIRY_WORK_START_HOUR = 10
-NAVER_INQUIRY_WORK_END_HOUR = 19
-
-
-def _is_weekday(now_dt=None):
-    """월~금이면 True, 토·일이면 False. 슬랙 자동 알림은 주말엔 보내지 않는다."""
-    return (now_dt or datetime.now()).weekday() < 5
-
-
-def _business_elapsed_hours(ref_dt, now_dt):
-    """ref_dt~now_dt 경과 시간을 '영업일(월~금)' 기준으로 환산해 시간 단위로 반환한다.
-
-    토·일은 우체국이 배송물을 움직이지 않으므로 정체 판정에서 제외한다. 달력 시간으로
-    재면 금요일 저녁 도착 건이 월요일에 60시간 '정체'로 오탐되므로, 주말에 걸친 구간을
-    빼고 평일 구간만 누적한다(공휴일은 아직 미반영 — 추후 캘린더 도입 여지).
-    """
-    if now_dt <= ref_dt:
-        return 0.0
-    weekend = 0.0
-    cur = ref_dt
-    while cur < now_dt:
-        day_end = datetime(cur.year, cur.month, cur.day) + timedelta(days=1)
-        seg_end = min(day_end, now_dt)
-        if cur.weekday() >= 5:  # 토(5)·일(6) 구간은 제외
-            weekend += (seg_end - cur).total_seconds()
-        cur = seg_end
-    return ((now_dt - ref_dt).total_seconds() - weekend) / 3600.0
-
-
-def _tracking_management_state(row, status, where="", error_code="", now_dt=None):
-    """출력 뒤 미발송 또는 부평물류센터 정체 송장의 자동 관리상태를 계산한다."""
-    current = (row[TRACKING_MANAGEMENT_COL]
-               if len(row) > TRACKING_MANAGEMENT_COL else "").strip()
-    if current == TRACKING_MANAGEMENT_MANUAL_STOP:
-        return current
-    eligible = (status in ("운송장출력", "추적정보 없음")
-                or error_code == "ERR-125"
-                or (status == "도착" and TRACKING_DISCARD_STALE_ARRIVAL_LOCATION in (where or ""))
-                or (status == "인수완료" and TRACKING_DISCARD_STALE_RECEIPT_LOCATION in (where or "")))
-    # 확정 뒤에도 자동 조회는 계속한다. 뒤늦은 물리 이벤트가 생기면 추적중으로 복귀한다.
-    if current == TRACKING_MANAGEMENT_DISCARDED:
-        return current if eligible else TRACKING_MANAGEMENT_ACTIVE
-    if not eligible:
-        return TRACKING_MANAGEMENT_ACTIVE
-    registered_at = _parse_ts(row[1] if len(row) > 1 else "")
-    if registered_at is None:
-        return current or TRACKING_MANAGEMENT_ACTIVE
-    elapsed_h = _business_elapsed_hours(registered_at, now_dt or datetime.now())
-    if elapsed_h >= TRACKING_DISCARD_CONFIRM_HOURS:
-        return TRACKING_MANAGEMENT_DISCARDED
-    if elapsed_h >= TRACKING_DISCARD_CANDIDATE_HOURS:
-        return TRACKING_MANAGEMENT_CANDIDATE
-    return TRACKING_MANAGEMENT_ACTIVE
-
-
-def _inquiry_alerts_allowed(now_dt, start_hour=NAVER_INQUIRY_WORK_START_HOUR,
-                            end_hour=NAVER_INQUIRY_WORK_END_HOUR):
-    """평일(월~금) 근무시간(start_hour:00~end_hour:00) 안이면 True."""
-    return _is_weekday(now_dt) and start_hour <= now_dt.hour < end_hour
-
-
-def _read_inquiry_work_hours(cfg):
-    """공유 「설정」 탭 map 에서 문의 알림 허용 시작/종료 시각을 읽어 (start, end) 반환.
-    값이 없거나 잘못됐으면(0~23 범위·start<end 위반) 기본값(10,19)으로 보정."""
-    def _h(key, default):
-        try:
-            v = int(str(cfg.get(key, "")).strip())
-            return v if 0 <= v <= 23 else default
-        except (TypeError, ValueError):
-            return default
-    start = _h(CONFIG_KEY_INQUIRY_WORK_START, NAVER_INQUIRY_WORK_START_HOUR)
-    end = _h(CONFIG_KEY_INQUIRY_WORK_END, NAVER_INQUIRY_WORK_END_HOUR)
-    if start >= end:  # 뒤집힌 설정은 기본값으로 안전 복귀
-        return NAVER_INQUIRY_WORK_START_HOUR, NAVER_INQUIRY_WORK_END_HOUR
-    return start, end
-# 당일 우체국 수거 시각(시). 오늘 등록+운송장출력만 한 건은 이 시각 전엔 조회해도
-# 새 정보가 없으므로 새로고침 대상에서 제외한다(어제 이전 건은 제외 안 함=수거누락 후보).
 KPOST_PICKUP_HOUR = 18
 # 우체국 종추적조회 연속 호출 간격. ERR-131 부하 차단 시 워커가 즉시 중단한다.
 KPOST_TRACKING_REQUEST_DELAY_SEC = 0.1
@@ -1148,17 +1068,6 @@ def _write_config_values(ws, updates):
         ws.append_rows(new_rows, value_input_option="RAW")
     if batch_updates:
         ws.batch_update(batch_updates, value_input_option="RAW")
-
-
-def _parse_ts(s):
-    """'YYYY-MM-DD HH:MM:SS' 문자열을 datetime 으로. 비었거나 형식 오류면 None."""
-    s = (s or "").strip()
-    if not s:
-        return None
-    try:
-        return datetime.strptime(s, "%Y-%m-%d %H:%M:%S")
-    except ValueError:
-        return None
 
 
 def run_tracking_config_read_worker():
@@ -3755,54 +3664,15 @@ class MainWindow(QMainWindow):
     def _tracking_table_col(cls, source_col):
         return next(i for i, (idx, _label) in enumerate(cls._TRACKING_TABLE_COLUMNS)
                     if idx == source_col)
-    # 허브(물류센터·집중국) 판별 키워드 — '도착 후 정체'가 가장 위험.
-    # '우편집중국'·'교환센터'는 실제 핵심 허브라 반드시 포함(누락 시 이동정체로 오분류).
-    _RISK_HUB_KEYWORDS = ("물류", "허브", "터미널", "집중국", "교환센터")
-    # 정상으로 보아 위험 판정에서 제외하는 상태
-    _RISK_EXCLUDE_STATUS = ("배달준비",)
-    # 도서산간(배송 지연 잦은 지역) 판별 키워드 — '마지막위치' 우체국명에 부분일치.
-    # 목적지를 API로 못 받으므로 현재 위치 텍스트를 프록시로 쓴다(해당 지역 도착 후에만 인지).
-    _RISK_REMOTE_KEYWORDS = ("제주", "서귀포", "울릉", "백령", "연평", "흑산", "추자", "거문")
-
-    def _is_remote_location(self, where):
-        """마지막위치가 도서산간 지역이면 True(이동정체 기준에 가산 적용)."""
-        w = where or ""
-        return any(k in w for k in self._RISK_REMOTE_KEYWORDS)
-
-    def _risk_bucket(self, status, where, done, management=""):
-        """잠재 위험 분류(정체 여부는 미반영). 완료/제외면 None.
-        반환: None / '허브정체' / '수거누락' / '이동정체'. 분류별로 정체 기준이 달라
-        (_stale_threshold) 정체 판정 전에 먼저 어느 버킷인지부터 가린다."""
-        if done or management in TRACKING_MANAGEMENT_EXCLUDED:
-            return None
-        status = (status or "").strip()
-        if status in self._RISK_EXCLUDE_STATUS:
-            return None
-        if status == "운송장출력":
-            return "수거누락"  # 다음날까지 출고 안 됨 → 수거 누락 의심
-        if any(h in (where or "") for h in self._RISK_HUB_KEYWORDS):
-            return "허브정체"  # 물류센터/허브에서 정지 → 분실·사고 의심(최우선)
-        return "이동정체"
-
-    def _effective_threshold(self, bucket, where):
-        """분류 기준 + 도서산간 가산. 이동정체이면서 마지막위치가 도서산간이면
-        정상 배송도 더 걸리므로 가산시간을 더해 오탐을 줄인다."""
-        thr = self._stale_threshold(bucket)
-        if bucket == "이동정체" and self._is_remote_location(where):
-            thr += self._remote_bonus_hours()
-        return thr
-
     def _evaluate_risk(self, status, where, done, ref, now_dt, management=""):
-        """버킷 분류 + 분류별 영업시간 기준(도서산간 가산 포함) 정체 판정을 합쳐
-        (risk, elapsed_h) 반환. risk None 이면 정상(또는 기준 미달).
-        elapsed_h 는 영업일 기준 무이동 시간."""
-        bucket = self._risk_bucket(status, where, done, management)
-        if bucket is None or ref is None:
-            return None, 0.0
-        elapsed_h = _business_elapsed_hours(ref, now_dt)
-        if elapsed_h > self._effective_threshold(bucket, where):
-            return bucket, elapsed_h
-        return None, elapsed_h
+        """분류별 영업시간 기준으로 위험 여부와 경과 시간을 계산한다."""
+        thresholds = {
+            category: self._stale_threshold(category)
+            for category in STALE_DEFAULTS
+        }
+        return evaluate_risk(
+            status, where, done, ref, now_dt, thresholds,
+            self._remote_bonus_hours(), management)
 
     def _on_tracking_list_poll(self):
         """주기 타이머: 배송추적 탭을 보고 있을 때만 목록을 자동 재로딩."""
@@ -4240,41 +4110,16 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _risk_signature(risks):
-        """위험 목록의 내용 서명(등기번호+상태+위치+이벤트시각). 동일하면 재발송 안 함."""
-        keys = sorted(
-            f"{it['regino']}|{it['status']}|{it['where']}|{it['event_time']}"
-            for it in risks
-        )
-        return hashlib.md5("\n".join(keys).encode("utf-8")).hexdigest()
+        """위험 목록의 내용 서명을 계산해 같은 목록의 재발송을 막는다."""
+        return risk_signature(risks)
 
     def _build_risk_digest_text(self, risks):
-        t = datetime.now().strftime("%Y-%m-%d %H:%M")
-        label = {"허브정체": "🔴 허브 정체(분실·사고 의심)",
-                 "수거누락": "🟠 수거 누락 의심",
-                 "이동정체": "🟠 이동 정체"}
-        lines = [f"⚠️ 배송 위험 {len(risks)}건 (평일 기준 무이동 · {t})"]
-        cur = None
-        shown = 0
-        for it in risks:
-            if shown >= 25:
-                lines.append(f"… 외 {len(risks) - shown}건")
-                break
-            if it["category"] != cur:
-                cur = it["category"]
-                # 분류별 정체 기준(영업시간)을 섹션 머리에 함께 표기
-                thr = self._stale_threshold(cur)
-                lines.append(f"[{label.get(cur, cur)} · 기준 {thr}h+]")
-            elapsed = f"{it['elapsed_h']:.0f}시간째"
-            where = it["where"] or "위치미상"
-            # 도서산간(가산 기준 적용)이면 표시해 elapsed-기준 차이를 알 수 있게 한다
-            tag = " 🏝️도서산간" if (cur == "이동정체"
-                                  and self._is_remote_location(it["where"])) else ""
-            last = f", 마지막 {it['event_time']}" if it["event_time"] else ""
-            lines.append(
-                f"• {it['regino']} {it['name']} — {it['status']} @ {where}{tag} ({elapsed} 무이동{last})"
-            )
-            shown += 1
-        return "\n".join(lines)
+        """위험 목록을 Slack 일일 다이제스트 본문으로 변환한다."""
+        thresholds = {
+            category: self._stale_threshold(category)
+            for category in STALE_DEFAULTS
+        }
+        return build_risk_digest_text(risks, thresholds)
 
     def _maybe_send_daily_digest(self):
         """전체 새로고침 직후, 일일 알림이 켜져 있고 위험 건이 있으면 하루 1통 다이제스트.

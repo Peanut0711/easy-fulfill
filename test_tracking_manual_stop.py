@@ -1,21 +1,66 @@
+import os
+from datetime import datetime
 from pathlib import Path
-from runpy import run_path
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
 from PySide6.QtCore import QFile, QIODevice
 from PySide6.QtUiTools import QUiLoader
-from PySide6.QtWidgets import QApplication, QComboBox, QLineEdit, QAbstractItemView, QTableWidget
+from PySide6.QtWidgets import QApplication, QAbstractItemView, QComboBox, QLineEdit, QTableWidget
+
+from tracking.service import (
+    STALE_DEFAULTS,
+    TRACKING_MANAGEMENT_COL,
+    TRACKING_MANAGEMENT_EXCLUDED,
+    TRACKING_MANAGEMENT_MANUAL_STOP,
+    build_risk_digest_text,
+    business_elapsed_hours,
+    evaluate_risk,
+    risk_bucket,
+    tracking_management_state,
+)
 
 
-module = run_path(Path(__file__).with_name("easy-fulfill.py"), run_name="easy_fulfill_test")
 row = [""] * 13
-row[module["TRACKING_MANAGEMENT_COL"]] = module["TRACKING_MANAGEMENT_MANUAL_STOP"]
+row[TRACKING_MANAGEMENT_COL] = TRACKING_MANAGEMENT_MANUAL_STOP
 
-assert module["TRACKING_MANAGEMENT_MANUAL_STOP"] in module["TRACKING_MANAGEMENT_EXCLUDED"]
-assert module["_tracking_management_state"](row, "배달완료") == module["TRACKING_MANAGEMENT_MANUAL_STOP"]
-assert [label for _, label in module["MainWindow"]._TRACKING_TABLE_COLUMNS] == [
-    "수취인명", "배송상태", "마지막위치", "최근이벤트", "관리상태", "완료",
-    "주문번호", "등기번호", "스토어", "최근조회", "메모",
-]
-assert module["MainWindow"]._tracking_table_col(0) == 7
+assert TRACKING_MANAGEMENT_MANUAL_STOP in TRACKING_MANAGEMENT_EXCLUDED
+assert tracking_management_state(row, "배달완료") == TRACKING_MANAGEMENT_MANUAL_STOP
+assert risk_bucket("운송장출력", "", False, TRACKING_MANAGEMENT_MANUAL_STOP) is None
+assert business_elapsed_hours(
+    datetime(2026, 8, 7, 18), datetime(2026, 8, 10, 10)
+) == 16.0
+
+risk, elapsed_h = evaluate_risk(
+    "운송장출력",
+    "",
+    False,
+    datetime(2026, 8, 3, 9),
+    datetime(2026, 8, 5, 10),
+    STALE_DEFAULTS,
+    24,
+)
+assert risk == "수거누락"
+assert elapsed_h == 49.0
+
+digest = build_risk_digest_text(
+    [{
+        "regino": "123",
+        "name": "홍길동",
+        "status": "운송장출력",
+        "where": "",
+        "event_time": "",
+        "elapsed_h": 49.0,
+        "category": "수거누락",
+    }],
+    STALE_DEFAULTS,
+    datetime(2026, 8, 5, 10),
+)
+assert digest == (
+    "⚠️ 배송 위험 1건 (평일 기준 무이동 · 2026-08-05 10:00)\n"
+    "[🟠 수거 누락 의심 · 기준 24h+]\n"
+    "• 123 홍길동 — 운송장출력 @ 위치미상 (49시간째 무이동)"
+)
 
 app = QApplication.instance() or QApplication([])
 file = QFile(str(Path(__file__).with_name("ui") / "main_window.ui"))
