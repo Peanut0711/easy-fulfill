@@ -4594,13 +4594,9 @@ class MainWindow(QMainWindow):
                         if hasattr(self.ui, 'lineEdit_idx_11st'):
                             self.ui.lineEdit_idx_11st.setText(str(self.current_idx_11st))
 
-                print(f"✓ 인덱스 값 로드 완료 (날짜: {today})")
-                print(f"  - 네이버: {self.current_idx_naver}")
-                print(f"  - 지마켓: {self.current_idx_gmarket}")
-                print(f"  - 쿠팡: {self.current_idx_coupang}")
-                print(f"  - 11번가: {self.current_idx_11st}")
+                print(f"· 로컬 인덱스 캐시 적용 후 Google 시트와 동기화합니다. (날짜: {today})")
             else:
-                print("! 인덱스 파일이 없습니다. 기본값(1)을 사용합니다.")
+                print("· 로컬 인덱스 캐시가 없습니다. 기본값으로 Google 시트 동기화를 대기합니다.")
                 if hasattr(self.ui, 'lineEdit_idx_naver'):
                     self.ui.lineEdit_idx_naver.setText('1')
                 if hasattr(self.ui, 'lineEdit_idx_gmarket'):
@@ -4611,7 +4607,7 @@ class MainWindow(QMainWindow):
                     self.ui.lineEdit_idx_11st.setText('1')
         except Exception as e:
             print(f"! 인덱스 값 로드 중 오류 발생: {str(e)}")
-            print("! 기본값(1)을 사용합니다.")
+            print("! 기본값으로 Google 시트 동기화를 계속합니다.")
             if hasattr(self.ui, 'lineEdit_idx_naver'):
                 self.ui.lineEdit_idx_naver.setText('1')
             if hasattr(self.ui, 'lineEdit_idx_gmarket'):
@@ -4657,11 +4653,11 @@ class MainWindow(QMainWindow):
         with open(self.index_file_path, 'w', encoding='utf-8') as f:
             json.dump(index_data, f, ensure_ascii=False, indent=2)
 
-        print(f"✓ 인덱스 값 저장 완료 (날짜: {today})")
-        print(f"  - 네이버: {self.current_idx_naver}")
-        print(f"  - 지마켓: {self.current_idx_gmarket}")
-        print(f"  - 쿠팡: {self.current_idx_coupang}")
-        print(f"  - 11번가: {self.current_idx_11st}")
+        print(
+            f"✓ 인덱스 값 저장 완료 (날짜: {today} | "
+            f"네이버: {self.current_idx_naver} | 지마켓: {self.current_idx_gmarket} | "
+            f"쿠팡: {self.current_idx_coupang} | 11번가: {self.current_idx_11st})"
+        )
 
     def save_index_values(self, push_sheet=True, reason="변경"):
         """현재 인덱스 값을 저장합니다. 로컬 JSON 후 스프레드시트 반영은 디바운스됩니다.
@@ -5367,7 +5363,9 @@ class MainWindow(QMainWindow):
     def _cleanup_startup_sync_thread(self):
         self._startup_sync_thread = None
 
-    def _apply_order_index_sync_payload(self, payload: dict, *, prompt_reauth: bool):
+    def _apply_order_index_sync_payload(
+        self, payload: dict, *, prompt_reauth: bool, log_if_unchanged: bool = False
+    ):
         """읽기 worker 결과(payload)를 UI·JSON에 반영합니다(시작·폴링 공용)."""
         if not payload.get("ok"):
             err = payload.get("error", "")
@@ -5407,6 +5405,11 @@ class MainWindow(QMainWindow):
             and self.current_idx_coupang == co
             and self.current_idx_gmarket == gm
         ):
+            if log_if_unchanged:
+                print(
+                    f"✓ Google 시트 인덱스 동기화 완료 (네이버: {na} | 지마켓: {gm} | "
+                    f"쿠팡: {co} | 11번가(로컬): {self.current_idx_11st})"
+                )
             self._index_sheet_push_pending = False
             self._index_sheet_last_sync_display = datetime.now()
             self._update_index_sheet_sync_label()
@@ -5426,7 +5429,9 @@ class MainWindow(QMainWindow):
         self._startup_order_index_sync_done = True
         if not self._index_sheet_poll_timer.isActive():
             self._index_sheet_poll_timer.start(ORDER_INDEX_SHEET_POLL_MS)
-        self._apply_order_index_sync_payload(payload, prompt_reauth=True)
+        self._apply_order_index_sync_payload(
+            payload, prompt_reauth=True, log_if_unchanged=True
+        )
 
     def _cleanup_index_sheet_op_thread(self):
         self._index_sheet_op_thread = None
