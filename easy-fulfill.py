@@ -81,6 +81,15 @@ from tracking.repository import (
 )
 from tracking.controller import TrackingController
 from tracking.workers import TrackingConfigWriteThread, run_tracking_list_worker
+from orders.quick import (
+    detect_quick_store,
+    extract_zip_code,
+    parse_coupang_quick_clipboard,
+    parse_generic_quick_clipboard,
+    parse_gmarket_quick_clipboard,
+    parse_naver_quick_clipboard,
+    save_invoice_excel,
+)
 
 try:
     import gspread
@@ -211,50 +220,13 @@ def _normalize_key_for_mapping_value(value):
 
 
 def _extract_zip_code(text):
-    """텍스트에서 첫 5자리 우편번호를 반환합니다."""
-    match = re.search(r"(?:\(|\[)?(\d{5})(?:\)|\])?", str(text or ""))
-    return match.group(1) if match else ""
+    """기존 호출부 호환용: 퀵 엑셀 파서에 위임한다."""
+    return extract_zip_code(text)
 
 
 def _parse_generic_quick_clipboard(clipboard_text):
-    """일반 라벨 형식의 단건 주문정보를 추출합니다."""
-    result = {"수취인명": "", "연락처": "", "주소": "", "우편번호": ""}
-    lines = [line.strip() for line in str(clipboard_text or "").splitlines() if line.strip()]
-    first_line = lines[0] if lines else ""
-
-    for line in lines:
-        parts = re.split(r"\s*[:：]\s*|\t+", line, maxsplit=1)
-        if len(parts) != 2:
-            continue
-        key = re.sub(r"[\s()（）_-]", "", parts[0])
-        value = parts[1].strip()
-        field = None
-        if re.fullmatch(r"(?:상품)?(?:수령인|수취인)(?:명)?", key):
-            field = "수취인명"
-        elif re.fullmatch(
-            r"(?:수령인|수취인)?(?:연락처(?:안심번호|\d*)?|전화번호|"
-            r"휴대폰(?:번호)?|휴대전화(?:번호)?|핸드폰(?:번호)?|모바일(?:번호)?)",
-            key,
-        ):
-            field = "연락처"
-        elif re.fullmatch(r"(?:수령인|수취인)?(?:주소|배송주소|배송지(?:주소)?)", key):
-            field = "주소"
-        elif key == "우편번호":
-            field = "우편번호"
-        if field and value and not result[field]:
-            result[field] = value
-
-    if (
-        not result["수취인명"]
-        and result["연락처"]
-        and result["주소"]
-        and not re.search(r"[:：\t]", first_line)
-    ):
-        result["수취인명"] = first_line
-    result["우편번호"] = (
-        _extract_zip_code(result["우편번호"]) or _extract_zip_code(result["주소"])
-    )
-    return result
+    """기존 호출부 호환용: 퀵 엑셀 파서에 위임한다."""
+    return parse_generic_quick_clipboard(clipboard_text)
 
 
 def _order_index_sheet_row_looks_like_header(row):
@@ -5423,214 +5395,27 @@ class MainWindow(QMainWindow):
 
     def detect_store_from_clipboard(self, clipboard_text):
         """클립보드 텍스트로 스토어를 자동 판별합니다."""
-        text = clipboard_text.replace("\r", "")
-        tokens = []
-        for line in text.split("\n"):
-            if not line.strip():
-                continue
-            for token in line.split("\t"):
-                cleaned = token.strip()
-                if cleaned:
-                    tokens.append(cleaned)
-
-        def get_value_after(key):
-            try:
-                idx = tokens.index(key)
-            except ValueError:
-                return ""
-            if idx + 1 >= len(tokens):
-                return ""
-            return tokens[idx + 1].strip()
-
-        if "연락처(안심번호)" in tokens or "배송주소" in tokens:
-            return "coupang"
-
-        gmarket_address = ""
-        if "배송지주소" in tokens:
-            gmarket_address = get_value_after("배송지주소")
-        if "상품수령인" in tokens or "배송 요청사항" in tokens:
-            return "gmarket"
-        if gmarket_address and re.match(r"^\d{5}\b", gmarket_address):
-            return "gmarket"
-
-        if "연락처1" in tokens or "배송지" in tokens:
-            return "naver"
-
-        generic = _parse_generic_quick_clipboard(clipboard_text)
-        if any(generic[key] for key in ("수취인명", "연락처", "주소")):
-            return "generic"
-
-        return None
+        return detect_quick_store(clipboard_text)
 
     def parse_coupang_quick_clipboard(self, clipboard_text):
         """쿠팡 클립보드 텍스트에서 필수 정보를 추출합니다."""
-        key_map = {
-            "수취인명": "",
-            "연락처(안심번호)": "",
-            "배송주소": "",
-            "배송메모": "",
-            "우편번호": ""
-        }
-
-        tokens = []
-        for line in clipboard_text.replace("\r", "").split("\n"):
-            if not line.strip():
-                continue
-            for token in line.split("\t"):
-                cleaned = token.strip()
-                if cleaned:
-                    tokens.append(cleaned)
-
-        key_set = set(key_map.keys())
-        for idx, token in enumerate(tokens):
-            if token in key_set and idx + 1 < len(tokens):
-                key_map[token] = tokens[idx + 1].strip()
-
-        address = key_map.get("배송주소", "")
-        zip_code = key_map.get("우편번호", "")
-        if not zip_code:
-            zip_code = self.extract_zip_code(address)
-
-        key_map["우편번호"] = zip_code
-        return key_map
+        return parse_coupang_quick_clipboard(clipboard_text)
 
     def parse_naver_quick_clipboard(self, clipboard_text):
         """네이버 클립보드 텍스트에서 필수 정보를 추출합니다."""
-        key_map = {
-            "수취인명": "",
-            "연락처1": "",
-            "연락처2": "",
-            "배송지": "",
-            "배송메모": ""
-        }
-
-        tokens = []
-        for line in clipboard_text.replace("\r", "").split("\n"):
-            if not line.strip():
-                continue
-            for token in line.split("\t"):
-                cleaned = token.strip()
-                if cleaned:
-                    tokens.append(cleaned)
-
-        key_set = set(key_map.keys())
-        current_key = None
-        for token in tokens:
-            if token in key_set:
-                current_key = token
-                continue
-            if not current_key:
-                continue
-            if key_map[current_key]:
-                key_map[current_key] = f"{key_map[current_key]} {token}".strip()
-            else:
-                key_map[current_key] = token
-
-        return key_map
+        return parse_naver_quick_clipboard(clipboard_text)
 
     def parse_gmarket_quick_clipboard(self, clipboard_text):
         """지마켓 클립보드 텍스트에서 필수 정보를 추출합니다."""
-        key_map = {
-            "상품수령인": "",
-            "연락처1": "",
-            "연락처2": "",
-            "배송지주소": "",
-            "배송 요청사항": "",
-            "우편번호": ""
-        }
-
-        tokens = []
-        for line in clipboard_text.replace("\r", "").split("\n"):
-            if not line.strip():
-                continue
-            for token in line.split("\t"):
-                cleaned = token.strip()
-                if cleaned:
-                    tokens.append(cleaned)
-
-        key_set = set(key_map.keys())
-        current_key = None
-        for token in tokens:
-            if token in key_set:
-                current_key = token
-                continue
-            if not current_key:
-                continue
-            if key_map[current_key]:
-                key_map[current_key] = f"{key_map[current_key]} {token}".strip()
-            else:
-                key_map[current_key] = token
-
-        address = key_map.get("배송지주소", "")
-        zip_code = self.extract_zip_code(address)
-        key_map["우편번호"] = zip_code
-        if zip_code:
-            cleaned_address = re.sub(rf"^\s*{re.escape(zip_code)}\s*", "", address).strip()
-            key_map["배송지주소"] = cleaned_address
-
-        return key_map
+        return parse_gmarket_quick_clipboard(clipboard_text)
 
     def extract_zip_code(self, address):
         """주소 문자열에서 우편번호를 추출합니다."""
-        return _extract_zip_code(address)
+        return extract_zip_code(address)
 
     def save_invoice_excel(self, invoice_data, filename_prefix):
         """송장 데이터로 엑셀 파일을 저장하고 경로를 반환합니다."""
-        output_dir = Path("output")
-        output_dir.mkdir(exist_ok=True)
-
-        current_time = datetime.now().strftime("%Y%m%d%H%M%S")
-        output_file = (output_dir / f"{filename_prefix}_{current_time}.xlsx").resolve()
-
-        df_invoice = pd.DataFrame(invoice_data)
-        if '배송메세지' in df_invoice.columns:
-            df_invoice['배송메세지'] = df_invoice['배송메세지'].fillna('')
-        if '상품명' in df_invoice.columns:
-            df_invoice['상품명'] = '전자제품'
-        if '상품모델' in df_invoice.columns:
-            df_invoice['상품모델'] = '전자제품'
-
-        columns = [
-            '주문번호',
-            '고객주문처명',
-            '수취인명',
-            '우편번호',
-            '수취인 주소',
-            '수취인 전화번호',
-            '수취인 이동통신',
-            '상품명',
-            '상품모델',
-            '배송메세지',
-            '비고'
-        ]
-        df_invoice = df_invoice[columns]
-
-        with pd.ExcelWriter(output_file, engine='xlsxwriter') as writer:
-            df_invoice.to_excel(writer, index=False, sheet_name='Sheet1')
-            worksheet = writer.sheets['Sheet1']
-            workbook = writer.book
-
-            center_format = workbook.add_format({
-                'align': 'center',
-                'valign': 'vcenter'
-            })
-            header_format = workbook.add_format({
-                'align': 'center',
-                'valign': 'vcenter',
-                'bold': True
-            })
-
-            for idx, col in enumerate(df_invoice.columns):
-                max_length = max(
-                    df_invoice[col].astype(str).apply(len).max(),
-                    len(str(col))
-                )
-                adjusted_width = max_length * 2 if any('\u3131' <= c <= '\u318E' or '\uAC00' <= c <= '\uD7A3' for c in str(col)) else max_length
-                worksheet.set_column(idx, idx, adjusted_width + 2, center_format)
-
-            for col_num, value in enumerate(df_invoice.columns.values):
-                worksheet.write(0, col_num, value, header_format)
-
+        output_file = save_invoice_excel(invoice_data, filename_prefix)
         print(f"✓ 퀵 엑셀 저장 완료: {output_file}")
         self.show_excel_created_message(output_file, "송장 엑셀 파일이 생성되었습니다.")
         return output_file
