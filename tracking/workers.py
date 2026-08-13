@@ -13,6 +13,8 @@ from .repository import (
     open_config_worksheet,
     open_tracking_worksheet,
     read_config_values_map,
+    read_tracking_list_metadata,
+    read_tracking_rows,
     read_tracking_values,
     update_tracking_cell,
     update_tracking_management,
@@ -32,6 +34,7 @@ from .service import (
     TRACKING_MANAGEMENT_EXCLUDED,
     TRACKING_MANAGEMENT_MANUAL_STOP,
     parse_timestamp as _parse_ts,
+    select_tracking_list_row_numbers,
     tracking_management_state as _tracking_management_state,
 )
 
@@ -51,6 +54,8 @@ CONFIG_SHEET_TITLE = "설정"
 CONFIG_SHEET_HEADERS = ["키", "값"]
 CONFIG_KEY_KPOST_REGKEY = "kpost_regkey"
 CONFIG_KEY_SLACK_WEBHOOK = "slack_webhook_url"
+CONFIG_KEY_DIGEST_DATE = "digest_last_date"
+CONFIG_KEY_DIGEST_SIG = "digest_last_sig"
 CONFIG_KEY_AUTO_REFRESH_MIN = "tracking_auto_refresh_min"
 CONFIG_KEY_LAST_AUTO_REFRESH = "tracking_last_auto_refresh"
 KPOST_PICKUP_HOUR = 18
@@ -349,9 +354,11 @@ def run_tracking_refresh_one_worker(regkey, regino):
         return {"ok": False, "error": str(e)}
 
 
-def run_tracking_list_worker():
-    """「송장추적」 시트 전체 값을 읽어 표시용으로 반환합니다.
-    반환 dict: ok, values(헤더 포함 2차원 리스트) — 또는 ok False, error.
+def run_tracking_list_worker(mode="배송중"):
+    """목록 모드에 필요한 송장추적 행만 읽어 표시용으로 반환한다.
+
+    「전체」만 전체 이력을 읽고, 나머지 모드는 상태·날짜·관리상태 열로
+    행을 먼저 선별한 뒤 상세 행만 다시 읽는다.
     """
     if gspread is None:
         return {"ok": False, "error": "gspread 패키지가 필요합니다. (pip install gspread)"}
@@ -362,7 +369,29 @@ def run_tracking_list_worker():
     try:
         gc = get_authorized_gspread_client()
         ws = _standalone_open_tracking_ws(gc)
-        return {"ok": True, "values": read_tracking_values(ws)}
+        if mode == "전체":
+            values = read_tracking_values(ws)
+            return {
+                "ok": True,
+                "values": values,
+                "total_rows": max(0, len(values) - 1),
+                "mode": mode,
+            }
+        header, metadata = read_tracking_list_metadata(ws)
+        registrations, completions, events, managements = metadata
+        row_numbers = select_tracking_list_row_numbers(
+            registrations, completions, events, managements, mode,
+        )
+        rows = read_tracking_rows(ws, row_numbers)
+        total_rows = max(
+            len(registrations), len(completions), len(events), len(managements),
+        )
+        return {
+            "ok": True,
+            "values": [header, *rows] if header else rows,
+            "total_rows": total_rows,
+            "mode": mode,
+        }
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
@@ -450,6 +479,77 @@ def run_tracking_config_write_worker(updates):
         return {"ok": False, "error": str(e)}
 
 
+def run_slack_send_worker(webhook_url, text):
+    """슬랙 웹훅 전송을 UI 스레드 밖에서 수행한다."""
+    try:
+        import slack_notify
+    except ImportError as error:
+        return {"ok": False, "error": f"slack_notify 로드 실패: {error}"}
+    return slack_notify.send_slack(webhook_url, text)
+
+
+def run_digest_send_worker(webhook_url, text, today_str, sig):
+    """위험 다이제스트를 전송하고 공유 설정의 중복 방지 값을 갱신한다."""
+    if gspread is None:
+        return {"ok": False, "error": "gspread 패키지가 필요합니다.", "sent": False}
+    try:
+        from google_sheets_oauth import get_authorized_gspread_client
+    except ImportError as error:
+        return {"ok": False, "error": str(error), "sent": False}
+    try:
+        worksheet = _standalone_open_config_ws(get_authorized_gspread_client())
+        key_to_row = {}
+        last_date = ""
+        last_sig = ""
+        for row_index, row in enumerate(worksheet.get_all_values()[1:], start=2):
+            key = (row[0] if row else "").strip()
+            if not key or key in key_to_row:
+                continue
+            key_to_row[key] = row_index
+            if key == CONFIG_KEY_DIGEST_DATE:
+                last_date = (row[1] if len(row) > 1 else "").strip()
+            elif key == CONFIG_KEY_DIGEST_SIG:
+                last_sig = (row[1] if len(row) > 1 else "").strip()
+        if last_date == today_str:
+            return {"ok": True, "sent": False, "reason": "today"}
+        if sig and sig == last_sig:
+            return {"ok": True, "sent": False, "reason": "unchanged"}
+        result = run_slack_send_worker(webhook_url, text)
+        if not result.get("ok"):
+            return {"ok": False, "error": result.get("error", ""), "sent": False}
+        updates = {
+            CONFIG_KEY_DIGEST_DATE: today_str,
+            CONFIG_KEY_DIGEST_SIG: sig,
+        }
+        new_rows = []
+        batch_updates = []
+        for key, value in updates.items():
+            if key in key_to_row:
+                batch_updates.append({"range": f"B{key_to_row[key]}", "values": [[value]]})
+            else:
+                new_rows.append([key, value])
+        if new_rows:
+            worksheet.append_rows(new_rows, value_input_option="RAW")
+        if batch_updates:
+            worksheet.batch_update(batch_updates, value_input_option="RAW")
+        return {"ok": True, "sent": True, "reason": "changed"}
+    except Exception as error:
+        return {"ok": False, "error": str(error), "sent": False}
+
+
+def validate_tracking_key_worker(regkey):
+    """우체국 regkey 유효성을 worker에서 검증한다."""
+    try:
+        import kpost_tracker
+    except ImportError as error:
+        return {
+            "ok": False,
+            "valid": False,
+            "error": f"kpost_tracker 로드 실패: {error}",
+        }
+    return kpost_tracker.validate_key(regkey)
+
+
 
 class TrackingUpsertThread(QThread):
     """송장 등기번호를 「송장추적」 시트에 백그라운드로 upsert."""
@@ -487,12 +587,16 @@ class TrackingRefreshThread(QThread):
 
 
 class TrackingListThread(QThread):
-    """「송장추적」 시트 전체를 백그라운드로 읽어 표 표시용으로 반환합니다."""
+    """선택한 목록 모드에 필요한 송장추적 행만 백그라운드로 읽는다."""
 
     result_ready = Signal(dict)
 
+    def __init__(self, mode="배송중", parent=None):
+        super().__init__(parent)
+        self._mode = mode
+
     def run(self):
-        self.result_ready.emit(run_tracking_list_worker())
+        self.result_ready.emit(run_tracking_list_worker(self._mode))
 
 
 class TrackingManagementUpdateThread(QThread):
@@ -572,3 +676,48 @@ class TrackingConfigWriteThread(QThread):
 
     def run(self):
         self.result_ready.emit(run_tracking_config_write_worker(self._updates))
+
+
+class SlackSendThread(QThread):
+    """슬랙 웹훅 메시지를 백그라운드로 전송한다."""
+
+    result_ready = Signal(dict)
+
+    def __init__(self, webhook_url, text, parent=None):
+        super().__init__(parent)
+        self._url = webhook_url
+        self._text = text
+
+    def run(self):
+        self.result_ready.emit(run_slack_send_worker(self._url, self._text))
+
+
+class DigestSendThread(QThread):
+    """위험 다이제스트를 공유 설정 중복 방지와 함께 전송한다."""
+
+    result_ready = Signal(dict)
+
+    def __init__(self, webhook_url, text, today, sig, parent=None):
+        super().__init__(parent)
+        self._url = webhook_url
+        self._text = text
+        self._today = today
+        self._sig = sig
+
+    def run(self):
+        self.result_ready.emit(
+            run_digest_send_worker(self._url, self._text, self._today, self._sig)
+        )
+
+
+class TrackingKeyValidateThread(QThread):
+    """입력한 우체국 regkey를 백그라운드로 검증한다."""
+
+    result_ready = Signal(dict)
+
+    def __init__(self, regkey, parent=None):
+        super().__init__(parent)
+        self._regkey = regkey
+
+    def run(self):
+        self.result_ready.emit(validate_tracking_key_worker(self._regkey))

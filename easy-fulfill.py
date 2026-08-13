@@ -66,22 +66,11 @@ from html.parser import HTMLParser
 from tracking.service import (
     CONFIG_KEY_INQUIRY_WORK_END,
     CONFIG_KEY_INQUIRY_WORK_START,
-    CONFIG_KEY_STALE_HUB,
-    CONFIG_KEY_STALE_PICKUP,
-    CONFIG_KEY_STALE_REMOTE_BONUS,
-    CONFIG_KEY_STALE_TRANSIT,
     NAVER_INQUIRY_WORK_END_HOUR,
     NAVER_INQUIRY_WORK_START_HOUR,
-    STALE_CONFIG_KEYS,
-    STALE_DEFAULTS,
-    STALE_REMOTE_BONUS_DEFAULT,
-    TRACKING_MANAGEMENT_COL,
-    build_risk_digest_text,
     inquiry_alerts_allowed as _inquiry_alerts_allowed,
-    is_weekday as _is_weekday,
     parse_timestamp as _parse_ts,
     read_inquiry_work_hours as _read_inquiry_work_hours,
-    risk_signature,
     tracking_management_state as _tracking_management_state,
 )
 from tracking.repository import (
@@ -93,7 +82,6 @@ from tracking.repository import (
 from tracking.controller import TrackingController
 from tracking.workers import (
     CourierReceiptExportThread,
-    TrackingConfigReadThread,
     TrackingConfigWriteThread,
     run_tracking_list_worker,
 )
@@ -144,10 +132,7 @@ def _standalone_open_config_ws(gc):
     return open_config_worksheet(gc, SPREADSHEET_ID, CONFIG_SHEET_TITLE, CONFIG_SHEET_HEADERS)
 
 
-CONFIG_KEY_KPOST_REGKEY = "kpost_regkey"
 CONFIG_KEY_SLACK_WEBHOOK = "slack_webhook_url"
-CONFIG_KEY_DIGEST_DATE = "digest_last_date"  # 일일 다이제스트 발송 날짜(전원 중복 방지)
-CONFIG_KEY_DIGEST_SIG = "digest_last_sig"  # 직전 발송 위험목록 서명(동일 내용 재발송 방지)
 # 배송추적 백그라운드 자동 새로고침(전원 공유). 간격(분)과 마지막 자동조회 시각.
 # 마지막 시각은 다중 PC가 같은 창에서 우체국을 중복 조회하지 않도록 하는 소프트 락으로 쓴다:
 # 여러 대가 켜져 있어도 간격이 지난 뒤 먼저 도는 1대만 실제 조회하고 나머지는 건너뛴다.
@@ -583,60 +568,6 @@ def run_courier_receipt_export_worker(save_path, today_str):
         return {"ok": False, "error": f"파일 저장 실패: {e}"}
     return {"ok": True, "count": len(rows), "path": save_path}
 
-
-def run_digest_send_worker(webhook_url, text, today_str, sig):
-    """다이제스트 전송. 공유 「설정」 탭으로 중복 방지(모든 PC 공통):
-    - 오늘 이미 보냈으면 전송 안 함(digest_last_date)
-    - 직전 발송과 위험 내용이 동일하면 전송 안 함(digest_last_sig) → '아까 본 건' 방지
-    반환 {ok, sent, reason} 또는 {ok False, error}."""
-    if gspread is None:
-        return {"ok": False, "error": "gspread 패키지가 필요합니다.", "sent": False}
-    try:
-        from google_sheets_oauth import get_authorized_gspread_client
-    except ImportError as e:
-        return {"ok": False, "error": str(e), "sent": False}
-    try:
-        import slack_notify
-    except ImportError as e:
-        return {"ok": False, "error": str(e), "sent": False}
-    try:
-        gc = get_authorized_gspread_client()
-        ws = _standalone_open_config_ws(gc)
-        values = ws.get_all_values()
-        key_to_row = {}
-        last_date = ""
-        last_sig = ""
-        for ridx, row in enumerate(values[1:], start=2):
-            k = (row[0] if row else "").strip()
-            if k and k not in key_to_row:
-                key_to_row[k] = ridx
-                if k == CONFIG_KEY_DIGEST_DATE:
-                    last_date = (row[1] if len(row) > 1 else "").strip()
-                elif k == CONFIG_KEY_DIGEST_SIG:
-                    last_sig = (row[1] if len(row) > 1 else "").strip()
-        if last_date == today_str:
-            return {"ok": True, "sent": False, "reason": "today"}
-        if sig and sig == last_sig:
-            return {"ok": True, "sent": False, "reason": "unchanged"}
-        res = slack_notify.send_slack(webhook_url, text)
-        if not res.get("ok"):
-            return {"ok": False, "error": res.get("error", ""), "sent": False}
-        # 발송 성공 → 오늘 날짜·서명 기록(전원 공통 중복 방지)
-        updates = {CONFIG_KEY_DIGEST_DATE: today_str, CONFIG_KEY_DIGEST_SIG: sig}
-        new_rows = []
-        batch = []
-        for k, v in updates.items():
-            if k in key_to_row:
-                batch.append({"range": f"B{key_to_row[k]}", "values": [[v]]})
-            else:
-                new_rows.append([k, v])
-        if new_rows:
-            ws.append_rows(new_rows, value_input_option="RAW")
-        if batch:
-            ws.batch_update(batch, value_input_option="RAW")
-        return {"ok": True, "sent": True, "reason": "changed"}
-    except Exception as e:
-        return {"ok": False, "error": str(e), "sent": False}
 
 
 def _standalone_open_inquiry_ws(gc):
@@ -1260,62 +1191,6 @@ class OrderIndexUndoThread(QThread):
 
     def run(self):
         self.result_ready.emit(run_order_index_undo_worker())
-
-
-class SlackSendThread(QThread):
-    """슬랙 웹훅으로 메시지를 백그라운드로 전송합니다."""
-
-    result_ready = Signal(dict)
-
-    def __init__(self, webhook_url, text, parent=None):
-        super().__init__(parent)
-        self._url = webhook_url
-        self._text = text
-
-    def run(self):
-        try:
-            import slack_notify
-        except ImportError as e:
-            self.result_ready.emit({"ok": False, "error": f"slack_notify 로드 실패: {e}"})
-            return
-        self.result_ready.emit(slack_notify.send_slack(self._url, self._text))
-
-
-class DigestSendThread(QThread):
-    """위험 다이제스트를 공유 날짜·서명 중복방지로 전송합니다."""
-
-    result_ready = Signal(dict)
-
-    def __init__(self, webhook_url, text, today, sig, parent=None):
-        super().__init__(parent)
-        self._url = webhook_url
-        self._text = text
-        self._today = today
-        self._sig = sig
-
-    def run(self):
-        self.result_ready.emit(
-            run_digest_send_worker(self._url, self._text, self._today, self._sig)
-        )
-
-
-class TrackingKeyValidateThread(QThread):
-    """입력한 우체국 regkey 가 유효한지 백그라운드로 검증합니다."""
-
-    result_ready = Signal(dict)
-
-    def __init__(self, regkey, parent=None):
-        super().__init__(parent)
-        self._regkey = regkey
-
-    def run(self):
-        try:
-            import kpost_tracker
-        except ImportError as e:
-            self.result_ready.emit({"ok": False, "valid": False,
-                                    "error": f"kpost_tracker 로드 실패: {e}"})
-            return
-        self.result_ready.emit(kpost_tracker.validate_key(self._regkey))
 
 
 class NaverInquiryPollThread(QThread):
@@ -2540,57 +2415,22 @@ class MainWindow(QMainWindow):
         self._refresh_slack_status()
 
     def _stale_threshold(self, category):
-        """분류별 정체 판정 기준 시간(영업시간, 공유 설정 동기화된 로컬 값).
-        값이 없으면 STALE_DEFAULTS(허브 12 / 수거누락 24 / 이동 48)."""
-        default = STALE_DEFAULTS.get(category, 12)
-        try:
-            v = self.get_app_setting(STALE_CONFIG_KEYS[category], "")
-            if str(v).strip():
-                return int(v)
-        except (KeyError, TypeError, ValueError):
-            pass
-        return default
+        return self._tracking_controller._stale_threshold(category)
 
     def _remote_bonus_hours(self):
-        """도서산간 가산시간(영업시간, 공유 설정 동기화된 로컬 값). 기본 24."""
-        try:
-            v = self.get_app_setting(CONFIG_KEY_STALE_REMOTE_BONUS, "")
-            if str(v).strip():
-                return int(v)
-        except (TypeError, ValueError):
-            pass
-        return STALE_REMOTE_BONUS_DEFAULT
+        return self._tracking_controller._remote_bonus_hours()
 
     def _push_tracking_config(self, key, value):
-        """설정 1건을 로컬 저장 + 표 갱신 + 공유 「설정」 탭에 반영."""
-        self.set_app_setting(key, value)
-        self._populate_tracking_table()
-        if gspread is not None and self._tracking_config_write_thread is None:
-            thread = TrackingConfigWriteThread({key: str(value)}, self)
-            self._tracking_config_write_thread = thread
-            thread.result_ready.connect(self._on_tracking_config_write_finished)
-            thread.finished.connect(self._cleanup_tracking_config_write_thread)
-            thread.finished.connect(thread.deleteLater)
-            thread.start()
+        return self._tracking_controller._push_tracking_config(key, value)
 
     def _on_stale_threshold_changed(self, category, value):
-        """설정 팝업의 분류별 정체기준 변경 → 로컬 저장 + 공유 「설정」 탭 반영 + 표 갱신."""
-        self._push_tracking_config(STALE_CONFIG_KEYS[category], int(value))
+        return self._tracking_controller._on_stale_threshold_changed(category, value)
 
     def _on_remote_bonus_changed(self, value):
-        """설정 팝업의 도서산간 가산시간 변경 → 로컬 저장 + 공유 「설정」 탭 반영 + 표 갱신."""
-        self._push_tracking_config(CONFIG_KEY_STALE_REMOTE_BONUS, int(value))
+        return self._tracking_controller._on_remote_bonus_changed(value)
 
     def _sync_stale_threshold_spinboxes(self):
-        """설정 팝업의 분류별 정체기준·도서산간 가산 스핀박스를 현재 값으로 갱신(시그널 차단)."""
-        for cat, sb in self._dlg_stale_boxes.items():
-            sb.blockSignals(True)
-            sb.setValue(self._stale_threshold(cat))
-            sb.blockSignals(False)
-        if self._dlg_remote_bonus is not None:
-            self._dlg_remote_bonus.blockSignals(True)
-            self._dlg_remote_bonus.setValue(self._remote_bonus_hours())
-            self._dlg_remote_bonus.blockSignals(False)
+        return self._tracking_controller._sync_stale_threshold_spinboxes()
 
     def _inquiry_work_hours(self):
         """문의 알림 허용 시작/종료 시각(공유 설정 동기화된 로컬 값). 기본 (10, 19)."""
@@ -2680,14 +2520,7 @@ class MainWindow(QMainWindow):
             )
 
     def _on_tracking_help_clicked(self):
-        """[?] 버튼 — 배송추적 사용 안내를 팝업으로 보여줍니다(평소엔 숨김)."""
-        QMessageBox.information(
-            self, "배송추적 사용 안내",
-            "우체국 OpenAPI(종추적조회)로 공유 시트(「송장추적」 탭)의 배송 상태를 갱신합니다.\n"
-            "송장 불러오기·일괄발송 시 등기번호가 자동으로 누적됩니다.\n"
-            "(우편번호 검색과 동일한 우체국 인증키 사용)\n\n"
-            "※ 표에서 행을 더블클릭하면 해당 등기번호의 우체국 배송조회(상세) 웹페이지가 열립니다.",
-        )
+        return self._tracking_controller.show_help()
 
     def _build_admin_tracking_settings(self):
         """배송추적 운영 토글·알림·위험 판정 기준을 「관리자」 탭에 구성(기존 팝업 대체).
@@ -2698,24 +2531,7 @@ class MainWindow(QMainWindow):
         outer = host.layout()
         self._admin_tracking_built = True
 
-        # 슬랙 위험 알림(체크는 PC별, Webhook 설정은 「연동 · API 키」에 있음)
-        gb_slack = QGroupBox("슬랙 위험 알림")
-        sl = QVBoxLayout(gb_slack)
-        srow = QHBoxLayout()
-        self._dlg_slack_auto = QCheckBox("이 PC에서 위험 일일 알림(하루 1통)")
-        self._dlg_slack_auto.setChecked(bool(self.get_app_setting("slack_auto_notify", False)))
-        self._dlg_slack_auto.setToolTip(
-            "이 PC에서 전체 새로고침 시 위험 건이 있으면 하루 1통만 슬랙으로 보냅니다(중복 방지)."
-        )
-        self._dlg_slack_auto.stateChanged.connect(self._on_slack_auto_toggled)
-        btn_test = QPushButton("테스트")
-        btn_test.setToolTip("슬랙 Webhook으로 테스트 메시지를 보냅니다.")
-        btn_test.clicked.connect(self._on_slack_test_clicked)
-        srow.addWidget(self._dlg_slack_auto)
-        srow.addStretch(1)
-        srow.addWidget(btn_test)
-        sl.addLayout(srow)
-        outer.addWidget(gb_slack)
+        self._tracking_controller.build_admin_slack_controls(outer)
 
         # 미답변 문의 알림(자동조회 토글은 PC별, 알림 시간대는 전원 공유)
         gb_naver = QGroupBox("미답변 문의 알림 (네이버·쿠팡 → 슬랙)")
@@ -2770,223 +2586,43 @@ class MainWindow(QMainWindow):
         ndl.addLayout(hrow)
         outer.addWidget(gb_naver)
 
-        # 위험 판정 기준(전원 공유). 좁은 컬럼이라 2행으로: 정체기준 3종 / 도서산간 가산.
-        gb_risk = QGroupBox("위험 판정 기준 (분류별 정체시간, 영업시간)")
-        rv = QVBoxLayout(gb_risk)
-        _risk_tip = ("미완료 송장이 이 시간 이상 우체국 이벤트가 없으면 '정체'로 표시합니다. "
-                     "토·일은 제외한 영업시간 기준이며, 변경 시 공유 시트에 저장되어 "
-                     "전원에게 적용됩니다.")
-        rrow = QHBoxLayout()
-        self._dlg_stale_boxes = {}
-        for cat, cap in (("허브정체", "허브"), ("수거누락", "수거누락"), ("이동정체", "이동")):
-            rrow.addWidget(QLabel(f"{cap}:"))
-            sb = QSpinBox()
-            sb.setMinimum(1)
-            sb.setMaximum(168)
-            sb.setValue(self._stale_threshold(cat))
-            sb.setSuffix("h")
-            sb.setToolTip(_risk_tip)
-            sb.valueChanged.connect(
-                lambda v, c=cat: self._on_stale_threshold_changed(c, v))
-            rrow.addWidget(sb)
-            self._dlg_stale_boxes[cat] = sb
-        rrow.addStretch(1)
-        rv.addLayout(rrow)
-        brow = QHBoxLayout()
-        brow.addWidget(QLabel("도서산간 가산:"))
-        self._dlg_remote_bonus = QSpinBox()
-        self._dlg_remote_bonus.setMinimum(0)
-        self._dlg_remote_bonus.setMaximum(168)
-        self._dlg_remote_bonus.setValue(self._remote_bonus_hours())
-        self._dlg_remote_bonus.setSuffix("h")
-        self._dlg_remote_bonus.setToolTip(
-            "마지막위치가 제주·울릉 등 도서산간이면 이동정체 기준에 이 시간을 더합니다. "
-            "(종추적 API엔 목적지가 없어 현재 위치 텍스트로 판별) 0이면 가산 없음.")
-        self._dlg_remote_bonus.valueChanged.connect(self._on_remote_bonus_changed)
-        brow.addWidget(self._dlg_remote_bonus)
-        brow.addStretch(1)
-        rv.addLayout(brow)
-        outer.addWidget(gb_risk)
-
-        # 배송추적 자동 새로고침 간격(전원 공유). 0이면 자동 새로고침 끔.
-        gb_auto = QGroupBox("배송추적 자동 새로고침 (전원 공유)")
-        arow = QHBoxLayout(gb_auto)
-        arow.addWidget(QLabel("간격:"))
-        self._dlg_auto_refresh = QSpinBox()
-        self._dlg_auto_refresh.setRange(0, 720)  # 0=끔 ~ 12시간
-        self._dlg_auto_refresh.setSuffix("분")
-        self._dlg_auto_refresh.setSpecialValueText("끔")  # 0 → '끔' 표시
-        self._dlg_auto_refresh.setValue(self._auto_refresh_interval_min())
-        self._dlg_auto_refresh.setToolTip(
-            "N분마다 미완료 송장을 우체국으로 백그라운드 조회해 배송상태를 갱신합니다.\n"
-            "0이면 자동 새로고침을 끕니다(수동 새로고침만). 기본 60분.\n"
-            "여러 대를 켜둬도 공유 시트의 마지막 조회시각으로 중복 조회를 막습니다"
-            "(간격이 지난 뒤 먼저 도는 1대만 실제 조회). 변경 시 전원에게 적용됩니다.")
-        self._dlg_auto_refresh.valueChanged.connect(self._on_auto_refresh_interval_changed)
-        arow.addWidget(self._dlg_auto_refresh)
-        arow.addStretch(1)
-        outer.addWidget(gb_auto)
+        self._tracking_controller.build_admin_risk_controls(outer)
 
         self._update_naver_inquiry_status_label()
         self._update_status_displays()
 
     def _refresh_key_status(self):
-        """저장된 우체국 인증키의 유효성을 백그라운드로 확인해 상태 텍스트만 갱신합니다."""
-        key = self._get_kpost_regkey()
-        if not key:
-            self._set_key_status_text("인증키: 미설정 — 「키 변경」으로 등록하세요.")
-            return
-        if gspread is None:
-            self._set_key_status_text("인증키: 설정됨 (오프라인 — 유효성 미확인)")
-            return
-        if self._tracking_key_validate_thread is not None:
-            return
-        self._set_key_status_text("인증키: 확인 중…")
-        self._start_key_validation(key, mode="status")
+        return self._tracking_controller._refresh_key_status()
 
     def _on_tracking_key_edit_clicked(self):
-        """관리자용: 작은 입력 다이얼로그로 새 우체국 인증키를 받아 검증 후 저장합니다.
-        일반 유저는 평소 키를 보거나 바꿀 필요가 없으므로 입력칸을 노출하지 않습니다."""
-        if gspread is None:
-            QMessageBox.warning(self, "인증키 변경", "gspread 패키지가 필요합니다. (pip install gspread)")
-            return
-        if self._tracking_key_validate_thread is not None:
-            return
-        new_key, ok = QInputDialog.getText(
-            self, "우체국 OpenAPI 인증키 변경",
-            "새 우체국 OpenAPI 인증키(regkey, 30자리)를 입력하세요.\n"
-            "(검증 후 직원 전원에게 적용됩니다 · 우편번호 검색에도 함께 사용)",
-            QLineEdit.EchoMode.Password, "",
-        )
-        if not ok:
-            return
-        new_key = new_key.strip()
-        if not new_key:
-            QMessageBox.warning(self, "인증키 변경", "키가 비어 있습니다.")
-            return
-        self._set_key_status_text("인증키: 검증 중…")
-        self._start_key_validation(new_key, mode="save")
+        return self._tracking_controller._on_tracking_key_edit_clicked()
 
     def _start_key_validation(self, key, mode):
-        self._key_validate_mode = mode
-        self._key_validate_pending_key = key
-        if self._dlg_key_btn is not None:
-            self._dlg_key_btn.setEnabled(False)
-        thread = TrackingKeyValidateThread(key, self)
-        self._tracking_key_validate_thread = thread
-        thread.result_ready.connect(self._on_key_validate_finished)
-        thread.finished.connect(self._cleanup_key_validate_thread)
-        thread.finished.connect(thread.deleteLater)
-        thread.start()
+        return self._tracking_controller._start_key_validation(key, mode)
 
     def _cleanup_key_validate_thread(self):
-        self._tracking_key_validate_thread = None
-        if self._dlg_key_btn is not None:
-            self._dlg_key_btn.setEnabled(True)
+        return self._tracking_controller._cleanup_key_validate_thread()
 
     def _on_key_validate_finished(self, payload: dict):
-        mode = getattr(self, "_key_validate_mode", "status")
-        key = getattr(self, "_key_validate_pending_key", "")
-        valid = bool(payload.get("ok") and payload.get("valid"))
-        if mode == "save":
-            if not valid:
-                err = payload.get("error", "유효하지 않은 키")
-                QMessageBox.warning(
-                    self, "인증키 검증 실패",
-                    f"이 인증키로 우체국 종추적조회에 실패했습니다.\n\n{err}\n\n"
-                    "키를 다시 확인해 주세요. (저장하지 않았습니다)",
-                )
-                self._set_key_status_text("인증키: 검증 실패 — 저장하지 않음")
-                return
-            self._commit_kpost_regkey(key)
-            self._set_key_status_text("인증키: 유효함 ✓ (저장됨 · 전원 적용)")
-        else:  # status
-            if valid:
-                self._set_key_status_text("인증키: 유효함 ✓")
-            else:
-                self._set_key_status_text("인증키: 확인 실패 — 「키 변경」으로 다시 등록")
+        return self._tracking_controller._on_key_validate_finished(payload)
 
     def _commit_kpost_regkey(self, key):
-        """검증된 우체국 regkey 를 로컬과 공유 「설정」 탭에 저장합니다."""
-        self.set_app_setting("kpost_regkey", key)
-        if gspread is None or self._tracking_config_write_thread is not None:
-            return
-        thread = TrackingConfigWriteThread({CONFIG_KEY_KPOST_REGKEY: key}, self)
-        self._tracking_config_write_thread = thread
-        thread.result_ready.connect(self._on_tracking_config_write_finished)
-        thread.finished.connect(self._cleanup_tracking_config_write_thread)
-        thread.finished.connect(thread.deleteLater)
-        thread.start()
+        return self._tracking_controller._commit_kpost_regkey(key)
 
     def _on_tracking_config_write_finished(self, payload: dict):
-        if payload.get("ok"):
-            self._set_tracking_summary("인증키를 공유 시트에 저장했습니다. (직원 전원 자동 적용)")
-        else:
-            print(f"! 공유 설정 저장 실패: {payload.get('error', '')}")
+        return self._tracking_controller._on_tracking_config_write_finished(payload)
 
     def _cleanup_tracking_config_write_thread(self):
-        self._tracking_config_write_thread = None
+        return self._tracking_controller._cleanup_tracking_config_write_thread()
 
     def _begin_tracking_config_read(self):
-        """공유 「설정」 탭에서 회사 공통 키를 읽어 입력란·로컬에 반영합니다."""
-        if gspread is None or self._tracking_config_read_thread is not None:
-            return
-        thread = TrackingConfigReadThread(self)
-        self._tracking_config_read_thread = thread
-        thread.result_ready.connect(self._on_tracking_config_read_finished)
-        thread.finished.connect(self._cleanup_tracking_config_read_thread)
-        thread.finished.connect(thread.deleteLater)
-        thread.start()
+        return self._tracking_controller._begin_tracking_config_read()
 
     def _on_tracking_config_read_finished(self, payload: dict):
-        if payload.get("ok"):
-            regkey = str(payload.get("regkey", "") or "").strip()
-            if regkey:
-                # 공유 시트의 회사 공통 키를 로컬에 반영(우편번호 검색도 함께 사용)
-                self.set_app_setting("kpost_regkey", regkey)
-            slack = str(payload.get("slack_webhook", "") or "").strip()
-            if slack:
-                self.set_app_setting("slack_webhook_url", slack)
-            for pkey, akey in (("stale_hub", CONFIG_KEY_STALE_HUB),
-                               ("stale_pickup", CONFIG_KEY_STALE_PICKUP),
-                               ("stale_transit", CONFIG_KEY_STALE_TRANSIT),
-                               ("stale_remote_bonus", CONFIG_KEY_STALE_REMOTE_BONUS)):
-                sv = str(payload.get(pkey, "") or "").strip()
-                if sv:
-                    try:
-                        self.set_app_setting(akey, int(sv))
-                    except (TypeError, ValueError):
-                        pass
-            for pkey, akey in (("inquiry_work_start", "inquiry_work_start_hour"),
-                               ("inquiry_work_end", "inquiry_work_end_hour")):
-                hv = str(payload.get(pkey, "") or "").strip()
-                if hv:
-                    try:
-                        h = int(hv)
-                        if 0 <= h <= 23:
-                            self.set_app_setting(akey, h)
-                    except (TypeError, ValueError):
-                        pass
-            # 배송추적 자동 새로고침 간격(전원 공유). 빈 값이면 로컬 기본(60) 유지.
-            iv = str(payload.get("auto_refresh_min", "") or "").strip()
-            if iv:
-                try:
-                    n = int(iv)
-                    if n >= 0:
-                        self.set_app_setting(CONFIG_KEY_AUTO_REFRESH_MIN, n)
-                except (TypeError, ValueError):
-                    pass
-        # 공유 설정 수신 후 상태 텍스트·정체기준·알림시간대·자동새로고침·표 갱신
-        self._refresh_key_status()
-        self._refresh_slack_status()
-        self._sync_stale_threshold_spinboxes()
-        self._sync_inquiry_hours_spinboxes()
-        self._sync_auto_refresh_spinbox()
-        self._reconfigure_auto_refresh_timer()
-        self._populate_tracking_table()
+        return self._tracking_controller._on_tracking_config_read_finished(payload)
 
     def _cleanup_tracking_config_read_thread(self):
-        self._tracking_config_read_thread = None
+        return self._tracking_controller._cleanup_tracking_config_read_thread()
 
     def _enter_tracking_tab(self):
         return self._tracking_controller._enter_tracking_tab()
@@ -3063,159 +2699,45 @@ class MainWindow(QMainWindow):
         return self._tracking_controller._cleanup_tracking_refresh_one_thread()
 
     # ── 슬랙 알림 ────────────────────────────────────────────────────────
+    # ── 배송추적 슬랙 위험 알림 ──────────────────────────────────────────────
     def _refresh_slack_status(self):
-        url = str(self.get_app_setting("slack_webhook_url", "") or "").strip()
-        self._slack_status_text = "설정됨 ✓" if url else "미설정"
-        self._update_status_displays()
+        return self._tracking_controller._refresh_slack_status()
 
     def _on_slack_config_clicked(self):
-        cur = str(self.get_app_setting("slack_webhook_url", "") or "")
-        url, ok = QInputDialog.getText(
-            self, "슬랙 웹훅 설정",
-            "슬랙 Incoming Webhook URL을 붙여넣으세요.\n"
-            "(https://hooks.slack.com/services/...  · 공유 시트에 저장되어 전원 적용)",
-            QLineEdit.EchoMode.Normal, cur,
-        )
-        if not ok:
-            return
-        url = url.strip()
-        self.set_app_setting("slack_webhook_url", url)
-        # 공유 「설정」 탭에도 반영(전원 자동 적용)
-        if gspread is not None and url and self._tracking_config_write_thread is None:
-            thread = TrackingConfigWriteThread({CONFIG_KEY_SLACK_WEBHOOK: url}, self)
-            self._tracking_config_write_thread = thread
-            thread.result_ready.connect(self._on_tracking_config_write_finished)
-            thread.finished.connect(self._cleanup_tracking_config_write_thread)
-            thread.finished.connect(thread.deleteLater)
-            thread.start()
-        self._refresh_slack_status()
+        return self._tracking_controller._on_slack_config_clicked()
 
     def _on_slack_auto_toggled(self, state):
-        self.set_app_setting("slack_auto_notify", bool(state))
+        return self._tracking_controller._on_slack_auto_toggled(state)
 
     def _on_slack_test_clicked(self):
-        url = str(self.get_app_setting("slack_webhook_url", "") or "").strip()
-        if not url:
-            QMessageBox.information(self, "슬랙 테스트", "먼저 「슬랙 설정」에서 웹훅 URL을 등록해 주세요.")
-            return
-        t = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        self._send_slack_async(f"✅ Easy Fulfill 배송모니터링 테스트 메시지입니다. ({t})", is_test=True)
+        return self._tracking_controller._on_slack_test_clicked()
 
     def _send_slack_async(self, text, is_test=False):
-        # 자동 알림은 토·일 미발송(평일 월~금만). 수동 테스트 버튼은 주말에도 허용.
-        if not is_test and not _is_weekday():
-            return
-        url = str(self.get_app_setting("slack_webhook_url", "") or "").strip()
-        if not url or self._slack_send_thread is not None:
-            return
-        thread = SlackSendThread(url, text, self)
-        self._slack_send_thread = thread
-        thread.result_ready.connect(lambda p: self._on_slack_sent(p, is_test))
-        thread.finished.connect(self._cleanup_slack_send_thread)
-        thread.finished.connect(thread.deleteLater)
-        thread.start()
+        return self._tracking_controller._send_slack_async(text, is_test)
 
     def _on_slack_sent(self, payload: dict, is_test: bool):
-        if payload.get("ok"):
-            if is_test:
-                QMessageBox.information(self, "슬랙 테스트", "전송 성공! 슬랙 채널을 확인해 주세요.")
-            else:
-                print("✓ 슬랙 알림 전송")
-        else:
-            err = payload.get("error", "")
-            if is_test:
-                QMessageBox.warning(self, "슬랙 테스트", f"전송 실패:\n\n{err}")
-            else:
-                print(f"! 슬랙 알림 전송 실패: {err}")
+        return self._tracking_controller._on_slack_sent(payload, is_test)
 
     def _cleanup_slack_send_thread(self):
-        self._slack_send_thread = None
+        return self._tracking_controller._cleanup_slack_send_thread()
 
     def _collect_risk_rows(self):
-        """현재 목록에서 위험 건(상태별)을 모읍니다.
-        반환: list[dict]. dict: regino,name,status,where,event_time,elapsed_h,category."""
-        values = self._tracking_list_values
-        data = values[1:] if len(values) > 1 else []
-        now_dt = datetime.now()
+        return self._tracking_controller._collect_risk_rows()
 
-        def _cell(row, idx):
-            return row[idx] if idx < len(row) else ""
-
-        out = []
-        for row in data:
-            done = _cell(row, 7).strip().upper() == "Y"
-            ev = self._parse_event_dt(_cell(row, 11))
-            ref = ev or self._parse_event_dt(_cell(row, 1))
-            risk, elapsed_h = self._evaluate_risk(
-                _cell(row, 6), _cell(row, 8), done, ref, now_dt,
-                _cell(row, TRACKING_MANAGEMENT_COL))
-            if not risk:
-                continue
-            out.append({
-                "regino": _cell(row, 0),
-                "name": _cell(row, 4),
-                "status": _cell(row, 6),
-                "where": _cell(row, 8),
-                "event_time": _cell(row, 11) if ev else "",
-                "elapsed_h": elapsed_h,
-                "category": risk,
-            })
-        # 위험도 순서: 허브정체 → 수거누락 → 이동정체
-        order = {"허브정체": 0, "수거누락": 1, "이동정체": 2}
-        out.sort(key=lambda it: (order.get(it["category"], 9), -it["elapsed_h"]))
-        return out
-
-    @staticmethod
-    def _risk_signature(risks):
-        """위험 목록의 내용 서명을 계산해 같은 목록의 재발송을 막는다."""
-        return risk_signature(risks)
+    def _risk_signature(self, risks):
+        return self._tracking_controller._risk_signature(risks)
 
     def _build_risk_digest_text(self, risks):
-        """위험 목록을 Slack 일일 다이제스트 본문으로 변환한다."""
-        thresholds = {
-            category: self._stale_threshold(category)
-            for category in STALE_DEFAULTS
-        }
-        return build_risk_digest_text(risks, thresholds)
+        return self._tracking_controller._build_risk_digest_text(risks)
 
     def _maybe_send_daily_digest(self):
-        """전체 새로고침 직후, 일일 알림이 켜져 있고 위험 건이 있으면 하루 1통 다이제스트.
-        중복은 공유 「설정」 탭의 발송 날짜로 방지(오늘 이미 보냈으면 전송 안 함).
-        토·일은 발송하지 않는다(평일 월~금만)."""
-        if not bool(self.get_app_setting("slack_auto_notify", False)):
-            return
-        if not _is_weekday():  # 토·일은 자동 알림 미발송(평일 월~금만)
-            return
-        webhook = str(self.get_app_setting("slack_webhook_url", "") or "").strip()
-        if not webhook or self._digest_thread is not None:
-            return
-        risks = self._collect_risk_rows()
-        if not risks:
-            return
-        text = self._build_risk_digest_text(risks)
-        sig = self._risk_signature(risks)
-        today = datetime.now().strftime("%Y-%m-%d")
-        thread = DigestSendThread(webhook, text, today, sig, self)
-        self._digest_thread = thread
-        thread.result_ready.connect(self._on_digest_sent)
-        thread.finished.connect(self._cleanup_digest_thread)
-        thread.finished.connect(thread.deleteLater)
-        thread.start()
+        return self._tracking_controller._maybe_send_daily_digest()
 
     def _on_digest_sent(self, payload: dict):
-        if payload.get("sent"):
-            print("✓ 일일 위험 다이제스트 슬랙 발송")
-        elif payload.get("ok"):
-            reason = payload.get("reason", "")
-            if reason == "unchanged":
-                print("· 다이제스트 생략: 직전 발송과 내용 동일")
-            else:
-                print("· 다이제스트 생략: 오늘 이미 발송됨")
-        else:
-            print(f"! 다이제스트 발송 실패: {payload.get('error', '')}")
+        return self._tracking_controller._on_digest_sent(payload)
 
     def _cleanup_digest_thread(self):
-        self._digest_thread = None
+        return self._tracking_controller._cleanup_digest_thread()
 
     # ── 네이버 문의 알림(상품문의·고객문의 → 슬랙) ──────────────────────────
     def _init_naver_inquiry_polling(self):

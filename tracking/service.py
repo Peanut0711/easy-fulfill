@@ -17,6 +17,7 @@ TRACKING_MANAGEMENT_EXCLUDED = {
     TRACKING_MANAGEMENT_DISCARDED,
     TRACKING_MANAGEMENT_MANUAL_STOP,
 }
+TRACKING_COMPLETED_LOOKBACK_DAYS = 14
 
 TRACKING_DISCARD_CANDIDATE_HOURS = 48
 TRACKING_DISCARD_CONFIRM_HOURS = 72
@@ -80,6 +81,65 @@ def parse_timestamp(value: object) -> datetime | None:
         return datetime.strptime(text, "%Y-%m-%d %H:%M:%S")
     except ValueError:
         return None
+
+
+def parse_tracking_list_timestamp(value: object) -> datetime | None:
+    """배송추적 목록의 등록·이벤트 시각 표기를 datetime으로 파싱한다."""
+    text = str(value or "").strip()
+    for fmt in (
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d %H:%M",
+        "%Y.%m.%d %H:%M:%S",
+        "%Y.%m.%d %H:%M",
+    ):
+        try:
+            return datetime.strptime(text, fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def select_tracking_list_row_numbers(
+    registrations: Sequence[object],
+    completions: Sequence[object],
+    events: Sequence[object],
+    managements: Sequence[object],
+    mode: str,
+    now_dt: datetime | None = None,
+    completed_lookback_days: int = TRACKING_COMPLETED_LOOKBACK_DAYS,
+) -> list[int]:
+    """목록 모드에 맞는 Sheet 행 번호만 골라 상세 행 읽기 범위를 줄인다."""
+    now_dt = now_dt or datetime.now()
+    today = now_dt.date()
+    cutoff = today - timedelta(days=max(0, completed_lookback_days - 1))
+    count = max(len(registrations), len(completions), len(events), len(managements))
+
+    def cell(values: Sequence[object], index: int) -> str:
+        return str(values[index] if index < len(values) else "" or "").strip()
+
+    selected = []
+    for index in range(count):
+        registered = cell(registrations, index)
+        complete = cell(completions, index).upper() == "Y"
+        management = cell(managements, index)
+        if mode == "오늘":
+            include = registered.startswith(today.strftime("%Y-%m-%d"))
+        elif mode == "완료":
+            finished_at = parse_tracking_list_timestamp(cell(events, index))
+            if finished_at is None:
+                finished_at = parse_tracking_list_timestamp(registered)
+            include = complete and finished_at is not None and finished_at.date() >= cutoff
+        elif mode == "추적 중지":
+            include = management == TRACKING_MANAGEMENT_MANUAL_STOP
+        elif mode == "폐기 후보":
+            include = management == TRACKING_MANAGEMENT_CANDIDATE
+        elif mode == "폐기":
+            include = management == TRACKING_MANAGEMENT_DISCARDED
+        else:  # 배송중
+            include = not complete and management not in TRACKING_MANAGEMENT_EXCLUDED
+        if include:
+            selected.append(index + 2)  # 헤더 다음 행부터 시작
+    return selected
 
 
 def tracking_management_state(

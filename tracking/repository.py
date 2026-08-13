@@ -8,6 +8,9 @@ from typing import Mapping, Sequence
 import pandas as pd
 
 
+TRACKING_DETAIL_READ_BATCH_SIZE = 100
+
+
 def open_tracking_worksheet(
     gc, spreadsheet_id: str, sheet_title: str, headers: Sequence[str],
 ):
@@ -87,6 +90,32 @@ def write_config_values(worksheet, updates: Mapping[str, object]) -> None:
 def read_tracking_values(worksheet) -> list[list[str]]:
     """배송추적 시트 전체 값을 읽는다."""
     return worksheet.get_all_values()
+
+
+def read_tracking_list_metadata(worksheet) -> tuple[list[str], list[list[str]]]:
+    """목록 선별에 필요한 좁은 열만 일괄로 읽는다.
+
+    반환 순서는 헤더, 등록일시(B), 완료(H), 최근이벤트(L), 관리상태(M)다.
+    """
+    values = worksheet.batch_get(["A1:M1", "B2:B", "H2:H", "L2:L", "M2:M"])
+    header = values[0][0] if values and values[0] else []
+    columns = [
+        [row[0] if row else "" for row in (value or [])]
+        for value in values[1:]
+    ]
+    return header, columns
+
+
+def read_tracking_rows(worksheet, row_numbers: Sequence[int]) -> list[list[str]]:
+    """선별된 행의 A:M 상세값만 한 번에 읽는다."""
+    if not row_numbers:
+        return []
+    rows = []
+    for start in range(0, len(row_numbers), TRACKING_DETAIL_READ_BATCH_SIZE):
+        batch = row_numbers[start:start + TRACKING_DETAIL_READ_BATCH_SIZE]
+        values = worksheet.batch_get([f"A{row}:M{row}" for row in batch])
+        rows.extend(value[0] if value else [] for value in values)
+    return rows
 
 
 def batch_update_tracking(worksheet, updates) -> None:
