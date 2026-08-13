@@ -19,6 +19,12 @@ from tracking.service import (
     risk_bucket,
     tracking_management_state,
 )
+from tracking.repository import update_tracking_management, update_tracking_notes
+from tracking.workers import (
+    TrackingManagementUpdateThread,
+    TrackingNotesUpdateThread,
+    TrackingRefreshThread,
+)
 
 
 row = [""] * 13
@@ -61,6 +67,31 @@ assert digest == (
     "[🟠 수거 누락 의심 · 기준 24h+]\n"
     "• 123 홍길동 — 운송장출력 @ 위치미상 (49시간째 무이동)"
 )
+
+
+class _TrackingWorksheetStub:
+    def __init__(self):
+        self.batch_calls = []
+
+    def get_all_values(self):
+        return [["등기번호"], ["123"]]
+
+    def batch_update(self, updates, value_input_option):
+        assert value_input_option == "RAW"
+        self.batch_calls.append(updates)
+
+
+worksheet = _TrackingWorksheetStub()
+assert update_tracking_management(worksheet, ["123"], "수동 중지") == {
+    "updated": 1, "missing": 0,
+}
+assert worksheet.batch_calls[-1] == [{"range": "M2", "values": [["수동 중지"]]}]
+assert update_tracking_notes(worksheet, {"123": "테스트 메모"}) == 1
+assert worksheet.batch_calls[-1] == [{"range": "K2", "values": [["테스트 메모"]]}]
+
+assert hasattr(TrackingRefreshThread, "progress")
+assert hasattr(TrackingManagementUpdateThread, "result_ready")
+assert hasattr(TrackingNotesUpdateThread, "result_ready")
 
 app = QApplication.instance() or QApplication([])
 file = QFile(str(Path(__file__).with_name("ui") / "main_window.ui"))
