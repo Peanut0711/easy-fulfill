@@ -20,6 +20,7 @@ from tracking.service import (
     tracking_management_state,
 )
 from tracking.repository import update_tracking_management, update_tracking_notes
+from tracking.controller import TrackingController
 from tracking.workers import (
     TrackingManagementUpdateThread,
     TrackingNotesUpdateThread,
@@ -92,6 +93,8 @@ assert worksheet.batch_calls[-1] == [{"range": "K2", "values": [["테스트 메�
 assert hasattr(TrackingRefreshThread, "progress")
 assert hasattr(TrackingManagementUpdateThread, "result_ready")
 assert hasattr(TrackingNotesUpdateThread, "result_ready")
+assert TrackingController._tracking_table_col(10) == 10
+assert TrackingController._parse_event_dt("2026.08.05 10:00") == datetime(2026, 8, 5, 10)
 
 app = QApplication.instance() or QApplication([])
 file = QFile(str(Path(__file__).with_name("ui") / "main_window.ui"))
