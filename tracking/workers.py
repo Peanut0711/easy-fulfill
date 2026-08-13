@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 from datetime import datetime
 
+import pandas as pd
 from PySide6.QtCore import QThread, Signal
 
 from .repository import (
@@ -394,6 +395,56 @@ def run_tracking_list_worker(mode="배송중"):
         }
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
+
+def run_courier_receipt_export_worker(save_path, today_str):
+    """당일 등록 송장을 택배사 제출용 xlsx로 생성한다."""
+    read = run_tracking_list_worker("전체")
+    if not read.get("ok"):
+        return read
+    values = read.get("values") or []
+    if not values:
+        return {"ok": False, "error": "「송장추적」 시트가 비어 있습니다."}
+    header = values[0]
+
+    def column(name):
+        try:
+            return header.index(name)
+        except ValueError:
+            return -1
+
+    registered_col = column("등록일시")
+    regino_col = column("등기번호")
+    name_col = column("수취인명")
+    if min(registered_col, regino_col, name_col) < 0:
+        return {
+            "ok": False,
+            "error": "시트 헤더에서 등록일시/등기번호/수취인명 컬럼을 찾지 못했습니다.",
+        }
+    rows = []
+    seen = set()
+    for row in values[1:]:
+        registered = (row[registered_col] if len(row) > registered_col else "").strip()
+        if not registered.startswith(today_str):
+            continue
+        regino = (row[regino_col] if len(row) > regino_col else "").strip()
+        if not regino or regino in seen:
+            continue
+        seen.add(regino)
+        name = (row[name_col] if len(row) > name_col else "").strip()
+        rows.append((regino, name))
+    if not rows:
+        return {"ok": True, "count": 0, "path": None}
+    dataframe = pd.DataFrame(
+        [(index, regino, name) for index, (regino, name) in enumerate(rows, start=1)],
+        columns=["순번", "송장번호", "이름"],
+    )
+    try:
+        with pd.ExcelWriter(save_path, engine="xlsxwriter") as writer:
+            dataframe.to_excel(writer, index=False, sheet_name="접수목록")
+    except Exception as error:
+        return {"ok": False, "error": f"파일 저장 실패: {error}"}
+    return {"ok": True, "count": len(rows), "path": save_path}
 
 
 def run_tracking_management_update_worker(reginos, management):

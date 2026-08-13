@@ -37,6 +37,7 @@ from tracking.repository import (
     update_tracking_notes,
 )
 from tracking.controller import TrackingController
+import tracking.workers as tracking_workers
 from tracking.workers import (
     DigestSendThread,
     SlackSendThread,
@@ -175,6 +176,20 @@ assert [len(ranges) for ranges in batch_worksheet.ranges] == [
     TRACKING_DETAIL_READ_BATCH_SIZE, 2,
 ]
 
+
+original_list_worker = tracking_workers.run_tracking_list_worker
+requested_modes = []
+tracking_workers.run_tracking_list_worker = lambda mode: (
+    requested_modes.append(mode) or {"ok": True, "values": [["등록일시", "등기번호", "수취인명"]]}
+)
+try:
+    assert tracking_workers.run_courier_receipt_export_worker("unused.xlsx", "2026-08-13") == {
+        "ok": True, "count": 0, "path": None,
+    }
+finally:
+    tracking_workers.run_tracking_list_worker = original_list_worker
+assert requested_modes == ["전체"]
+
 assert hasattr(TrackingRefreshThread, "progress")
 assert hasattr(TrackingManagementUpdateThread, "result_ready")
 assert hasattr(TrackingNotesUpdateThread, "result_ready")
@@ -197,6 +212,16 @@ class _TrackingControllerHost(QObject):
 
     def get_app_setting(self, _key, default=None):
         return default
+
+
+runtime_host = _TrackingControllerHost()
+runtime_controller = TrackingController(runtime_host)
+runtime_controller.initialize_runtime()
+assert runtime_host._tracking_push_timer.isSingleShot()
+assert runtime_host._tracking_list_timer.interval() == 120000
+assert runtime_host._tracking_list_timer.isActive()
+assert runtime_host._tracking_auto_refresh_timer is not None
+assert hasattr(runtime_controller, "export_courier_receipt")
 
 
 admin_host = _TrackingControllerHost()

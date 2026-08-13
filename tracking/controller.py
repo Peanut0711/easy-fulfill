@@ -6,7 +6,11 @@ Google Sheets/KPOST I/O는 tracking.workers 및 tracking.repository에 위임한
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 from datetime import date, datetime
+from pathlib import Path
 
 try:
     import gspread
@@ -17,6 +21,7 @@ from PySide6.QtCore import QObject, Qt, QUrl
 from PySide6.QtGui import QColor, QDesktopServices
 from PySide6.QtWidgets import (
     QCheckBox,
+    QFileDialog,
     QGroupBox,
     QHBoxLayout,
     QInputDialog,
@@ -59,6 +64,7 @@ from .workers import (
     SlackSendThread,
     TrackingConfigReadThread,
     TrackingConfigWriteThread,
+    CourierReceiptExportThread,
     TrackingKeyValidateThread,
     TrackingListThread,
     TrackingManagementUpdateThread,
@@ -72,6 +78,7 @@ from .workers import (
 TRACKING_SHEET_PUSH_DEBOUNCE_MS = 1200
 CONFIG_KEY_AUTO_REFRESH_MIN = "tracking_auto_refresh_min"
 TRACKING_AUTO_REFRESH_DEFAULT_MIN = 60
+COURIER_RECEIPT_PREFIX = "하이제니스"
 
 
 class TrackingController(QObject):
@@ -81,6 +88,47 @@ class TrackingController(QObject):
         super().__init__(host)
         self.host = host
         self.ui = getattr(host, "ui", None)
+
+    def initialize_runtime(self):
+        """배송추적 전용 비동기 상태와 타이머를 한곳에서 초기화한다."""
+        self._tracking_op_thread = None
+        self._tracking_pending_records = []
+        self._tracking_inflight_records = []
+        self._tracking_push_timer = self._new_timer(single_shot=True)
+        self._tracking_push_timer.timeout.connect(self._flush_tracking_records)
+        self._tracking_refresh_thread = None
+        self._tracking_config_read_thread = None
+        self._tracking_config_write_thread = None
+        self._tracking_key_validate_thread = None
+        self._key_validate_mode = "status"
+        self._key_validate_pending_key = ""
+        self._tracking_list_thread = None
+        self._tracking_list_values = []
+        self._tracking_management_update_thread = None
+        self._tracking_notes_update_thread = None
+        self._tracking_notes_pending = {}
+        self._tracking_notes_inflight = {}
+        self._populating_tracking_table = False
+        self._courier_export_thread = None
+        self._tracking_list_timer = self._new_timer(interval=120000)
+        self._tracking_list_timer.timeout.connect(self._on_tracking_list_poll)
+        self._tracking_list_timer.start()
+        self._tracking_auto_refresh_timer = self._new_timer()
+        self._tracking_auto_refresh_timer.timeout.connect(self._on_tracking_auto_refresh_tick)
+        self._reconfigure_auto_refresh_timer()
+        self._tracking_refresh_one_thread = None
+        self._slack_send_thread = None
+        self._digest_thread = None
+        self._slack_notify_after_reload = False
+
+    def _new_timer(self, interval=None, single_shot=False):
+        from PySide6.QtCore import QTimer
+
+        timer = QTimer(self.host)
+        timer.setSingleShot(single_shot)
+        if interval is not None:
+            timer.setInterval(interval)
+        return timer
 
     def __getattr__(self, name):
         return getattr(self.host, name)
@@ -596,6 +644,72 @@ class TrackingController(QObject):
 
     def _cleanup_tracking_op_thread(self):
         self._tracking_op_thread = None
+
+    def export_courier_receipt(self):
+        """오늘 등록한 송장을 택배사 접수목록 Excel로 내보낸다."""
+        if gspread is None:
+            QMessageBox.warning(
+                self.host, "택배사 접수목록",
+                "gspread 패키지가 필요합니다. (pip install gspread)",
+            )
+            return
+        if self._courier_export_thread is not None:
+            QMessageBox.information(
+                self.host, "택배사 접수목록", "이미 내보내는 중입니다. 잠시만 기다려 주세요.")
+            return
+        today = date.today()
+        default_name = f"{COURIER_RECEIPT_PREFIX} {today.strftime('%y.%m.%d')}.xlsx"
+        start_path = str(Path.home() / "Documents" / default_name)
+        path, _ = QFileDialog.getSaveFileName(
+            self.host, "택배사 접수목록 저장", start_path, "Excel 파일 (*.xlsx)")
+        if not path:
+            return
+        self.host.statusBar().showMessage("택배사 접수목록 생성 중…")
+        thread = CourierReceiptExportThread(path, today.strftime("%Y-%m-%d"), self.host)
+        self._courier_export_thread = thread
+        thread.result_ready.connect(self._on_courier_export_finished)
+        thread.finished.connect(self._cleanup_courier_export_thread)
+        thread.start()
+
+    def _on_courier_export_finished(self, payload):
+        """택배사 접수목록 Excel 생성 결과를 안내한다."""
+        if not payload.get("ok"):
+            self.host.statusBar().showMessage("택배사 접수목록 생성 실패", 4000)
+            QMessageBox.warning(
+                self.host, "택배사 접수목록",
+                payload.get("error", "알 수 없는 오류가 발생했습니다."),
+            )
+            return
+        count = payload.get("count", 0)
+        if count == 0:
+            self.host.statusBar().showMessage("오늘 접수된 송장이 없습니다.", 4000)
+            QMessageBox.information(self.host, "택배사 접수목록", "오늘 송장추적에 등록된 송장이 없습니다.")
+            return
+        path = payload.get("path")
+        self.host.statusBar().showMessage(f"택배사 접수목록 {count}건 저장 완료", 5000)
+        result = QMessageBox.question(
+            self.host, "택배사 접수목록",
+            f"오늘 접수 {count}건을 저장했습니다.\n\n{path}\n\n파일이 있는 폴더를 열까요?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if result != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            folder = os.path.dirname(path)
+            if sys.platform == "win32":
+                os.startfile(folder)
+            elif sys.platform == "darwin":
+                subprocess.call(("open", folder))
+            else:
+                subprocess.call(("xdg-open", folder))
+        except Exception as error:
+            print(f"! 택배사 접수목록 폴더 열기 실패: {error}")
+
+    def _cleanup_courier_export_thread(self):
+        thread = self._courier_export_thread
+        self._courier_export_thread = None
+        if thread is not None:
+            thread.deleteLater()
 
     # ── 송장 배송추적: 새로고침(스마트택배 조회) ──────────────────────────
     def _set_tracking_summary(self, text):
