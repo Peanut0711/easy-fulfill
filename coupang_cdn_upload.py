@@ -30,6 +30,7 @@ AUTH_STATE_PATH = PROFILE_DIR / "easy-fulfill-auth-state.bin"
 UPLOAD_URL = "https://wing.coupang.com/tenants/seller-web/file/resize/uploadV2"
 WING_HOME = "https://wing.coupang.com/"
 CDN_BASE = "https://image.coupangcdn.com/image/"
+UPLOAD_RESPONSE_LOG_MAX_CHARS = 1_000
 
 
 class _DataBlob(ctypes.Structure):
@@ -123,6 +124,41 @@ def load_report(product_no: str):
     return output_dir, report
 
 
+def _redact_upload_response_text(value: str):
+    """오류 응답을 진단 로그에 남기되 인증값은 노출하지 않는다."""
+    value = re.sub(
+        r'(?i)(authorization|cookie|token|password|session)(["\']?\s*[:=]\s*["\']?)([^"\'\s;&<]+)',
+        r"\1\2[REDACTED]",
+        value,
+    )
+    value = re.sub(r"\s+", " ", value).strip()
+    if len(value) > UPLOAD_RESPONSE_LOG_MAX_CHARS:
+        return value[:UPLOAD_RESPONSE_LOG_MAX_CHARS] + " ...[truncated]"
+    return value
+
+
+def _read_upload_response(response):
+    """JSON이 아닌 WING 오류 응답도 상태와 함께 운영자 로그에 남긴다."""
+    content_type = response.headers.get("content-type", "(없음)")
+    body = response.text()
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError as error:
+        preview = _redact_upload_response_text(body) or "(빈 응답)"
+        raise RuntimeError(
+            "쿠팡 이미지 업로드 응답이 JSON이 아닙니다: "
+            f"HTTP {response.status} {response.status_text}; "
+            f"Content-Type={content_type}; URL={response.url}; 본문={preview}"
+        ) from error
+    if not isinstance(payload, dict):
+        raise RuntimeError(
+            "쿠팡 이미지 업로드 응답 형식이 객체가 아닙니다: "
+            f"HTTP {response.status} {response.status_text}; "
+            f"Content-Type={content_type}; 응답={_redact_upload_response_text(body)}"
+        )
+    return payload
+
+
 def upload_images(context, output_dir: Path, report: dict):
     progress_path = output_dir / "coupang-cdn-progress.json"
     previous = []
@@ -150,9 +186,14 @@ def upload_images(context, output_dir: Path, report: dict):
             },
             timeout=60_000,
         )
-        payload = response.json()
+        payload = _read_upload_response(response)
         if not response.ok or not payload.get("success") or not payload.get("message"):
-            raise RuntimeError(f"이미지 {item['index']} 업로드 실패: {response.status} {payload}")
+            raise RuntimeError(
+                f"이미지 {item['index']} 업로드 실패: "
+                f"HTTP {response.status} {response.status_text}; "
+                f"Content-Type={response.headers.get('content-type', '(없음)')}; "
+                f"응답={_redact_upload_response_text(json.dumps(payload, ensure_ascii=False))}"
+            )
         mapping.append({
             **item,
             "cdnPath": payload["message"],
@@ -231,16 +272,36 @@ def render_paste_html(preview_html: str):
 
 
 def wait_for_login(page):
-    page.goto(WING_HOME)
+    if _has_active_upload_session(page):
+        print("쿠팡 WING 업로드 로그인 세션이 확인되었습니다.")
+        return
     print("열린 Chrome 창에서 쿠팡 WING에 로그인해 주세요. 로그인되면 자동으로 업로드를 시작합니다.")
-    page.wait_for_timeout(2_000)
     deadline = time.monotonic() + 300
-    while "xauth.coupang.com" in page.url:
+    previous_url = page.url
+    while True:
         if time.monotonic() > deadline:
             raise RuntimeError("쿠팡 WING 로그인 대기 시간이 초과되었습니다.")
+        if page.url != previous_url:
+            previous_url = page.url
+            if _is_wing_url(page.url) and _has_active_upload_session(page):
+                break
         page.wait_for_timeout(1_000)
-    if not re.match(r"https://wing\.coupang\.com/", page.url):
-        raise RuntimeError(f"로그인 후 예상하지 못한 페이지로 이동했습니다: {page.url}")
+    print("쿠팡 WING 업로드 로그인 세션이 확인되었습니다.")
+
+
+def _has_active_upload_session(page):
+    """업로드 경로로 인증을 확인한다. WING 첫 화면 접근만으로는 로그인 완료를 판단할 수 없다."""
+    try:
+        # GET은 업로드를 수행하지 않는다. 미인증이면 최종 URL이 xauth로 이동한다.
+        page.goto(UPLOAD_URL, wait_until="domcontentloaded", timeout=30_000)
+    except Exception as error:
+        print(f"[로그인 확인] 업로드 권한 확인 요청 실패: {error}")
+        return False
+    return _is_wing_url(page.url)
+
+
+def _is_wing_url(url: str):
+    return urlparse(url).hostname == "wing.coupang.com"
 
 
 def launch_coupang_context(playwright, headless=False):
@@ -263,14 +324,12 @@ def launch_coupang_upload_context(playwright):
     context = launch_coupang_context(playwright, headless=True)
     restore_coupang_session(context)
     page = context.pages[0] if context.pages else context.new_page()
-    page.goto(WING_HOME)
-    page.wait_for_timeout(2_000)
-    if re.match(r"https://wing\.coupang\.com/", page.url):
+    if _has_active_upload_session(page):
         print("저장된 쿠팡 로그인 세션으로 숨김 업로드를 진행합니다.")
         return context, page
 
     context.close()
-    print("쿠팡 로그인이 필요해 WING 창을 엽니다. 로그인 후 업로드를 계속합니다.")
+    print("저장된 쿠팡 로그인 세션에 업로드 권한이 없습니다. WING 창에서 로그인해 주세요.")
     context = launch_coupang_context(playwright)
     restore_coupang_session(context)
     page = context.pages[0] if context.pages else context.new_page()
@@ -285,6 +344,8 @@ def self_test():
         assert _unprotect_for_current_windows_user(_protect_for_current_windows_user(b"session-test")) == b"session-test"
     paste_html = render_paste_html('<main><section class="image-block grid-2"><img src="a.jpg"></section></main>')
     assert "grid-2" not in paste_html and 'src="a.jpg"' in paste_html
+    assert _redact_upload_response_text('token="secret"\nerror') == 'token="[REDACTED]" error'
+    assert _is_wing_url(WING_HOME) and not _is_wing_url("https://xauth.coupang.com/login")
     with tempfile.TemporaryDirectory() as temp_dir:
         image_path = Path(temp_dir) / "small.png"
         Image.new("RGB", (120, 120), "white").save(image_path)
