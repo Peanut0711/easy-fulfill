@@ -98,6 +98,12 @@ from orders.bulk import (
     consolidate_gmarket_orders,
 )
 from orders.invoice import INVOICE_COLUMNS, build_invoice_rows
+from post_parcel import (
+    ParcelApiError,
+    ParcelValidationError,
+    resolve_recipient_address,
+    submit_test_order,
+)
 
 try:
     import gspread
@@ -3905,6 +3911,12 @@ class MainWindow(QMainWindow):
         self.act_dispatch.setStatusTip('매칭된 송장번호를 네이버에 API로 발송처리(배송중 전환)')
         self.act_dispatch.triggered.connect(self.dispatch_naver_via_api)
 
+        self.act_epost_test_receipt = QAction(
+            QIcon('image/korea-post-icon.png'), '우체국 테스트 접수(송장 엑셀)', self)
+        self.act_epost_test_receipt.setStatusTip(
+            '송장 엑셀 1건을 testYn=Y로 우체국 계약소포 API에 테스트 접수')
+        self.act_epost_test_receipt.triggered.connect(self.run_epost_test_receipt)
+
         # 외부 바로가기
         self.act_db = QAction(QIcon('image/database-icon.png'), '데이터베이스 시트', self)
         self.act_db.setShortcut('Ctrl+D')
@@ -3969,6 +3981,8 @@ class MainWindow(QMainWindow):
         m_api = mb.addMenu('API(개발 중)')
         m_api.addAction(self.act_api_load)
         m_api.addAction(self.act_dispatch)
+        m_api.addSeparator()
+        m_api.addAction(self.act_epost_test_receipt)
 
         m_link = mb.addMenu('바로가기(&L)')
         m_link.addAction(self.act_db)
@@ -6855,6 +6869,155 @@ class MainWindow(QMainWindow):
                 self,
                 "오류",
                 f"송장 엑셀 파일 생성 중 오류가 발생했습니다.\n\n{error_msg}"
+            )
+
+    def run_epost_test_receipt(self):
+        """기존 송장 양식 한 건을 우체국 테스트 신청(testYn=Y)으로 보낸다."""
+        start_dir = str((Path(__file__).resolve().parent / "output"))
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "우체국 테스트 접수용 송장 엑셀 선택",
+            start_dir,
+            "Excel Files (*.xlsx)",
+        )
+        if not file_path:
+            return
+
+        try:
+            dataframe = pd.read_excel(file_path, dtype=str, keep_default_na=False)
+            missing = [column for column in INVOICE_COLUMNS if column not in dataframe.columns]
+            if missing:
+                QMessageBox.warning(
+                    self,
+                    "우체국 테스트 접수",
+                    "기존 송장 양식의 열을 찾을 수 없습니다.\n\n"
+                    f"누락: {', '.join(missing)}",
+                )
+                return
+
+            rows = [
+                row for row in dataframe.loc[:, INVOICE_COLUMNS].to_dict("records")
+                if any(str(value or "").strip() for value in row.values())
+            ]
+            if len(rows) != 1:
+                QMessageBox.warning(
+                    self,
+                    "우체국 테스트 접수",
+                    "테스트 접수는 송장 엑셀의 1건만 지원합니다.\n"
+                    f"현재 유효 행: {len(rows)}건",
+                )
+                return
+
+            if gspread is None:
+                raise ParcelValidationError("gspread 패키지가 필요합니다. (pip install gspread)")
+            from google_sheets_oauth import get_authorized_gspread_client
+
+            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+            try:
+                config = _read_config_values_map(
+                    _standalone_open_config_ws(get_authorized_gspread_client()),
+                )
+                suggestions = resolve_recipient_address(
+                    rows[0].get("수취인 주소", ""),
+                    config.get("epost_postcode_api_key", ""),
+                )
+            finally:
+                QApplication.restoreOverrideCursor()
+
+            if not suggestions:
+                QMessageBox.warning(
+                    self,
+                    "우체국 테스트 접수",
+                    "우편번호 API에서 표준 도로명주소를 찾지 못했습니다.\n\n"
+                    "주소를 도로명과 건물번호까지 입력한 뒤 다시 시도해 주세요.",
+                )
+                return
+            if len(suggestions) == 1:
+                address = suggestions[0]
+            else:
+                choices = [
+                    f"[{item.postcode}] {item.address1} / {item.address2}"
+                    for item in suggestions
+                ]
+                choice, accepted = QInputDialog.getItem(
+                    self,
+                    "수취인 주소 선택",
+                    "우편번호 API가 여러 주소를 찾았습니다.\n"
+                    "실제 수취인 주소를 선택해 주세요.",
+                    choices,
+                    0,
+                    False,
+                )
+                if not accepted:
+                    return
+                address = suggestions[choices.index(choice)]
+
+            rows[0] = {
+                **rows[0],
+                "우편번호": address.postcode,
+                "수취인 주소": address.address1,
+                "수취인 상세주소": address.address2,
+            }
+            confirm = QMessageBox.question(
+                self,
+                "우체국 테스트 접수 확인",
+                "선택한 송장 1건을 우체국 계약소포 API에 테스트 신청합니다.\n\n"
+                "- testYn=Y로 전송합니다.\n"
+                "- 실제 접수 우체국 전송, 운송장 출력, 네이버 발송처리는 하지 않습니다.\n"
+                "- 빈 주문번호는 프로그램이 테스트용 번호를 생성합니다.\n"
+                f"- 우편번호: {address.postcode}\n"
+                f"- 수취인주소: {address.address1}\n"
+                f"- 수취인상세주소: {address.address2}\n\n"
+                "계속할까요?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if confirm != QMessageBox.StandardButton.Yes:
+                return
+
+            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+            try:
+                result = submit_test_order(rows[0], config)
+            finally:
+                QApplication.restoreOverrideCursor()
+
+            print(
+                "[우체국 테스트 접수] 성공 "
+                f"orderNo={result.order_no}, reqNo={result.req_no}, "
+                f"regiNo={result.regi_no}, rechecked={result.rechecked}",
+            )
+            QMessageBox.information(
+                self,
+                "우체국 테스트 접수 완료",
+                "테스트 접수와 재조회가 완료되었습니다.\n\n"
+                f"테스트 주문번호: {result.order_no}\n"
+                f"소포신청번호: {result.req_no}\n"
+                f"예약번호: {result.res_no}\n"
+                f"등기번호: {result.regi_no}\n\n"
+                "테스트 신청 건은 실제 접수 우체국으로 전송되지 않으며, "
+                "운송장 출력과 네이버 발송처리는 실행하지 않았습니다.",
+            )
+        except ParcelApiError as error:
+            print(f"[우체국 테스트 접수] API 실패 {error.code}: {error.message}")
+            QMessageBox.warning(
+                self,
+                "우체국 테스트 접수 실패",
+                f"우체국 API가 접수를 거절했습니다.\n\n{error}",
+            )
+        except (ParcelValidationError, requests.RequestException, ET.ParseError, ValueError) as error:
+            print(f"[우체국 테스트 접수] 실행 실패: {error}")
+            QMessageBox.warning(
+                self,
+                "우체국 테스트 접수 실패",
+                f"테스트 접수를 실행하지 못했습니다.\n\n{error}",
+            )
+        except Exception as error:
+            print(f"[우체국 테스트 접수] 예기치 않은 오류: {error}")
+            QMessageBox.critical(
+                self,
+                "우체국 테스트 접수 오류",
+                "테스트 접수 중 예상하지 못한 오류가 발생했습니다.\n\n"
+                f"{error}",
             )
             
     def load_invoice_file(self):
