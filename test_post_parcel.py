@@ -6,6 +6,7 @@ import xml.etree.ElementTree as ET
 from post_parcel import (
     ParcelValidationError,
     address_suggestion,
+    build_real_order_values,
     build_test_order_values,
     normalize_content_code,
     _postcode_response_items,
@@ -47,6 +48,17 @@ class PostParcelRequestTests(unittest.TestCase):
         self.assertEqual(values["ordCompNm"], "")
         self.assertEqual(values["recAddr2"], "-")
         self.assertEqual(values["contCd"], "029")
+
+    def test_real_receipt_generates_distinct_order_number_and_disables_self_print(self):
+        values = build_real_order_values(ROW, SETTINGS)
+
+        self.assertTrue(values["orderNo"].startswith("EFREAL-"))
+        self.assertEqual(values["testYn"], "N")
+        self.assertEqual(values["printYn"], "N")
+
+    def test_real_receipt_blocks_self_print_setting(self):
+        with self.assertRaisesRegex(ParcelValidationError, "운송장 자체 출력"):
+            build_real_order_values(ROW, {**SETTINGS, "epost_parcel_print_yn": "Y"})
 
     def test_missing_recipient_address_is_blocked_before_api_call(self):
         row = {**ROW, "수취인 주소": ""}

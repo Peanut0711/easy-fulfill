@@ -1,7 +1,8 @@
-"""우체국 계약소포 OpenAPI의 테스트 접수 공통 기능.
+"""우체국 계약소포 OpenAPI의 단건 접수 공통 기능.
 
-이 모듈은 실접수와 운송장 출력 기능을 제공하지 않는다. ``testYn=Y`` 요청만
-만들고 호출하며, 인증키와 수취인 개인정보를 로그에 출력하지 않는다.
+테스트 접수와 명시적으로 확인한 실접수만 제공한다. 운송장 출력과 네이버
+발송은 여기서 수행하지 않으며, 인증키와 수취인 개인정보를 로그에 출력하지
+않는다.
 """
 
 from __future__ import annotations
@@ -49,14 +50,18 @@ class ParcelApiError(RuntimeError):
 
 
 @dataclass(frozen=True)
-class ParcelTestReceipt:
-    """테스트 소포신청 및 재조회 결과의 개인정보 없는 요약."""
+class ParcelReceipt:
+    """소포신청 및 재조회 결과의 개인정보 없는 요약."""
 
     order_no: str
     req_no: str
     res_no: str
     regi_no: str
     rechecked: bool
+
+
+# 이전 테스트 접수 호출부와의 호환성을 위한 이름이다.
+ParcelTestReceipt = ParcelReceipt
 
 
 @dataclass(frozen=True)
@@ -235,9 +240,17 @@ def normalize_content_code(value: object) -> str:
     return code.zfill(3)
 
 
+def new_order_no(prefix: str) -> str:
+    """빈 송장 주문번호 대신 사용할 충돌 가능성이 낮은 내부 식별자."""
+    return f"{prefix}-{datetime.now():%Y%m%d%H%M%S}-{secrets.token_hex(3).upper()}"
+
+
 def new_test_order_no() -> str:
-    """빈 송장 주문번호 대신 사용할 충돌 가능성이 낮은 테스트 식별자."""
-    return f"EFTEST-{datetime.now():%Y%m%d%H%M%S}-{secrets.token_hex(3).upper()}"
+    return new_order_no("EFTEST")
+
+
+def new_real_order_no() -> str:
+    return new_order_no("EFREAL")
 
 
 def encrypt_reg_data(security_key: str, plain_text: str) -> str:
@@ -297,8 +310,15 @@ def _first_result(root: ET.Element) -> dict[str, str]:
     return result
 
 
-def build_test_order_values(row: Mapping[str, object], settings: Mapping[str, object]) -> dict[str, str]:
-    """기존 11열 송장 행을 테스트 소포신청 파라미터로 변환한다."""
+def build_order_values(
+    row: Mapping[str, object],
+    settings: Mapping[str, object],
+    *,
+    test_yn: str,
+) -> dict[str, str]:
+    """기존 11열 송장 행을 계약소포 신청 파라미터로 변환한다."""
+    if test_yn not in {"Y", "N"}:
+        raise ValueError("test_yn은 Y 또는 N이어야 합니다.")
     recipient_name = text(row.get("수취인명"))
     recipient_zip = digits(row.get("우편번호"))
     recipient_address = text(row.get("수취인 주소"))
@@ -325,7 +345,9 @@ def build_test_order_values(row: Mapping[str, object], settings: Mapping[str, ob
     # 있도록 존재하는 연락처를 두 필드에 넣는다.
     recipient_tel = recipient_tel or recipient_mobile
     recipient_mobile = recipient_mobile or recipient_tel
-    order_no = text(row.get("주문번호")) or new_test_order_no()
+    order_no = text(row.get("주문번호")) or (
+        new_test_order_no() if test_yn == "Y" else new_real_order_no()
+    )
     if len(order_no) > 50:
         raise ParcelValidationError("주문번호는 50자 이하여야 합니다.")
 
@@ -353,7 +375,7 @@ def build_test_order_values(row: Mapping[str, object], settings: Mapping[str, ob
         ),
         "goodsNm": goods_name,
         "printYn": required_setting(settings, CONFIG_KEY_PRINT_YN, "운송장 자체 출력 여부"),
-        "testYn": "Y",
+        "testYn": test_yn,
     }
 
     if values["payType"] not in {"1", "2"}:
@@ -367,11 +389,36 @@ def build_test_order_values(row: Mapping[str, object], settings: Mapping[str, ob
     return values
 
 
-def submit_test_order(row: Mapping[str, object], settings: Mapping[str, object]) -> ParcelTestReceipt:
-    """테스트 소포신청 후 같은 주문번호로 접수 결과를 재조회한다."""
+def build_test_order_values(row: Mapping[str, object], settings: Mapping[str, object]) -> dict[str, str]:
+    """기존 호출부용 테스트 소포신청 파라미터 변환기."""
+    return build_order_values(row, settings, test_yn="Y")
+
+
+def build_real_order_values(row: Mapping[str, object], settings: Mapping[str, object]) -> dict[str, str]:
+    """실제 소포신청 파라미터를 만들고 자체 운송장 출력을 금지한다."""
+    values = build_order_values(row, settings, test_yn="N")
+    if values["printYn"] != "N":
+        raise ParcelValidationError(
+            "실접수 확인은 운송장 자체 출력 여부(epost_parcel_print_yn)를 N으로 설정해야 합니다.",
+        )
+    return values
+
+
+def submit_order(
+    row: Mapping[str, object],
+    settings: Mapping[str, object],
+    *,
+    test_yn: str,
+) -> ParcelReceipt:
+    """소포신청 후 같은 주문번호로 접수 결과를 재조회한다."""
     api_key = required_setting(settings, CONFIG_KEY_API, "소포신청 인증키")
     security_key = required_setting(settings, CONFIG_KEY_SECURITY, "접수용 보안키")
-    values = build_test_order_values(row, settings)
+    if test_yn == "Y":
+        values = build_test_order_values(row, settings)
+    elif test_yn == "N":
+        values = build_real_order_values(row, settings)
+    else:
+        values = build_order_values(row, settings, test_yn=test_yn)
     root = call_api("InsertOrder", _request_plain_data(values), api_key, security_key)
     raise_if_api_error(root)
     result = _first_result(root)
@@ -390,10 +437,20 @@ def submit_test_order(row: Mapping[str, object], settings: Mapping[str, object])
     if rechecked["regiNo"] != result["regiNo"]:
         raise ParcelApiError("", "소포신청 재조회 결과의 등기번호가 최초 응답과 일치하지 않습니다.")
 
-    return ParcelTestReceipt(
+    return ParcelReceipt(
         order_no=values["orderNo"],
         req_no=result["reqNo"],
         res_no=result["resNo"],
         regi_no=result["regiNo"],
         rechecked=True,
     )
+
+
+def submit_test_order(row: Mapping[str, object], settings: Mapping[str, object]) -> ParcelReceipt:
+    """테스트 소포신청(testYn=Y) 후 같은 주문번호로 접수 결과를 재조회한다."""
+    return submit_order(row, settings, test_yn="Y")
+
+
+def submit_real_order(row: Mapping[str, object], settings: Mapping[str, object]) -> ParcelReceipt:
+    """운송장 자체 출력 없이 실제 소포신청(testYn=N)을 한 건 접수한다."""
+    return submit_order(row, settings, test_yn="N")

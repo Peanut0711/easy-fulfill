@@ -101,7 +101,9 @@ from orders.invoice import INVOICE_COLUMNS, build_invoice_rows
 from post_parcel import (
     ParcelApiError,
     ParcelValidationError,
+    new_real_order_no,
     resolve_recipient_address,
+    submit_real_order,
     submit_test_order,
 )
 
@@ -3917,6 +3919,12 @@ class MainWindow(QMainWindow):
             '송장 엑셀 1건을 testYn=Y로 우체국 계약소포 API에 테스트 접수')
         self.act_epost_test_receipt.triggered.connect(self.run_epost_test_receipt)
 
+        self.act_epost_real_receipt = QAction(
+            QIcon('image/korea-post-icon.png'), '우체국 실제 접수 확인(송장 엑셀)', self)
+        self.act_epost_real_receipt.setStatusTip(
+            '송장 엑셀 1건을 실제 접수하되 운송장 출력과 네이버 발송은 하지 않음')
+        self.act_epost_real_receipt.triggered.connect(self.run_epost_real_receipt)
+
         # 외부 바로가기
         self.act_db = QAction(QIcon('image/database-icon.png'), '데이터베이스 시트', self)
         self.act_db.setShortcut('Ctrl+D')
@@ -3983,6 +3991,7 @@ class MainWindow(QMainWindow):
         m_api.addAction(self.act_dispatch)
         m_api.addSeparator()
         m_api.addAction(self.act_epost_test_receipt)
+        m_api.addAction(self.act_epost_real_receipt)
 
         m_link = mb.addMenu('바로가기(&L)')
         m_link.addAction(self.act_db)
@@ -6873,10 +6882,20 @@ class MainWindow(QMainWindow):
 
     def run_epost_test_receipt(self):
         """기존 송장 양식 한 건을 우체국 테스트 신청(testYn=Y)으로 보낸다."""
+        self._run_epost_receipt(test_mode=True)
+
+    def run_epost_real_receipt(self):
+        """기존 송장 양식 한 건을 실제 소포신청(testYn=N)으로 보낸다."""
+        self._run_epost_receipt(test_mode=False)
+
+    def _run_epost_receipt(self, *, test_mode: bool):
+        """주소 표준화·확인 뒤 테스트 또는 실제 소포신청을 한 건만 수행한다."""
+        mode_label = "테스트 접수" if test_mode else "실제 접수 확인"
+        file_label = "테스트 접수용" if test_mode else "실제 접수 확인용"
         start_dir = str((Path(__file__).resolve().parent / "output"))
         file_path, _ = QFileDialog.getOpenFileName(
             self,
-            "우체국 테스트 접수용 송장 엑셀 선택",
+            f"우체국 {file_label} 송장 엑셀 선택",
             start_dir,
             "Excel Files (*.xlsx)",
         )
@@ -6889,7 +6908,7 @@ class MainWindow(QMainWindow):
             if missing:
                 QMessageBox.warning(
                     self,
-                    "우체국 테스트 접수",
+                    f"우체국 {mode_label}",
                     "기존 송장 양식의 열을 찾을 수 없습니다.\n\n"
                     f"누락: {', '.join(missing)}",
                 )
@@ -6902,11 +6921,16 @@ class MainWindow(QMainWindow):
             if len(rows) != 1:
                 QMessageBox.warning(
                     self,
-                    "우체국 테스트 접수",
-                    "테스트 접수는 송장 엑셀의 1건만 지원합니다.\n"
+                    f"우체국 {mode_label}",
+                    f"{mode_label}는 송장 엑셀의 1건만 지원합니다.\n"
                     f"현재 유효 행: {len(rows)}건",
                 )
                 return
+
+            # 빈 주문번호는 실제 접수 전 확인창에 보여 주고, 같은 실행에서 재조회할
+            # 수 있도록 미리 생성한다. 이 값은 실제 접수의 외부 식별자로 사용된다.
+            if not test_mode and not str(rows[0].get("주문번호", "") or "").strip():
+                rows[0] = {**rows[0], "주문번호": new_real_order_no()}
 
             if gspread is None:
                 raise ParcelValidationError("gspread 패키지가 필요합니다. (pip install gspread)")
@@ -6927,7 +6951,7 @@ class MainWindow(QMainWindow):
             if not suggestions:
                 QMessageBox.warning(
                     self,
-                    "우체국 테스트 접수",
+                    f"우체국 {mode_label}",
                     "우편번호 API에서 표준 도로명주소를 찾지 못했습니다.\n\n"
                     "주소를 도로명과 건물번호까지 입력한 뒤 다시 시도해 주세요.",
                 )
@@ -6958,13 +6982,26 @@ class MainWindow(QMainWindow):
                 "수취인 주소": address.address1,
                 "수취인 상세주소": address.address2,
             }
+            if test_mode:
+                receipt_intro = (
+                    "선택한 송장 1건을 우체국 계약소포 API에 테스트 신청합니다.\n\n"
+                    "- testYn=Y로 전송합니다.\n"
+                    "- 실제 접수 우체국 전송, 운송장 출력, 네이버 발송처리는 하지 않습니다.\n"
+                    "- 빈 주문번호는 프로그램이 테스트용 번호를 생성합니다.\n"
+                )
+            else:
+                receipt_intro = (
+                    "선택한 송장 1건을 우체국 계약소포에 실제 접수합니다.\n\n"
+                    "- testYn=N으로 전송되어 실제 접수 기록과 등기번호가 생성됩니다.\n"
+                    "- 이 프로그램은 운송장 출력과 네이버 발송처리를 하지 않습니다.\n"
+                    "- 운송장 자체 출력 여부는 N으로 설정되어 있어야 합니다.\n"
+                    f"- 주문번호: {rows[0].get('주문번호', '')}\n"
+                )
             confirm = QMessageBox.question(
                 self,
-                "우체국 테스트 접수 확인",
-                "선택한 송장 1건을 우체국 계약소포 API에 테스트 신청합니다.\n\n"
-                "- testYn=Y로 전송합니다.\n"
-                "- 실제 접수 우체국 전송, 운송장 출력, 네이버 발송처리는 하지 않습니다.\n"
-                "- 빈 주문번호는 프로그램이 테스트용 번호를 생성합니다.\n"
+                f"우체국 {mode_label} 확인",
+                receipt_intro
+                +
                 f"- 우편번호: {address.postcode}\n"
                 f"- 수취인주소: {address.address1}\n"
                 f"- 수취인상세주소: {address.address2}\n\n"
@@ -6977,46 +7014,51 @@ class MainWindow(QMainWindow):
 
             QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
             try:
-                result = submit_test_order(rows[0], config)
+                result = submit_test_order(rows[0], config) if test_mode else submit_real_order(rows[0], config)
             finally:
                 QApplication.restoreOverrideCursor()
 
             print(
-                "[우체국 테스트 접수] 성공 "
+                f"[우체국 {mode_label}] 성공 "
                 f"orderNo={result.order_no}, reqNo={result.req_no}, "
                 f"regiNo={result.regi_no}, rechecked={result.rechecked}",
             )
             QMessageBox.information(
                 self,
-                "우체국 테스트 접수 완료",
-                "테스트 접수와 재조회가 완료되었습니다.\n\n"
-                f"테스트 주문번호: {result.order_no}\n"
+                f"우체국 {mode_label} 완료",
+                ("테스트 접수와 재조회가 완료되었습니다.\n\n" if test_mode else "실제 접수와 재조회가 완료되었습니다.\n\n")
+                + f"주문번호: {result.order_no}\n"
                 f"소포신청번호: {result.req_no}\n"
                 f"예약번호: {result.res_no}\n"
                 f"등기번호: {result.regi_no}\n\n"
-                "테스트 신청 건은 실제 접수 우체국으로 전송되지 않으며, "
-                "운송장 출력과 네이버 발송처리는 실행하지 않았습니다.",
+                + (
+                    "테스트 신청 건은 실제 접수 우체국으로 전송되지 않으며, "
+                    "운송장 출력과 네이버 발송처리는 실행하지 않았습니다."
+                    if test_mode else
+                    "실제 접수 건입니다. 계약소포 포털의 운송장출력에서 접수 여부를 확인할 수 있으며, "
+                    "이 프로그램은 운송장 출력과 네이버 발송처리를 실행하지 않았습니다."
+                ),
             )
         except ParcelApiError as error:
-            print(f"[우체국 테스트 접수] API 실패 {error.code}: {error.message}")
+            print(f"[우체국 {mode_label}] API 실패 {error.code}: {error.message}")
             QMessageBox.warning(
                 self,
-                "우체국 테스트 접수 실패",
+                f"우체국 {mode_label} 실패",
                 f"우체국 API가 접수를 거절했습니다.\n\n{error}",
             )
         except (ParcelValidationError, requests.RequestException, ET.ParseError, ValueError) as error:
-            print(f"[우체국 테스트 접수] 실행 실패: {error}")
+            print(f"[우체국 {mode_label}] 실행 실패: {error}")
             QMessageBox.warning(
                 self,
-                "우체국 테스트 접수 실패",
-                f"테스트 접수를 실행하지 못했습니다.\n\n{error}",
+                f"우체국 {mode_label} 실패",
+                f"{mode_label}를 실행하지 못했습니다.\n\n{error}",
             )
         except Exception as error:
-            print(f"[우체국 테스트 접수] 예기치 않은 오류: {error}")
+            print(f"[우체국 {mode_label}] 예기치 않은 오류: {error}")
             QMessageBox.critical(
                 self,
-                "우체국 테스트 접수 오류",
-                "테스트 접수 중 예상하지 못한 오류가 발생했습니다.\n\n"
+                f"우체국 {mode_label} 오류",
+                f"{mode_label} 중 예상하지 못한 오류가 발생했습니다.\n\n"
                 f"{error}",
             )
             
