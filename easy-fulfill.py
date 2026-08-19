@@ -4356,7 +4356,19 @@ class MainWindow(QMainWindow):
         path = log_dir / f"detail-page-{datetime.now():%Y%m%d-%H%M%S}.log"
         path.write_text(self.textEdit_detail_log.toPlainText(), encoding="utf-8")
         self._detail_log(f"[작업 로그] 저장했습니다: {path}")
-        QMessageBox.information(self, "작업 로그", f"로그를 저장했습니다.\n{path}")
+        dialog = QMessageBox(self)
+        dialog.setIcon(QMessageBox.Information)
+        dialog.setWindowTitle("작업 로그")
+        dialog.setText(f"로그를 저장했습니다.\n{path}")
+        open_log_button = dialog.addButton("로그 열기", QMessageBox.ActionRole)
+        open_folder_button = dialog.addButton("폴더 열기", QMessageBox.ActionRole)
+        dialog.addButton("닫기", QMessageBox.RejectRole)
+        dialog.exec()
+
+        if dialog.clickedButton() is open_log_button:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+        elif dialog.clickedButton() is open_folder_button:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(log_dir)))
 
     @staticmethod
     def _detail_id_from_input(value, kind):
