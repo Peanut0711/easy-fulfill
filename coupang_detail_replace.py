@@ -9,7 +9,6 @@ import argparse
 import queue
 import sys
 import threading
-import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -87,9 +86,13 @@ def close_context(context, playwright_error):
             raise
 
 
-def wait_for_wing_close_or_finish(page):
+def wait_for_wing_close_or_finish(page, context, playwright_error):
     """WING 창 닫힘 또는 GUI의 작업 종료 요청까지 기다린다."""
     finish_requests = queue.Queue()
+    wing_closed = threading.Event()
+
+    page.on("close", lambda _page: wing_closed.set())
+    context.on("close", lambda _context: wing_closed.set())
 
     def read_finish_request():
         try:
@@ -100,11 +103,15 @@ def wait_for_wing_close_or_finish(page):
 
     threading.Thread(target=read_finish_request, daemon=True).start()
     print("WING에서 저장 후 창을 닫으면 작업이 자동으로 종료됩니다.")
-    while not page.is_closed():
+    while not wing_closed.is_set():
         try:
             finish_requests.get_nowait()
         except queue.Empty:
-            time.sleep(0.2)
+            try:
+                # Playwright 동기 이벤트 루프가 창 닫힘 이벤트를 수신하도록 한다.
+                page.wait_for_timeout(200)
+            except playwright_error:
+                wing_closed.set()
         else:
             print("WING 작업 종료 요청을 받아 저장 없이 종료합니다.")
             return
@@ -147,7 +154,7 @@ def main():
             textarea.fill(html, timeout=30_000)
             print(f"준비 완료: 쿠팡 상품 {args.vendor_inventory_id}에 {html_path.name}을 채웠습니다.")
             if not args.apply:
-                wait_for_wing_close_or_finish(page)
+                wait_for_wing_close_or_finish(page, context, playwright_error)
                 return
             if input("'APPLY'를 입력하면 수정 및 검수 요청을 보냅니다: ") != "APPLY":
                 print("저장하지 않았습니다.")
