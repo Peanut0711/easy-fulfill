@@ -18,6 +18,14 @@ pip install -r requirements.txt
 
 ## 실행 방법
 
+Windows에서는 `run.bat`을 실행하는 방법을 권장합니다. `.venv`를 만들고 `requirements.txt`의 의존성을 자동으로 맞춘 뒤 프로그램을 시작하므로, 상세페이지의 쿠팡 연동에 필요한 Playwright도 함께 설치됩니다.
+
+```bat
+run.bat
+```
+
+이미 필요한 패키지를 설치한 환경에서는 다음처럼 직접 실행할 수 있습니다.
+
 ```bash
 python easy-fulfill.py
 ```

@@ -4345,7 +4345,10 @@ class MainWindow(QMainWindow):
             return "저장된 로그인 세션 없음"
         seller_path = profile / "seller-name.txt"
         seller = seller_path.read_text(encoding="utf-8").strip() if seller_path.exists() else ""
-        return f"저장된 로그인 세션: {seller}" if seller else "저장된 로그인 세션 있음"
+        return (
+            f"저장된 로그인 정보: {seller} (작업 시 권한 확인)"
+            if seller else "저장된 로그인 정보 있음 (작업 시 권한 확인)"
+        )
 
     def _on_detail_log_copy_clicked(self):
         QApplication.clipboard().setText(self.textEdit_detail_log.toPlainText())

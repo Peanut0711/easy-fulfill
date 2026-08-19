@@ -5,10 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import shutil
-
-from playwright.sync_api import sync_playwright
-
-import coupang_cdn_upload
+from pathlib import Path
 
 
 def seller_name(page):
@@ -29,10 +26,22 @@ def main():
     if args.login == args.clear:
         parser.error("--login 또는 --clear 중 하나를 지정하세요.")
     if args.clear:
-        if coupang_cdn_upload.PROFILE_DIR.exists():
-            shutil.rmtree(coupang_cdn_upload.PROFILE_DIR)
+        profile_dir = Path(__file__).resolve().parent / "output" / "coupang-browser-profile"
+        if profile_dir.exists():
+            shutil.rmtree(profile_dir)
         print(json.dumps({"connected": False, "cleared": True}, ensure_ascii=False))
         return
+
+    try:
+        from playwright.sync_api import sync_playwright
+        import coupang_cdn_upload
+    except ModuleNotFoundError as error:
+        if error.name != "playwright":
+            raise
+        raise SystemExit(
+            "Playwright가 현재 실행 환경에 설치되어 있지 않습니다. "
+            "easy-fulfill 폴더의 run.bat으로 프로그램을 다시 실행해 설치를 완료하세요."
+        ) from None
 
     with sync_playwright() as playwright:
         context = coupang_cdn_upload.launch_coupang_context(playwright)

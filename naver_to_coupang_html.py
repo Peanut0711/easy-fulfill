@@ -11,14 +11,26 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from playwright.sync_api import sync_playwright
-
-import coupang_cdn_upload
 import naver_detail_preview
 
 
 ROOT = Path(__file__).resolve().parent
 OUTPUT_ROOT = ROOT / "output" / "detail-preview"
+
+
+def load_coupang_upload_modules():
+    """실행 Python에 Playwright가 없을 때 작업 로그에 복구 방법을 남긴다."""
+    try:
+        from playwright.sync_api import sync_playwright
+        import coupang_cdn_upload
+    except ModuleNotFoundError as error:
+        if error.name != "playwright":
+            raise
+        raise SystemExit(
+            "Playwright가 현재 실행 환경에 설치되어 있지 않습니다. "
+            "easy-fulfill 폴더의 run.bat으로 프로그램을 다시 실행해 설치를 완료하세요."
+        ) from None
+    return sync_playwright, coupang_cdn_upload
 
 
 def product_numbers(values, list_path=None):
@@ -59,6 +71,7 @@ def prepare(numbers):
 
 
 def upload(prepared, results):
+    sync_playwright, coupang_cdn_upload = load_coupang_upload_modules()
     with sync_playwright() as playwright:
         context, page = coupang_cdn_upload.launch_coupang_upload_context(playwright)
         try:
@@ -103,6 +116,8 @@ def main():
         parser.error("--prepare-only 또는 --upload 중 하나를 지정하세요.")
 
     numbers = product_numbers(args.product_no, args.list)
+    if args.upload:
+        load_coupang_upload_modules()
     prepared, results = prepare(numbers)
     if args.upload and prepared:
         upload(prepared, results)

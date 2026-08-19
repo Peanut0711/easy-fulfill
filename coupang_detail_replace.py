@@ -8,13 +8,23 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from playwright.sync_api import Error as PlaywrightError, sync_playwright
-
-import coupang_cdn_upload
-
-
 ROOT = Path(__file__).resolve().parent
 DETAIL_URL = "https://wing.coupang.com/tenants/seller-web/vendor-inventory/modify?vendorInventoryId={vendor_inventory_id}"
+
+
+def load_coupang_modules():
+    """실행 Python에 Playwright가 없을 때 작업 로그에 복구 방법을 남긴다."""
+    try:
+        from playwright.sync_api import Error as playwright_error, sync_playwright
+        import coupang_cdn_upload
+    except ModuleNotFoundError as error:
+        if error.name != "playwright":
+            raise
+        raise SystemExit(
+            "Playwright가 현재 실행 환경에 설치되어 있지 않습니다. "
+            "easy-fulfill 폴더의 run.bat으로 프로그램을 다시 실행해 설치를 완료하세요."
+        ) from None
+    return playwright_error, sync_playwright, coupang_cdn_upload
 
 
 def load_html(naver_product_no: str):
@@ -54,20 +64,20 @@ def detail_level_missing_message(vendor_inventory_id: str):
     )
 
 
-def select_basic_detail_level(page, vendor_inventory_id: str):
+def select_basic_detail_level(page, vendor_inventory_id: str, playwright_error):
     try:
         page.locator('label[for="tab-content-level-0"]').click(timeout=15_000)
-    except PlaywrightError as error:
+    except playwright_error as error:
         message = detail_level_missing_message(vendor_inventory_id)
         print(f"[오류] {message}")
         raise RuntimeError(message) from error
 
 
-def close_context(context):
+def close_context(context, playwright_error):
     """사용자가 WING 창을 먼저 닫은 경우에도 종료를 정상 처리한다."""
     try:
         context.close()
-    except PlaywrightError as error:
+    except playwright_error as error:
         if "has been closed" not in str(error):
             raise
 
@@ -87,6 +97,7 @@ def main():
     if not args.naver_product_no or not args.vendor_inventory_id or not args.naver_product_no.isdigit() or not args.vendor_inventory_id.isdigit():
         parser.error("네이버 상품번호와 vendorInventoryId는 숫자여야 합니다.")
 
+    playwright_error, sync_playwright, coupang_cdn_upload = load_coupang_modules()
     html_path, html = load_html(args.naver_product_no)
     with sync_playwright() as playwright:
         context = coupang_cdn_upload.launch_coupang_context(playwright)
@@ -96,7 +107,7 @@ def main():
             coupang_cdn_upload.wait_for_login(page)
             coupang_cdn_upload.save_coupang_session(context, page)
             page.goto(DETAIL_URL.format(vendor_inventory_id=args.vendor_inventory_id))
-            select_basic_detail_level(page, args.vendor_inventory_id)
+            select_basic_detail_level(page, args.vendor_inventory_id, playwright_error)
             confirm_detail_level_change(page)
             page.wait_for_timeout(1_000)
             page.locator('label[for="tab-content-2"]').click(timeout=15_000)
@@ -114,7 +125,7 @@ def main():
             page.get_by_role("button", name="수정 및 검수 요청").click(timeout=15_000)
             print("수정 및 검수 요청을 보냈습니다.")
         finally:
-            close_context(context)
+            close_context(context, playwright_error)
 
 
 if __name__ == "__main__":
