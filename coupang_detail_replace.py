@@ -6,6 +6,10 @@
 from __future__ import annotations
 
 import argparse
+import queue
+import sys
+import threading
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -82,6 +86,30 @@ def close_context(context, playwright_error):
             raise
 
 
+def wait_for_wing_close_or_finish(page):
+    """WING 창 닫힘 또는 GUI의 작업 종료 요청까지 기다린다."""
+    finish_requests = queue.Queue()
+
+    def read_finish_request():
+        try:
+            finish_requests.put(sys.stdin.readline())
+        except OSError:
+            # GUI가 종료돼 표준 입력이 닫힌 경우에도 아래 대기 루프를 끝낸다.
+            finish_requests.put("")
+
+    threading.Thread(target=read_finish_request, daemon=True).start()
+    print("WING에서 저장 후 창을 닫으면 작업이 자동으로 종료됩니다.")
+    while not page.is_closed():
+        try:
+            finish_requests.get_nowait()
+        except queue.Empty:
+            time.sleep(0.2)
+        else:
+            print("WING 작업 종료 요청을 받아 저장 없이 종료합니다.")
+            return
+    print("WING 창이 닫혀 작업을 종료합니다.")
+
+
 def main():
     parser = argparse.ArgumentParser(description="기존 쿠팡 상품의 상세설명만 HTML로 교체합니다.")
     parser.add_argument("naver_product_no", nargs="?")
@@ -117,7 +145,7 @@ def main():
             textarea.fill(html, timeout=30_000)
             print(f"준비 완료: 쿠팡 상품 {args.vendor_inventory_id}에 {html_path.name}을 채웠습니다.")
             if not args.apply:
-                input("화면을 확인한 뒤 Enter를 누르면 저장 없이 종료합니다. ")
+                wait_for_wing_close_or_finish(page)
                 return
             if input("'APPLY'를 입력하면 수정 및 검수 요청을 보냅니다: ") != "APPLY":
                 print("저장하지 않았습니다.")
