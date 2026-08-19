@@ -115,6 +115,7 @@ RECEIPT_CONFIRMED
 | --- | --- |
 | `post_parcel_receipt_store.py` | 접수·인쇄 이력 저장, 중복·재출력 판정 |
 | `epost_portal_session.py` | ID·비밀번호를 저장하지 않는 전용 Chromium 로그인 세션 연결 |
+| `epost_portal_diagnostic.py` | 운송장출력 화면의 비개인정보 컨트롤 구조를 읽기 전용으로 수집 |
 | `post_parcel_print_portal.py` | Chrome에서 포털 로그인·조회·정확한 행 선택·출력 팝업 열기 |
 | `post_parcel_print_desktop.py` | OZ Viewer·Windows 인쇄창 탐지와 프린터·용지 확인 |
 | `post_parcel_print_diagnostic.py` | 선택자·창 제목·컨트롤 계층을 읽기 전용으로 기록 |
@@ -123,6 +124,8 @@ RECEIPT_CONFIRMED
 웹 포털은 Selenium 또는 Playwright로 DOM을 제어한다. 기존 사용 중인 Chrome 세션을 직접 탈취하지 않고, 전용 자동화 프로필에서 최초 1회 사용자가 로그인해 세션을 유지한다. OZ Viewer와 Windows 인쇄창은 `pywinauto`의 UI Automation 백엔드로 제어한다.
 
 `epost_portal_session.py`의 로그인 연결 기능은 구현됐다. 이 기능은 `output/epost-browser-profile`에 Chromium 세션만 저장하며, ID·비밀번호를 프로그램·스프레드시트·Git에 저장하지 않는다. 포털 조회·행 선택·인쇄 기능은 아직 구현하지 않는다.
+
+`epost_portal_diagnostic.py`는 구현됐다. 전용 Chromium 창에서 사용자가 운송장출력 화면으로 이동하면, 버튼·입력칸의 식별 정보만 `output/epost-portal-diagnostic.json`에 보관한다. 화면의 수취인·주소·전화번호·목록 행·입력값은 저장하지 않으며, 조회·행 선택·인쇄도 실행하지 않는다.
 
 ## 7. 단계별 구현
 

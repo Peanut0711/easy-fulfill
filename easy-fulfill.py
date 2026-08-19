@@ -3938,6 +3938,12 @@ class MainWindow(QMainWindow):
             '전용 Chromium 창에서 직접 로그인해 우체국 포털 세션을 이 PC에 연결')
         self.act_epost_portal_login.triggered.connect(self.connect_epost_portal_login)
 
+        self.act_epost_portal_diagnostic = QAction(
+            QIcon('image/korea-post-icon.png'), '우체국 출력 화면 진단', self)
+        self.act_epost_portal_diagnostic.setStatusTip(
+            '전용 Chromium에서 운송장출력 화면의 컨트롤만 읽기 전용으로 점검')
+        self.act_epost_portal_diagnostic.triggered.connect(self.run_epost_portal_diagnostic)
+
         # 외부 바로가기
         self.act_db = QAction(QIcon('image/database-icon.png'), '데이터베이스 시트', self)
         self.act_db.setShortcut('Ctrl+D')
@@ -4007,6 +4013,7 @@ class MainWindow(QMainWindow):
         m_api.addAction(self.act_epost_real_receipt)
         m_api.addAction(self.act_epost_print_targets)
         m_api.addAction(self.act_epost_portal_login)
+        m_api.addAction(self.act_epost_portal_diagnostic)
 
         m_link = mb.addMenu('바로가기(&L)')
         m_link.addAction(self.act_db)
@@ -7212,6 +7219,76 @@ class MainWindow(QMainWindow):
             "우체국 포털 로그인 연결 실패",
             "로그인 세션을 연결하지 못했습니다.\n\n"
             "전용 Chromium 창에서 로그인이 완료됐는지 확인한 뒤 다시 시도해 주세요.\n\n"
+            f"진단: {details}",
+        )
+
+    def run_epost_portal_diagnostic(self):
+        """운송장출력 화면의 개인 정보 없는 컨트롤 구조만 수집한다."""
+        login_process = getattr(self, "_epost_portal_process", None)
+        if login_process is not None and login_process.state() != QProcess.ProcessState.NotRunning:
+            QMessageBox.warning(self, "우체국 출력 화면 진단", "포털 로그인 연결이 끝난 뒤 실행해 주세요.")
+            return
+        running = getattr(self, "_epost_portal_diagnostic_process", None)
+        if running is not None and running.state() != QProcess.ProcessState.NotRunning:
+            QMessageBox.information(self, "우체국 출력 화면 진단", "출력 화면 진단 창이 이미 열려 있습니다.")
+            return
+
+        QMessageBox.information(
+            self,
+            "우체국 출력 화면 진단",
+            "전용 Chromium 창이 열립니다.\n\n"
+            "1. 계약소포 탭을 누릅니다.\n"
+            "2. 왼쪽 메뉴에서 운송장출력으로 이동합니다.\n"
+            "3. 조회·행 선택·운송장출력·인쇄는 누르지 마세요.\n\n"
+            "운송장출력 화면이 보이면 프로그램이 버튼·입력칸의 이름만 읽고 창을 자동으로 닫습니다. "
+            "수취인·주소·전화번호·목록 행은 저장하지 않습니다.",
+        )
+        process = QProcess(self)
+        process.setWorkingDirectory(str(Path(__file__).resolve().parent))
+        process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
+        environment = QProcessEnvironment.systemEnvironment()
+        environment.insert("PYTHONIOENCODING", "utf-8")
+        environment.insert("PYTHONUNBUFFERED", "1")
+        process.setProcessEnvironment(environment)
+        process.readyReadStandardOutput.connect(self._on_epost_portal_diagnostic_output)
+        process.finished.connect(self._on_epost_portal_diagnostic_finished)
+        self._epost_portal_diagnostic_process = process
+        self._epost_portal_diagnostic_output = ""
+        process.start(sys.executable, ["epost_portal_diagnostic.py", "--diagnose"])
+
+    def _on_epost_portal_diagnostic_output(self):
+        process = getattr(self, "_epost_portal_diagnostic_process", None)
+        if process is None:
+            return
+        output = bytes(process.readAllStandardOutput()).decode("utf-8", errors="replace")
+        self._epost_portal_diagnostic_output += output
+
+    def _on_epost_portal_diagnostic_finished(self, exit_code, _status):
+        self._on_epost_portal_diagnostic_output()
+        output = getattr(self, "_epost_portal_diagnostic_output", "")
+        self._epost_portal_diagnostic_process = None
+        result = None
+        for line in reversed(output.splitlines()):
+            try:
+                result = json.loads(line)
+                break
+            except json.JSONDecodeError:
+                continue
+        if exit_code == 0 and isinstance(result, dict) and result.get("diagnosed"):
+            QMessageBox.information(
+                self,
+                "우체국 출력 화면 진단 완료",
+                "운송장출력 화면의 자동화용 컨트롤 구조를 읽기 전용으로 수집했습니다.\n\n"
+                "포털 조회·행 선택·운송장출력·인쇄는 실행하지 않았습니다.",
+            )
+            return
+
+        details = output.strip()[-800:] or "운송장출력 화면을 확인하지 못했습니다."
+        QMessageBox.warning(
+            self,
+            "우체국 출력 화면 진단 실패",
+            "진단을 완료하지 못했습니다.\n\n"
+            "전용 Chromium 창에서 계약소포 > 운송장출력 화면까지 이동했는지 확인해 주세요.\n\n"
             f"진단: {details}",
         )
             
