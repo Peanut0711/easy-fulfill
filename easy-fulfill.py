@@ -106,6 +106,7 @@ from post_parcel import (
     submit_real_order,
     submit_test_order,
 )
+from post_parcel_receipt_store import ParcelReceiptStore, ReceiptStoreError
 
 try:
     import gspread
@@ -3925,6 +3926,12 @@ class MainWindow(QMainWindow):
             '송장 엑셀 1건을 실제 접수하되 운송장 출력과 네이버 발송은 하지 않음')
         self.act_epost_real_receipt.triggered.connect(self.run_epost_real_receipt)
 
+        self.act_epost_print_targets = QAction(
+            QIcon('image/korea-post-icon.png'), '우체국 출력 대상 확인', self)
+        self.act_epost_print_targets.setStatusTip(
+            '프로그램이 실제 접수한 미출력 등기번호 목록을 확인')
+        self.act_epost_print_targets.triggered.connect(self.show_epost_print_targets)
+
         # 외부 바로가기
         self.act_db = QAction(QIcon('image/database-icon.png'), '데이터베이스 시트', self)
         self.act_db.setShortcut('Ctrl+D')
@@ -3992,6 +3999,7 @@ class MainWindow(QMainWindow):
         m_api.addSeparator()
         m_api.addAction(self.act_epost_test_receipt)
         m_api.addAction(self.act_epost_real_receipt)
+        m_api.addAction(self.act_epost_print_targets)
 
         m_link = mb.addMenu('바로가기(&L)')
         m_link.addAction(self.act_db)
@@ -6932,6 +6940,21 @@ class MainWindow(QMainWindow):
             if not test_mode and not str(rows[0].get("주문번호", "") or "").strip():
                 rows[0] = {**rows[0], "주문번호": new_real_order_no()}
 
+            receipt_store = None
+            if not test_mode:
+                receipt_store = ParcelReceiptStore()
+                previous = receipt_store.find_by_order_no(rows[0]["주문번호"])
+                if previous:
+                    QMessageBox.warning(
+                        self,
+                        "우체국 실제 접수 확인",
+                        "같은 주문번호의 실제 접수 이력이 이미 있습니다.\n\n"
+                        f"주문번호: {previous.order_no}\n"
+                        f"등기번호: {previous.regi_no}\n\n"
+                        "중복 접수를 막기 위해 실행하지 않았습니다.",
+                    )
+                    return
+
             if gspread is None:
                 raise ParcelValidationError("gspread 패키지가 필요합니다. (pip install gspread)")
             from google_sheets_oauth import get_authorized_gspread_client
@@ -7018,6 +7041,24 @@ class MainWindow(QMainWindow):
             finally:
                 QApplication.restoreOverrideCursor()
 
+            if not test_mode:
+                try:
+                    receipt_store.record_real_receipt(result)
+                except (ReceiptStoreError, OSError) as error:
+                    print(f"[우체국 실제 접수] 이력 저장 실패: {error}")
+                    QMessageBox.critical(
+                        self,
+                        "우체국 실제 접수 이력 저장 실패",
+                        "우체국 실제 접수와 재조회는 성공했지만 로컬 이력을 저장하지 못했습니다.\n"
+                        "같은 주문으로 다시 접수하지 마세요.\n\n"
+                        f"주문번호: {result.order_no}\n"
+                        f"소포신청번호: {result.req_no}\n"
+                        f"예약번호: {result.res_no}\n"
+                        f"등기번호: {result.regi_no}\n\n"
+                        f"저장 오류: {error}",
+                    )
+                    return
+
             print(
                 f"[우체국 {mode_label}] 성공 "
                 f"orderNo={result.order_no}, reqNo={result.req_no}, "
@@ -7036,7 +7077,8 @@ class MainWindow(QMainWindow):
                     "운송장 출력과 네이버 발송처리는 실행하지 않았습니다."
                     if test_mode else
                     "실제 접수 건입니다. 계약소포 포털의 운송장출력에서 접수 여부를 확인할 수 있으며, "
-                    "이 프로그램은 운송장 출력과 네이버 발송처리를 실행하지 않았습니다."
+                    "이 프로그램은 운송장 출력과 네이버 발송처리를 실행하지 않았습니다.\n\n"
+                    "등기번호를 로컬 출력 대상 이력에 저장했습니다."
                 ),
             )
         except ParcelApiError as error:
@@ -7061,6 +7103,46 @@ class MainWindow(QMainWindow):
                 f"{mode_label} 중 예상하지 못한 오류가 발생했습니다.\n\n"
                 f"{error}",
             )
+
+    def show_epost_print_targets(self):
+        """실제 접수 이력의 미출력 후보를 읽기 전용으로 보여 준다."""
+        try:
+            candidates = ParcelReceiptStore().list_pending_prints()
+        except (ReceiptStoreError, OSError) as error:
+            QMessageBox.warning(self, "우체국 출력 대상", f"출력 이력을 읽지 못했습니다.\n\n{error}")
+            return
+
+        if not candidates:
+            QMessageBox.information(
+                self,
+                "우체국 출력 대상",
+                "프로그램이 저장한 미출력 실제 접수 건이 없습니다.\n\n"
+                "이 메뉴는 이번 기능 추가 후 실제 접수한 건부터 표시합니다.",
+            )
+            return
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("우체국 출력 대상 확인")
+        dialog.setMinimumWidth(620)
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(QLabel(
+            "아래는 프로그램이 실제 접수한 뒤 아직 인쇄 명령을 보내지 않은 건입니다.\n"
+            "현재는 목록 확인 단계이며 포털 조회·선택·인쇄는 실행하지 않습니다.",
+        ))
+        target_list = QListWidget(dialog)
+        for candidate in candidates:
+            target_list.addItem(
+                f"등기번호 {candidate.regi_no} | 주문번호 {candidate.order_no} | "
+                f"접수 {candidate.received_at}",
+            )
+        layout.addWidget(target_list)
+        close_button = QPushButton("닫기", dialog)
+        close_button.clicked.connect(dialog.accept)
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+        button_layout.addWidget(close_button)
+        layout.addLayout(button_layout)
+        dialog.exec()
             
     def load_invoice_file(self):
         """엑셀 파일을 선택하는 다이얼로그를 표시합니다."""
