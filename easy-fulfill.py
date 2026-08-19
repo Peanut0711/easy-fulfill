@@ -4462,12 +4462,13 @@ class MainWindow(QMainWindow):
         )
         self._detail_process = None
         self._detail_process_holding_wing = False
-        self.pushButton_detail_finish.setEnabled(False)
         if wing_closed:
-            self._on_detail_clear_inputs_clicked()
+            self._on_detail_finish_clicked()
             self._detail_log(
-                "[기존 쿠팡 상품 HTML 채우기] WING 창 닫힘을 감지해 작업을 종료하고 입력을 초기화했습니다."
+                "[기존 쿠팡 상품 HTML 채우기] WING 창 닫힘을 감지해 WING 작업 종료와 입력 초기화를 처리했습니다."
             )
+        else:
+            self.pushButton_detail_finish.setEnabled(False)
         if title == "상품 상세 HTML 생성":
             progress = self._detail_create_progress_dialog()
             progress.setRange(0, 100)
@@ -4581,6 +4582,8 @@ class MainWindow(QMainWindow):
         if self._detail_process is not None and self._detail_process_holding_wing:
             self._detail_process.write(b"\n")
             self._detail_log("[기존 쿠팡 상품 HTML 채우기] 저장 없이 WING 작업을 종료합니다.")
+        self.pushButton_detail_finish.setEnabled(False)
+        self._on_detail_clear_inputs_clicked()
 
     def _invalidate_google_sheets_client_and_caches(self):
         self._gspread_client = None
