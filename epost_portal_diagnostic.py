@@ -13,6 +13,7 @@ from epost_portal_session import (
     PORTAL_URL,
     launch_epost_context,
     page_has_logged_in_state,
+    restore_epost_session,
 )
 
 
@@ -65,6 +66,7 @@ def diagnose(timeout_seconds: int = LOGIN_TIMEOUT_SECONDS) -> dict[str, object]:
 
     with sync_playwright() as playwright:
         context = launch_epost_context(playwright)
+        restore_epost_session(context)
         page = context.pages[0] if context.pages else context.new_page()
         try:
             page.goto(PORTAL_URL, wait_until="domcontentloaded", timeout=30_000)
