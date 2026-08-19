@@ -290,14 +290,16 @@ def wait_for_login(page):
 
 
 def _has_active_upload_session(page):
-    """업로드 경로로 인증을 확인한다. WING 첫 화면 접근만으로는 로그인 완료를 판단할 수 없다."""
+    """업로드 경로로 인증을 확인하되, 파일 없는 응답을 브라우저 탭에 표시하지 않는다."""
     try:
-        # GET은 업로드를 수행하지 않는다. 미인증이면 최종 URL이 xauth로 이동한다.
-        page.goto(UPLOAD_URL, wait_until="domcontentloaded", timeout=30_000)
+        # 이 URL은 파일 없이 GET하면 WING이 파일 오류 JSON을 돌려준다. 탭 이동으로
+        # 확인하면 그 JSON이 사용자에게 노출되므로, 동일한 BrowserContext의 요청 API로
+        # 최종 리다이렉트 URL만 확인한다. BrowserContext.request는 쿠키를 공유한다.
+        response = page.context.request.get(UPLOAD_URL, timeout=30_000)
     except Exception as error:
         print(f"[로그인 확인] 업로드 권한 확인 요청 실패: {error}")
         return False
-    return _is_wing_url(page.url)
+    return _is_wing_url(response.url)
 
 
 def _is_wing_url(url: str):
