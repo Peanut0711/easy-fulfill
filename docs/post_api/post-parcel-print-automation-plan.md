@@ -114,12 +114,15 @@ RECEIPT_CONFIRMED
 | 모듈 | 책임 |
 | --- | --- |
 | `post_parcel_receipt_store.py` | 접수·인쇄 이력 저장, 중복·재출력 판정 |
+| `epost_portal_session.py` | ID·비밀번호를 저장하지 않는 전용 Chromium 로그인 세션 연결 |
 | `post_parcel_print_portal.py` | Chrome에서 포털 로그인·조회·정확한 행 선택·출력 팝업 열기 |
 | `post_parcel_print_desktop.py` | OZ Viewer·Windows 인쇄창 탐지와 프린터·용지 확인 |
 | `post_parcel_print_diagnostic.py` | 선택자·창 제목·컨트롤 계층을 읽기 전용으로 기록 |
 | `easy-fulfill.py` | 접수 결과 화면, 출력 대상 확인, 사용자 최종 확인, 상태 표시 |
 
 웹 포털은 Selenium 또는 Playwright로 DOM을 제어한다. 기존 사용 중인 Chrome 세션을 직접 탈취하지 않고, 전용 자동화 프로필에서 최초 1회 사용자가 로그인해 세션을 유지한다. OZ Viewer와 Windows 인쇄창은 `pywinauto`의 UI Automation 백엔드로 제어한다.
+
+`epost_portal_session.py`의 로그인 연결 기능은 구현됐다. 이 기능은 `output/epost-browser-profile`에 Chromium 세션만 저장하며, ID·비밀번호를 프로그램·스프레드시트·Git에 저장하지 않는다. 포털 조회·행 선택·인쇄 기능은 아직 구현하지 않는다.
 
 ## 7. 단계별 구현
 
@@ -216,4 +219,3 @@ RECEIPT_CONFIRMED
 3. 목표 프린터명과 용지명이 항상 `Xprinter XP-DT108B` / `우체국`인지
 4. 포털 운송장출력 팝업에서 항상 사용할 양식 이름
 5. 인쇄 완료 판단을 포털의 출력여부 전환으로 볼지, 실물 라벨 확인까지 요구할지
-

@@ -3932,6 +3932,12 @@ class MainWindow(QMainWindow):
             '프로그램이 실제 접수한 미출력 등기번호 목록을 확인')
         self.act_epost_print_targets.triggered.connect(self.show_epost_print_targets)
 
+        self.act_epost_portal_login = QAction(
+            QIcon('image/korea-post-icon.png'), '우체국 포털 로그인 연결', self)
+        self.act_epost_portal_login.setStatusTip(
+            '전용 Chromium 창에서 직접 로그인해 우체국 포털 세션을 이 PC에 연결')
+        self.act_epost_portal_login.triggered.connect(self.connect_epost_portal_login)
+
         # 외부 바로가기
         self.act_db = QAction(QIcon('image/database-icon.png'), '데이터베이스 시트', self)
         self.act_db.setShortcut('Ctrl+D')
@@ -4000,6 +4006,7 @@ class MainWindow(QMainWindow):
         m_api.addAction(self.act_epost_test_receipt)
         m_api.addAction(self.act_epost_real_receipt)
         m_api.addAction(self.act_epost_print_targets)
+        m_api.addAction(self.act_epost_portal_login)
 
         m_link = mb.addMenu('바로가기(&L)')
         m_link.addAction(self.act_db)
@@ -7143,6 +7150,70 @@ class MainWindow(QMainWindow):
         button_layout.addWidget(close_button)
         layout.addLayout(button_layout)
         dialog.exec()
+
+    def connect_epost_portal_login(self):
+        """ID·비밀번호를 저장하지 않고 전용 Chromium 프로필의 포털 세션만 연결한다."""
+        running = getattr(self, "_epost_portal_process", None)
+        if running is not None and running.state() != QProcess.ProcessState.NotRunning:
+            QMessageBox.information(self, "우체국 포털 로그인", "우체국 포털 로그인 창이 이미 열려 있습니다.")
+            return
+
+        QMessageBox.information(
+            self,
+            "우체국 포털 로그인 연결",
+            "전용 Chromium 창이 열립니다.\n\n"
+            "우체국 계약고객전용시스템에 직접 로그인해 주세요.\n"
+            "로그인 완료가 확인되면 창은 자동으로 닫히고, 이 PC의 전용 Chromium 프로필에만 세션이 저장됩니다.\n\n"
+            "ID와 비밀번호는 프로그램·스프레드시트·Git에 저장하지 않습니다.",
+        )
+        process = QProcess(self)
+        process.setWorkingDirectory(str(Path(__file__).resolve().parent))
+        process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
+        environment = QProcessEnvironment.systemEnvironment()
+        environment.insert("PYTHONIOENCODING", "utf-8")
+        environment.insert("PYTHONUNBUFFERED", "1")
+        process.setProcessEnvironment(environment)
+        process.readyReadStandardOutput.connect(self._on_epost_portal_login_output)
+        process.finished.connect(self._on_epost_portal_login_finished)
+        self._epost_portal_process = process
+        self._epost_portal_process_output = ""
+        process.start(sys.executable, ["epost_portal_session.py", "--login"])
+
+    def _on_epost_portal_login_output(self):
+        process = getattr(self, "_epost_portal_process", None)
+        if process is None:
+            return
+        output = bytes(process.readAllStandardOutput()).decode("utf-8", errors="replace")
+        self._epost_portal_process_output += output
+
+    def _on_epost_portal_login_finished(self, exit_code, _status):
+        self._on_epost_portal_login_output()
+        output = getattr(self, "_epost_portal_process_output", "")
+        self._epost_portal_process = None
+        connected = False
+        for line in reversed(output.splitlines()):
+            try:
+                connected = bool(json.loads(line).get("connected"))
+                break
+            except (json.JSONDecodeError, AttributeError):
+                continue
+        if exit_code == 0 and connected:
+            QMessageBox.information(
+                self,
+                "우체국 포털 로그인 연결 완료",
+                "전용 Chromium 프로필에 우체국 포털 로그인 세션을 연결했습니다.\n\n"
+                "다음 단계의 포털 출력 진단은 이 세션만 사용하며, 아직 포털 조회·선택·인쇄는 실행하지 않습니다.",
+            )
+            return
+
+        details = output.strip()[-800:] or "로그인 완료 상태를 확인하지 못했습니다."
+        QMessageBox.warning(
+            self,
+            "우체국 포털 로그인 연결 실패",
+            "로그인 세션을 연결하지 못했습니다.\n\n"
+            "전용 Chromium 창에서 로그인이 완료됐는지 확인한 뒤 다시 시도해 주세요.\n\n"
+            f"진단: {details}",
+        )
             
     def load_invoice_file(self):
         """엑셀 파일을 선택하는 다이얼로그를 표시합니다."""
