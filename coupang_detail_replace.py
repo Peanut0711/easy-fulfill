@@ -14,6 +14,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 DETAIL_URL = "https://wing.coupang.com/tenants/seller-web/vendor-inventory/modify?vendorInventoryId={vendor_inventory_id}"
+WING_CLOSED_MARKER = "[WING 창 닫힘 감지]"
 
 
 def load_coupang_modules():
@@ -107,7 +108,7 @@ def wait_for_wing_close_or_finish(page):
         else:
             print("WING 작업 종료 요청을 받아 저장 없이 종료합니다.")
             return
-    print("WING 창이 닫혀 작업을 종료합니다.")
+    print(f"{WING_CLOSED_MARKER} WING 창이 닫혀 작업을 종료합니다.")
 
 
 def main():
@@ -120,6 +121,7 @@ def main():
     if args.self_test:
         assert DETAIL_URL.format(vendor_inventory_id="123").endswith("vendorInventoryId=123")
         assert "등록상품 ID 123" in detail_level_missing_message("123")
+        assert WING_CLOSED_MARKER.startswith("[WING")
         print("self-test: ok")
         return
     if not args.naver_product_no or not args.vendor_inventory_id or not args.naver_product_no.isdigit() or not args.vendor_inventory_id.isdigit():

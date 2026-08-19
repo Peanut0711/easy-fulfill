@@ -4456,9 +4456,18 @@ class MainWindow(QMainWindow):
         self._on_detail_process_output()
         output = self._detail_process_output
         title = self._detail_process_title
+        wing_closed = (
+            title == "기존 쿠팡 상품 HTML 채우기"
+            and "[WING 창 닫힘 감지]" in output
+        )
         self._detail_process = None
         self._detail_process_holding_wing = False
         self.pushButton_detail_finish.setEnabled(False)
+        if wing_closed:
+            self._on_detail_clear_inputs_clicked()
+            self._detail_log(
+                "[기존 쿠팡 상품 HTML 채우기] WING 창 닫힘을 감지해 작업을 종료하고 입력을 초기화했습니다."
+            )
         if title == "상품 상세 HTML 생성":
             progress = self._detail_create_progress_dialog()
             progress.setRange(0, 100)
