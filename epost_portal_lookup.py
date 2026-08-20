@@ -418,7 +418,7 @@ def read_portal_grid_rows(page, work_prefix: str) -> list[dict[str, object]]:
 
 
 def apply_print_target_query(
-    page, lookup_date: str, print_target_text: str, regi_no: str = "",
+    page, lookup_date: str, print_target_text: str, regi_no: str = "", regi_no_end: str = "",
 ) -> tuple[str, int | None]:
     """날짜와 출력대상 조건을 입력한 뒤 조회만 실행한다."""
     start_date = _single_visible(page, START_DATE_SELECTOR, "검색 시작일")
@@ -428,7 +428,8 @@ def apply_print_target_query(
     work_prefix = _work_area_prefix(start_date)
 
     if regi_no:
-        start_regi, end_regi = registration_filter_values(regi_no)
+        start_regi, default_end_regi = registration_filter_values(regi_no)
+        end_regi = normalize_registration_number(regi_no_end) or default_end_regi
         start_input = _single_visible_id(
             page, f"{work_prefix}Div00_ipbStartNum_input", "등기번호 시작",
         )

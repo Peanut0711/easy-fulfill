@@ -90,6 +90,7 @@ def save_oz_toolbar_diagnostic(handle: int) -> None:
 def open_reprint_print_dialog(
     timeout_seconds: int = PAGE_READY_TIMEOUT_SECONDS,
     execute_print: bool = False,
+    allow_batch: bool = False,
 ) -> dict[str, object]:
     """출력 확인 단건의 재출력 OZ Viewer를 열어 인쇄 창을 준비한다.
 
@@ -101,7 +102,9 @@ def open_reprint_print_dialog(
         candidates = store.list_portal_print_confirmed()
     except ReceiptStoreError as error:
         raise RuntimeError("프로그램의 포털 출력 확인 이력을 읽지 못했습니다.") from error
-    if len(candidates) != 1:
+    if not candidates:
+        raise RuntimeError("포털 출력 확인된 인쇄 대상이 없습니다.")
+    if not allow_batch and len(candidates) != 1:
         raise RuntimeError("단건 인쇄 창 확인은 포털 출력 확인 건이 정확히 1건일 때만 실행할 수 있습니다.")
     if oz_viewer_windows():
         raise RuntimeError("기존 OZ Report Viewer 창이 열려 있습니다. 먼저 닫아 주세요.")
@@ -168,16 +171,21 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--open-reprint-print-dialog", action="store_true")
     parser.add_argument("--execute-reprint-print", action="store_true")
+    parser.add_argument("--allow-batch", action="store_true")
     parser.add_argument("--timeout-seconds", type=int, default=PAGE_READY_TIMEOUT_SECONDS)
     args = parser.parse_args()
     if not (args.open_reprint_print_dialog or args.execute_reprint_print):
         parser.error("--open-reprint-print-dialog 또는 --execute-reprint-print를 지정하세요.")
     if args.open_reprint_print_dialog and args.execute_reprint_print:
         parser.error("인쇄 창 확인과 실제 인쇄는 함께 지정할 수 없습니다.")
+    if args.allow_batch and not args.execute_reprint_print:
+        parser.error("--allow-batch는 실제 인쇄와 함께만 지정할 수 있습니다.")
     if args.timeout_seconds <= 0:
         parser.error("--timeout-seconds는 1 이상이어야 합니다.")
     print(json.dumps(open_reprint_print_dialog(
-        args.timeout_seconds, execute_print=args.execute_reprint_print,
+        args.timeout_seconds,
+        execute_print=args.execute_reprint_print,
+        allow_batch=args.allow_batch,
     ), ensure_ascii=False), flush=True)
 
 

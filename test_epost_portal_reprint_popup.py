@@ -10,7 +10,9 @@ from epost_portal_reprint_popup import (
     _matching_target_rows,
     reprint_grid_scroll_down_button_id,
     verified_reprint_rows,
+    reprint_lookup_date,
 )
+from post_parcel_receipt_store import PrintCandidate
 
 
 class EpostPortalReprintPopupTests(unittest.TestCase):
@@ -55,6 +57,19 @@ class EpostPortalReprintPopupTests(unittest.TestCase):
     def test_reprint_lookup_date_must_come_from_confirmed_receipt(self):
         received_at = "2026-08-19T18:01:55"
         self.assertEqual(received_at[:10], "2026-08-19")
+
+    def test_batch_reprint_requires_one_receipt_date(self):
+        candidates = [
+            PrintCandidate("o1", "q1", "r1", "68901-1", "2026-08-20T10:00:00", "PORTAL_PRINT_CONFIRMED"),
+            PrintCandidate("o2", "q2", "r2", "68901-2", "2026-08-20T10:01:00", "PORTAL_PRINT_CONFIRMED"),
+        ]
+        self.assertEqual(reprint_lookup_date(candidates), "2026-08-20")
+        mixed_dates = [
+            candidates[0],
+            PrintCandidate("o3", "q3", "r3", "68901-3", "2026-08-19T10:00:00", "PORTAL_PRINT_CONFIRMED"),
+        ]
+        with self.assertRaises(RuntimeError):
+            reprint_lookup_date(mixed_dates)
 
 
 if __name__ == "__main__":

@@ -133,24 +133,63 @@ def find_reprint_rows_by_scrolling(page, work_prefix: str, expected_regi_nos: li
     raise RuntimeError("재출력 대상 등기번호를 포털 전체 목록에서 하나로 찾지 못했습니다.")
 
 
+def reprint_lookup_date(candidates) -> str:
+    """한 번의 재출력에 안전하게 섞을 수 있는 단일 접수일을 검증한다."""
+    if not candidates:
+        raise RuntimeError("재출력할 포털 출력 확인 건이 없습니다.")
+    dates = {str(candidate.received_at)[:10] for candidate in candidates}
+    if len(dates) != 1:
+        raise RuntimeError("다건 재출력은 같은 접수일의 포털 출력 확인 건만 함께 실행할 수 있습니다.")
+    return dates.pop()
+
+
+def select_reprint_rows_by_scrolling(page, work_prefix: str, expected_regi_nos: list[str]) -> int:
+    """가상 그리드를 순회하며 검증된 대상 행만 한 번씩 선택한다."""
+    expected = {normalize_registration_number(regi_no) for regi_no in expected_regi_nos}
+    if not expected or len(expected) != len(expected_regi_nos):
+        raise RuntimeError("재출력 대상 등기번호 목록이 올바르지 않습니다.")
+    selected: set[str] = set()
+    grid = page.locator(f'[id="{work_prefix}grdList"]')
+    if grid.count() != 1 or not grid.is_visible():
+        raise RuntimeError("재출력 결과 그리드를 찾지 못했습니다.")
+    for _ in range(MAX_REPRINT_GRID_SCROLL_STEPS):
+        portal_rows = read_portal_grid_rows(page, work_prefix)
+        visible_rows = [
+            row for row in portal_rows
+            if normalize_registration_number(str(row.get("regiNo", ""))) in expected - selected
+        ]
+        if visible_rows:
+            visible_regi_nos = [str(row["regiNo"]) for row in visible_rows]
+            verified_rows = verified_reprint_rows(visible_regi_nos, visible_rows)
+            select_verified_target_rows(page, work_prefix, verified_rows)
+            selected.update(normalize_registration_number(regi_no) for regi_no in visible_regi_nos)
+            if selected == expected:
+                return len(selected)
+        scroll_down = page.locator(f'[id="{reprint_grid_scroll_down_button_id(work_prefix)}"]')
+        if scroll_down.count() == 1 and scroll_down.is_visible():
+            scroll_down.click(click_count=REPRINT_GRID_SCROLL_CLICKS_PER_STEP, delay=10)
+        else:
+            grid.hover()
+            page.mouse.wheel(0, 1800)
+        time.sleep(REPRINT_GRID_SCROLL_SETTLE_SECONDS)
+    missing = len(expected - selected)
+    raise RuntimeError(f"재출력 대상 등기번호 {missing}건을 포털 전체 목록에서 찾지 못했습니다.")
+
+
 def prepare_verified_reprint_popup(page, candidates) -> dict[str, object]:
-    """포털 출력 확인 단건만 검증·선택해 재출력 팝업을 열고 인쇄 전에서 멈춘다."""
-    if len(candidates) != 1:
-        raise RuntimeError("단건 재출력은 포털 출력 확인 건이 정확히 1건일 때만 실행할 수 있습니다.")
-    expected = [candidates[0].regi_no]
-    lookup_date = candidates[0].received_at[:10]
+    """같은 접수일의 포털 출력 확인 건만 검증·선택해 재출력 팝업을 연다."""
+    lookup_date = reprint_lookup_date(candidates)
+    expected = [candidate.regi_no for candidate in candidates]
+    normalized_expected = [normalize_registration_number(regi_no) for regi_no in expected]
+    if len(set(normalized_expected)) != len(normalized_expected):
+        raise RuntimeError("재출력 대상 등기번호가 중복되어 자동 선택을 중단합니다.")
     work_prefix, total_before_query = apply_print_target_query(
-        page, lookup_date, "전체", expected[0],
+        page, lookup_date, "전체", min(normalized_expected), max(normalized_expected),
     )
     wait_for_query_result(page, candidates, total_before_query)
     portal_rows = read_portal_grid_rows(page, work_prefix)
     save_reprint_grid_diagnostic(page, work_prefix, expected, portal_rows)
-    visible_target_rows = _matching_target_rows(expected, portal_rows)
-    target_rows = verified_reprint_rows(
-        expected,
-        visible_target_rows or find_reprint_rows_by_scrolling(page, work_prefix, expected),
-    )
-    selected_count = select_verified_target_rows(page, work_prefix, target_rows)
+    selected_count = select_reprint_rows_by_scrolling(page, work_prefix, expected)
     open_print_popup(page, work_prefix)
     if not wait_for_popup(page):
         raise RuntimeError("재출력 운송장출력 팝업이 열렸는지 확인하지 못했습니다.")

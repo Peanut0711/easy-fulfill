@@ -3994,6 +3994,13 @@ class MainWindow(QMainWindow):
         self.act_epost_actual_print.triggered.connect(
             lambda: self.run_epost_oz_print_dialog(execute_print=True))
 
+        self.act_epost_batch_actual_print = QAction(
+            QIcon('image/korea-post-icon.png'), '우체국 다건 실제 인쇄', self)
+        self.act_epost_batch_actual_print.setStatusTip(
+            '같은 접수일의 포털 출력 확인 건만 모두 선택해 실제 프린터 요청을 전송')
+        self.act_epost_batch_actual_print.triggered.connect(
+            lambda: self.run_epost_oz_print_dialog(execute_print=True, allow_batch=True))
+
         # 외부 바로가기
         self.act_db = QAction(QIcon('image/database-icon.png'), '데이터베이스 시트', self)
         self.act_db.setShortcut('Ctrl+D')
@@ -4072,6 +4079,7 @@ class MainWindow(QMainWindow):
         m_api.addAction(self.act_epost_portal_reprint_oz_viewer)
         m_api.addAction(self.act_epost_oz_print_dialog)
         m_api.addAction(self.act_epost_actual_print)
+        m_api.addAction(self.act_epost_batch_actual_print)
 
         m_link = mb.addMenu('바로가기(&L)')
         m_link.addAction(self.act_db)
@@ -7816,8 +7824,8 @@ class MainWindow(QMainWindow):
             f"진단: {details}",
         )
 
-    def run_epost_oz_print_dialog(self, execute_print=False):
-        """단건 재출력의 Windows 인쇄 창을 열거나, 명시적 승인 뒤 실제 요청을 전송한다."""
+    def run_epost_oz_print_dialog(self, execute_print=False, allow_batch=False):
+        """재출력의 Windows 인쇄 창을 열거나, 명시적 승인 뒤 실제 요청을 전송한다."""
         for process_name in (
             "_epost_portal_process",
             "_epost_portal_diagnostic_process",
@@ -7836,9 +7844,36 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "우체국 인쇄 창 확인", "인쇄 창 확인 단계가 이미 진행 중입니다.")
             return
 
+        batch_count = 0
+        batch_date = ""
+        if allow_batch:
+            try:
+                batch_candidates = ParcelReceiptStore().list_portal_print_confirmed()
+            except ReceiptStoreError as error:
+                QMessageBox.warning(self, "우체국 다건 실제 인쇄", f"포털 출력 확인 이력을 읽지 못했습니다.\n\n{error}")
+                return
+            if not batch_candidates:
+                QMessageBox.information(self, "우체국 다건 실제 인쇄", "다건 실제 인쇄할 포털 출력 확인 건이 없습니다.")
+                return
+            dates = {candidate.received_at[:10] for candidate in batch_candidates}
+            if len(dates) != 1:
+                QMessageBox.warning(
+                    self,
+                    "우체국 다건 실제 인쇄",
+                    "포털 출력 확인 건의 접수일이 여러 날짜입니다.\n"
+                    "날짜가 섞인 다건 출력은 실행하지 않았습니다.",
+                )
+                return
+            batch_count = len(batch_candidates)
+            batch_date = dates.pop()
+
         confirmation_message = (
             "주의: 이 단계는 포털 재출력 팝업의 ‘인쇄’와 준비된 OZ Viewer의 프린터 아이콘을 누릅니다.\n\n"
-            "프로그램은 포털에서 이미 ‘출력’으로 확인된 단건만 다시 찾아 선택합니다.\n"
+            + (
+                f"프로그램은 {batch_date}에 포털에서 이미 ‘출력’으로 확인된 {batch_count}건만 다시 찾아 선택합니다.\n"
+                if allow_batch else
+                "프로그램은 포털에서 이미 ‘출력’으로 확인된 단건만 다시 찾아 선택합니다.\n"
+            )
         )
         confirmation_message += (
             "Windows 인쇄 창의 ‘확인’을 자동으로 눌러 실제 프린터 요청을 전송합니다. "
@@ -7856,7 +7891,9 @@ class MainWindow(QMainWindow):
             )
         answer = QMessageBox.question(
             self,
-            "우체국 단건 실제 인쇄" if execute_print else "우체국 단건 재출력 인쇄 창 확인",
+            "우체국 다건 실제 인쇄" if allow_batch else (
+                "우체국 단건 실제 인쇄" if execute_print else "우체국 단건 재출력 인쇄 창 확인"
+            ),
             confirmation_message,
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
@@ -7876,10 +7913,14 @@ class MainWindow(QMainWindow):
         self._epost_oz_print_dialog_process = process
         self._epost_oz_print_dialog_output = ""
         self._epost_oz_print_dialog_execute_print = execute_print
-        process.start(sys.executable, [
+        self._epost_oz_print_dialog_allow_batch = allow_batch
+        arguments = [
             "epost_oz_print_dialog.py",
             "--execute-reprint-print" if execute_print else "--open-reprint-print-dialog",
-        ])
+        ]
+        if allow_batch:
+            arguments.append("--allow-batch")
+        process.start(sys.executable, arguments)
 
     def _on_epost_oz_print_dialog_output(self):
         process = getattr(self, "_epost_oz_print_dialog_process", None)
@@ -7894,6 +7935,7 @@ class MainWindow(QMainWindow):
         output = getattr(self, "_epost_oz_print_dialog_output", "")
         self._epost_oz_print_dialog_process = None
         executed_print = bool(getattr(self, "_epost_oz_print_dialog_execute_print", False))
+        allow_batch = bool(getattr(self, "_epost_oz_print_dialog_allow_batch", False))
         result = None
         for line in reversed(output.splitlines()):
             try:
@@ -7917,7 +7959,9 @@ class MainWindow(QMainWindow):
             )
             QMessageBox.information(
                 self,
-                "우체국 실제 인쇄 요청 완료" if executed_print else "우체국 Windows 인쇄 창 확인 완료",
+                "우체국 다건 실제 인쇄 요청 완료" if allow_batch else (
+                    "우체국 실제 인쇄 요청 완료" if executed_print else "우체국 Windows 인쇄 창 확인 완료"
+                ),
                 completion_message,
             )
             return
