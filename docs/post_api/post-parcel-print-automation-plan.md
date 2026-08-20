@@ -66,7 +66,8 @@
 
 ### 4.2 설정값
 
-비밀값이 아닌 아래 값만 기존 비공개 `설정` 탭 또는 로컬 인쇄 설정에 저장한다.
+아래 값은 기존 비공개 `설정` 탭 또는 로컬 인쇄 설정에 저장한다. 포털 ID·비밀번호는
+세션이 만료됐을 때 전용 Chromium이 자동 로그인하는 용도이며, 명령줄·로그·Git에는 남기지 않는다.
 
 | 키 | 예시 | 용도 |
 | --- | --- | --- |
@@ -75,6 +76,8 @@
 | `epost_print_label_template` | 운영 중인 양식명 | 포털 운송장출력 팝업의 양식 선택 기준 |
 | `epost_print_browser_profile` | 전용 자동화 프로필 경로 | 로그인 세션을 유지할 Chrome 프로필 |
 | `epost_print_require_final_confirm` | `Y` | 초기 물리 인쇄 전 마지막 확인 유지 |
+| `epost_portal_member_id` | 계약고객전용시스템 로그인 ID | 세션 만료 시 자동 로그인 |
+| `epost_portal_password` | 계약고객전용시스템 로그인 비밀번호 | 세션 만료 시 자동 로그인 |
 
 프린터명과 용지명은 문자열이 완전히 일치해야 한다. 설정값을 찾지 못하면 기본값을 추측하지 않고 중단한다.
 
@@ -114,18 +117,34 @@ RECEIPT_CONFIRMED
 | 모듈 | 책임 |
 | --- | --- |
 | `post_parcel_receipt_store.py` | 접수·인쇄 이력 저장, 중복·재출력 판정 |
-| `epost_portal_session.py` | ID·비밀번호를 저장하지 않는 전용 Chromium 로그인 세션 연결 |
+| `epost_portal_session.py` | 전용 Chromium 세션 연결 및 설정 탭 자격증명 기반 자동 로그인 |
 | `epost_portal_diagnostic.py` | 운송장출력 화면의 비개인정보 컨트롤 구조를 읽기 전용으로 수집 |
+| `epost_portal_lookup.py` | 오늘 신규출력에서 실제 접수 이력과 같은 미출력 행만 읽기 전용으로 대조 |
+| `epost_portal_print_popup.py` | 엄격히 대조된 행만 선택해 포털 운송장출력 팝업을 열고, 사용자가 닫을 때까지 인쇄 전에서 대기 |
+| `epost_portal_oz_viewer.py` | 포털의 유일한 인쇄 버튼을 누른 뒤 새 OZ Viewer 하나만 열렸는지 확인하고, 사용자가 닫을 때까지 인쇄 전에서 대기 |
+| `epost_desktop_windows.py` | Windows 최상위 창 제목을 읽어 OZ Viewer의 열림·닫힘만 확인 |
+| `epost_portal_output_confirm.py` | 포털 인쇄 요청 건을 출력대상 전체로 읽기 전용 조회해 출력여부를 확정 |
+| `epost_portal_reprint_popup.py` | 포털 출력 확인 이력의 정확한 단건만 전체 목록에서 선택해 재출력 팝업을 열고 인쇄 전에서 대기 |
 | `post_parcel_print_portal.py` | Chrome에서 포털 로그인·조회·정확한 행 선택·출력 팝업 열기 |
 | `post_parcel_print_desktop.py` | OZ Viewer·Windows 인쇄창 탐지와 프린터·용지 확인 |
 | `post_parcel_print_diagnostic.py` | 선택자·창 제목·컨트롤 계층을 읽기 전용으로 기록 |
 | `easy-fulfill.py` | 접수 결과 화면, 출력 대상 확인, 사용자 최종 확인, 상태 표시 |
 
-웹 포털은 Selenium 또는 Playwright로 DOM을 제어한다. 기존 사용 중인 Chrome 세션을 직접 탈취하지 않고, 전용 자동화 프로필에서 최초 1회 사용자가 로그인해 세션을 유지한다. OZ Viewer와 Windows 인쇄창은 `pywinauto`의 UI Automation 백엔드로 제어한다.
+웹 포털은 Selenium 또는 Playwright로 DOM을 제어한다. 기존 사용 중인 Chrome 세션을 직접 탈취하지 않고, 전용 자동화 프로필에서 세션을 우선 사용한다. 세션이 만료되면 접근 제어된 설정 탭의 포털 ID·비밀번호로 다시 로그인한다. OZ Viewer와 Windows 인쇄창은 `pywinauto`의 UI Automation 백엔드로 제어한다.
 
-`epost_portal_session.py`의 로그인 연결 기능은 구현됐다. 이 기능은 `output/epost-browser-profile`과 현재 Windows 사용자만 복호화할 수 있는 DPAPI 보호 세션 백업에 로그인 세션만 저장하며, ID·비밀번호를 프로그램·스프레드시트·Git에 저장하지 않는다. 포털 조회·행 선택·인쇄 기능은 아직 구현하지 않는다.
+`epost_portal_session.py`의 로그인 연결 기능은 구현됐다. 이 기능은 `output/epost-browser-profile`과 현재 Windows 사용자만 복호화할 수 있는 DPAPI 보호 세션 백업에 로그인 세션만 저장한다. 세션을 복원해도 포털이 로그인 상태로 인정하지 않을 때만, 기존 비공개 `설정` 탭의 `epost_portal_member_id`, `epost_portal_password`를 읽어 자동 로그인한다. 두 값은 코드·Git·명령줄·콘솔 로그에 저장하거나 표시하지 않는다. 포털 조회·행 선택·인쇄 기능은 아직 구현하지 않는다.
 
 `epost_portal_diagnostic.py`는 구현됐다. 전용 Chromium 창에서 사용자가 운송장출력 화면으로 이동하면, 버튼·입력칸의 식별 정보만 `output/epost-portal-diagnostic.json`에 보관한다. 화면의 수취인·주소·전화번호·목록 행·입력값은 저장하지 않으며, 조회·행 선택·인쇄도 실행하지 않는다.
+
+`epost_portal_lookup.py`는 구현됐다. 사용자가 전용 Chromium에서 운송장출력 화면으로 이동하면 오늘 날짜와 `신규출력` 조건을 입력해 조회하고, 같은 날짜의 로컬 `PENDING` 실제 접수 등기번호를 그리드의 등기번호·출력여부·체크박스와 대조한다. 다른 등기번호가 섞이거나 중복·출력 완료 행이면 이후 단계로 진행하지 않는다. 그리드 DOM 식별자·역할·속성만 로컬 진단 파일에 기록하며, 포털 결과의 수취인·주소·전화번호·그 밖의 셀 값은 저장하지 않는다. 행 선택·운송장출력·인쇄는 실행하지 않는다.
+
+`epost_portal_print_popup.py`는 구현됐다. 앞 단계와 동일하게 오늘의 실제 접수 `PENDING` 등기번호를 포털 `신규출력`의 행과 다시 엄격히 대조한 경우에만, 해당 행의 체크박스만 선택하고 포털 `운송장출력` 팝업을 연다. 팝업에서 사용자가 내용을 검토한 뒤 X로 닫을 때까지 대기하며, `인쇄` 버튼·OZ Viewer·Windows 인쇄창·실제 인쇄는 실행하지 않는다.
+
+`epost_portal_oz_viewer.py`는 구현됐다. 기존 OZ Viewer 창이 하나라도 열려 있으면 포털 버튼을 누르지 않고 중단한다. 그렇지 않으면 위와 같은 대상 대조·행 선택·팝업 확인을 다시 수행하고, 유일하게 식별된 팝업 `인쇄` 버튼만 누른다. 이 요청은 포털의 출력 상태를 바꿀 수 있으므로 즉시 로컬 이력을 `PORTAL_PRINT_REQUESTED`로 기록해 자동 재시도를 막는다. 새 OZ Viewer 창 하나가 열렸는지만 확인하고 사용자가 X로 닫을 때까지 기다리며, 뷰어의 프린터 아이콘·Windows 인쇄창·실제 인쇄 명령은 수행하지 않는다.
+
+`epost_portal_output_confirm.py`는 구현됐다. `PORTAL_PRINT_REQUESTED`인 오늘의 접수 건만 대상으로 출력대상 `전체`를 조회한다. 각 등기번호가 정확히 한 행에서 `출력`으로 확인될 때만 이력을 `PORTAL_PRINT_CONFIRMED`로 확정한다. 행 선택·운송장출력·인쇄는 수행하지 않으며, 이 상태도 실물 인쇄 성공을 의미하지 않는다.
+
+`epost_portal_reprint_popup.py`는 구현됐다. `PORTAL_PRINT_CONFIRMED`인 오늘의 건만 대상으로 출력대상 `전체`에서 등기번호가 정확히 한 번, `출력` 상태, 체크 가능 상태인지 확인한다. 그 행만 선택해 재출력 팝업을 열고 사용자가 닫을 때까지 대기하며, 팝업의 인쇄 버튼·OZ Viewer·Windows 인쇄창·실제 출력은 실행하지 않는다.
 
 ## 7. 단계별 구현
 
@@ -193,7 +212,8 @@ RECEIPT_CONFIRMED
 
 | 상황 | 처리 |
 | --- | --- |
-| 포털 로그인 세션 만료 | 로그인 화면을 표시하고 사용자 로그인 후 처음부터 진단 재시작 |
+| 포털 로그인 세션 만료 | 설정 탭 자격증명으로 재로그인하고, 실패하면 ID·비밀번호·추가 인증 여부 확인 후 진단 중단 |
+| 공지사항 팝업이 화면을 덮음 | 초기 진단에서는 사용자가 X로 닫은 뒤 진행하고, 이후 자동화 단계에서는 닫기 컨트롤을 별도 식별·검증한다 |
 | 등기번호 행이 없음 | 인쇄하지 않고 접수 이력·조회 날짜·발송지 확인 안내 |
 | 같은 등기번호가 2개 이상 | 인쇄하지 않고 포털 확인 요청 |
 | 포털 행이 이미 `출력` | 기본 차단, 재출력 사용자 확인 필요 |
