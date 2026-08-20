@@ -46,6 +46,28 @@ class ParcelReceiptStoreTests(unittest.TestCase):
                     ),
                 )
 
+    def test_portal_print_request_removes_candidate_from_automatic_retry(self):
+        with TemporaryDirectory() as directory:
+            store = ParcelReceiptStore(Path(directory) / "receipts.sqlite3")
+            store.record_real_receipt(RECEIPT)
+
+            store.mark_portal_print_requested([RECEIPT.regi_no])
+
+            self.assertEqual(store.list_pending_prints(), [])
+            self.assertEqual(
+                [candidate.regi_no for candidate in store.list_portal_print_requests()],
+                [RECEIPT.regi_no],
+            )
+            with self.assertRaises(ReceiptStoreError):
+                store.mark_portal_print_requested([RECEIPT.regi_no])
+
+            store.mark_portal_print_confirmed([RECEIPT.regi_no])
+            self.assertEqual(store.list_portal_print_requests(), [])
+            self.assertEqual(
+                [candidate.regi_no for candidate in store.list_portal_print_confirmed()],
+                [RECEIPT.regi_no],
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -132,6 +132,92 @@ class ParcelReceiptStore:
             raise ReceiptStoreError("출력 대기 실제 접수 이력을 조회하지 못했습니다.") from error
         return [self._row_to_candidate(row) for row in rows]
 
+    def list_portal_print_requests(self) -> list[PrintCandidate]:
+        """포털 인쇄 요청은 했지만 포털 출력여부를 재확인하지 않은 이력을 반환한다."""
+        try:
+            with closing(self._connect()) as connection:
+                rows = connection.execute(
+                    """
+                    SELECT order_no, req_no, res_no, regi_no, received_at, print_status
+                    FROM parcel_receipts
+                    WHERE print_status = 'PORTAL_PRINT_REQUESTED'
+                    ORDER BY received_at DESC
+                    """,
+                ).fetchall()
+        except sqlite3.Error as error:
+            raise ReceiptStoreError("포털 인쇄 요청 이력을 조회하지 못했습니다.") from error
+        return [self._row_to_candidate(row) for row in rows]
+
+    def list_portal_print_confirmed(self) -> list[PrintCandidate]:
+        """포털 출력여부를 이미 확인했지만 Windows 인쇄는 확인하지 않은 이력을 반환한다."""
+        try:
+            with closing(self._connect()) as connection:
+                rows = connection.execute(
+                    """
+                    SELECT order_no, req_no, res_no, regi_no, received_at, print_status
+                    FROM parcel_receipts
+                    WHERE print_status = 'PORTAL_PRINT_CONFIRMED'
+                    ORDER BY received_at DESC
+                    """,
+                ).fetchall()
+        except sqlite3.Error as error:
+            raise ReceiptStoreError("포털 출력 확인 이력을 조회하지 못했습니다.") from error
+        return [self._row_to_candidate(row) for row in rows]
+
+    def mark_portal_print_requested(self, regi_nos: list[str]) -> None:
+        """포털 팝업의 인쇄 요청이 눌린 건을 재시도 대상에서 제외한다.
+
+        우체국 포털은 이 시점에 이미 `신규출력`에서 제외할 수 있다. OZ Viewer
+        확인이 실패해도 같은 건을 자동으로 다시 요청하지 않도록 즉시 기록한다.
+        """
+        normalized = [str(regi_no).strip() for regi_no in regi_nos if str(regi_no).strip()]
+        if not normalized or len(set(normalized)) != len(normalized):
+            raise ReceiptStoreError("포털 인쇄 요청으로 기록할 등기번호 목록이 올바르지 않습니다.")
+        placeholders = ", ".join("?" for _ in normalized)
+        try:
+            with closing(self._connect()) as connection:
+                with connection:
+                    cursor = connection.execute(
+                        f"""
+                        UPDATE parcel_receipts
+                        SET print_status = 'PORTAL_PRINT_REQUESTED', portal_printed_at = ?
+                        WHERE regi_no IN ({placeholders}) AND print_status = 'PENDING'
+                        """,
+                        (datetime.now().isoformat(timespec="seconds"), *normalized),
+                    )
+                    if cursor.rowcount != len(normalized):
+                        raise ReceiptStoreError(
+                            "포털 인쇄 요청 이력을 안전하게 기록하지 못했습니다. 자동 재시도는 중단합니다.",
+                        )
+        except ReceiptStoreError:
+            raise
+        except sqlite3.Error as error:
+            raise ReceiptStoreError("포털 인쇄 요청 이력을 저장하지 못했습니다.") from error
+
+    def mark_portal_print_confirmed(self, regi_nos: list[str]) -> None:
+        """포털 조회에서 출력여부가 출력으로 확인된 이력을 확정 상태로 바꾼다."""
+        normalized = [str(regi_no).strip() for regi_no in regi_nos if str(regi_no).strip()]
+        if not normalized or len(set(normalized)) != len(normalized):
+            raise ReceiptStoreError("포털 출력 완료로 기록할 등기번호 목록이 올바르지 않습니다.")
+        placeholders = ", ".join("?" for _ in normalized)
+        try:
+            with closing(self._connect()) as connection:
+                with connection:
+                    cursor = connection.execute(
+                        f"""
+                        UPDATE parcel_receipts
+                        SET print_status = 'PORTAL_PRINT_CONFIRMED', portal_printed_at = ?
+                        WHERE regi_no IN ({placeholders}) AND print_status = 'PORTAL_PRINT_REQUESTED'
+                        """,
+                        (datetime.now().isoformat(timespec="seconds"), *normalized),
+                    )
+                    if cursor.rowcount != len(normalized):
+                        raise ReceiptStoreError("포털 출력 완료 이력을 안전하게 확정하지 못했습니다.")
+        except ReceiptStoreError:
+            raise
+        except sqlite3.Error as error:
+            raise ReceiptStoreError("포털 출력 완료 이력을 저장하지 못했습니다.") from error
+
     @staticmethod
     def _row_to_candidate(row: sqlite3.Row) -> PrintCandidate:
         return PrintCandidate(

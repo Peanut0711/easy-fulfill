@@ -33,14 +33,12 @@ class EpostPortalDiagnosticTests(unittest.TestCase):
             "https://biz.epost.go.kr/ui/index.jsp",
         )
 
-    def test_print_page_requires_heading_query_and_inputs(self):
-        controls = [{"text": "조회", "tag": "button"}] + [
-            {"text": "", "tag": "input"} for _ in range(4)
-        ]
-        page = _Page("운송장출력 검색일자", controls)
+    def test_print_page_requires_heading_search_conditions_and_inputs(self):
+        controls = [{"text": "", "tag": "input"} for _ in range(4)]
+        page = _Page("운송장출력 검색일자 발송지 출력대상", controls)
         self.assertTrue(looks_like_print_page(page))
 
-        self.assertFalse(looks_like_print_page(_Page("운송장출력", controls)))
+        self.assertFalse(looks_like_print_page(_Page("운송장출력 검색일자", controls)))
 
 
 if __name__ == "__main__":

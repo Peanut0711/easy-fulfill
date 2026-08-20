@@ -11,8 +11,8 @@ from urllib.parse import urlparse
 from epost_portal_session import (
     LOGIN_TIMEOUT_SECONDS,
     PORTAL_URL,
+    ensure_portal_login,
     launch_epost_context,
-    page_has_logged_in_state,
     restore_epost_session,
 )
 
@@ -43,15 +43,19 @@ def control_snapshot(page) -> list[dict[str, str]]:
 
 
 def looks_like_print_page(page) -> bool:
-    """운송장출력 화면의 제목·조회 버튼·입력 컨트롤이 함께 보이는지 확인한다."""
+    """운송장출력 화면의 제목·검색 조건·입력 컨트롤이 함께 보이는지 확인한다.
+
+    계약고객전용시스템은 Nexacro 화면이라 `조회`가 일반 HTML button으로 노출되지
+    않을 수 있다. 읽기 전용 진단에서 버튼 클릭 가능 여부를 요구하지 않는다.
+    """
     try:
         body_text = page.locator("body").inner_text(timeout=3_000)
         snapshot = control_snapshot(page)
     except Exception:
         return False
-    has_query = any(item["text"] == "조회" for item in snapshot)
     input_count = sum(item["tag"] == "input" for item in snapshot)
-    return "운송장출력" in body_text and "검색일자" in body_text and has_query and input_count >= 4
+    required_labels = ("운송장출력", "검색일자", "발송지", "출력대상")
+    return all(label in body_text for label in required_labels) and input_count >= 4
 
 
 def sanitized_page_path(url: str) -> str:
@@ -70,8 +74,7 @@ def diagnose(timeout_seconds: int = LOGIN_TIMEOUT_SECONDS) -> dict[str, object]:
         page = context.pages[0] if context.pages else context.new_page()
         try:
             page.goto(PORTAL_URL, wait_until="domcontentloaded", timeout=30_000)
-            if not page_has_logged_in_state(page):
-                raise RuntimeError("저장된 우체국 포털 로그인 세션이 없습니다. 먼저 로그인 연결을 실행해 주세요.")
+            ensure_portal_login(page, timeout_seconds)
 
             deadline = time.monotonic() + timeout_seconds
             while time.monotonic() < deadline:

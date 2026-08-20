@@ -238,6 +238,7 @@
 
 - 우체국 API 인증키
 - 우체국 접수용 보안키
+- 우체국 계약고객전용시스템 로그인 비밀번호
 - 네이버 API 비밀값
 - 암호화 전·후의 실제 `regData`
 
@@ -248,6 +249,8 @@
 | `epost_parcel_api_key` | 소포신청 인증키 | 사용자 입력 |
 | `epost_parcel_security_key` | 접수용 SEED128 보안키 | 사용자 입력 |
 | `epost_parcel_member_id` | 인터넷우체국 사용자 ID | `HiGenies` |
+| `epost_portal_member_id` | 계약고객전용시스템 로그인 ID | 운영자 입력 |
+| `epost_portal_password` | 계약고객전용시스템 로그인 비밀번호 | 운영자 입력 |
 | `epost_parcel_cust_no` | 고객번호 | 첫 진단 조회 후 저장 |
 | `epost_parcel_appr_no` | 계약 승인번호 | 운영자 입력 |
 | `epost_parcel_office_ser` | 공급지 코드 | 운영자 입력 |
