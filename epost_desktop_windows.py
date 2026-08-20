@@ -1,7 +1,8 @@
-"""우체국 운송장 출력 단계에서 필요한 Windows 창 제목 확인 도구.
+"""우체국 운송장 출력 단계에서 필요한 Windows 창 제어 도구.
 
-OZ Viewer와 인쇄 대화상자는 웹 브라우저 밖의 별도 프로그램이다. 이 모듈은
-창 제목과 표시 상태만 읽으며, 어떤 창의 버튼도 누르지 않는다.
+OZ Viewer와 인쇄 대화상자는 웹 브라우저 밖의 별도 프로그램이다. 실제 인쇄를
+실행하지 않으며, 현재 구현 범위에서는 OZ Viewer의 인쇄 창 열기와 용지 선택만
+수행한다.
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ PRINT_DIALOG_TITLE = "인쇄"
 SW_RESTORE = 9
 VK_CONTROL = 0x11
 VK_P = 0x50
+VK_RETURN = 0x0D
 KEYEVENTF_KEYUP = 0x0002
 MOUSEEVENTF_LEFTDOWN = 0x0002
 MOUSEEVENTF_LEFTUP = 0x0004
@@ -26,6 +28,7 @@ WM_MOUSEMOVE = 0x0200
 WM_LBUTTONDOWN = 0x0201
 WM_LBUTTONUP = 0x0202
 WM_COMMAND = 0x0111
+IDOK = 1
 MK_LBUTTON = 0x0001
 WM_USER = 0x0400
 TB_GETBUTTON = WM_USER + 23
@@ -48,6 +51,21 @@ OZ_PRINT_TOOLBAR_BUTTON_INDEX = 1
 # 두 번째 아이콘이며, 뷰어 창의 화면 좌표가 아닌 툴바 클라이언트 좌표를 사용한다.
 OZ_PRINT_TOOLBAR_CLIENT_X = 49
 OZ_PRINT_TOOLBAR_CLIENT_Y = 20
+
+
+def enable_per_monitor_dpi_awareness() -> None:
+    """창 사각형과 실제 마우스 좌표를 같은 DPI 기준으로 읽는다.
+
+    Windows는 DPI 비인식 프로세스의 ``GetWindowRect`` 결과를 논리 좌표로
+    가상화할 수 있지만 ``SetCursorPos``는 실제 화면 좌표를 사용한다. 이 모듈은
+    별도 단명 프로세스에서 실행되므로 스레드를 모니터별 DPI 인식으로 전환한다.
+    """
+    if os.name != "nt":
+        return
+    setter = getattr(ctypes.windll.user32, "SetThreadDpiAwarenessContext", None)
+    if setter is not None:
+        # DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = -4
+        setter(ctypes.c_void_p(-4))
 
 
 @dataclass(frozen=True)
@@ -152,6 +170,25 @@ def oz_toolbar_handle_from_diagnostics(children: list[dict[str, object]]) -> int
     return matches[0] if len(matches) == 1 else 0
 
 
+def wait_for_oz_toolbar_diagnostics(
+    handle: int, timeout_seconds: float = 8,
+) -> list[dict[str, object]]:
+    """새 OZ Viewer의 상단 툴바가 실제로 준비될 때까지 짧게 기다린다."""
+    deadline = time.monotonic() + timeout_seconds
+    last_error: RuntimeError | None = None
+    while time.monotonic() < deadline:
+        try:
+            children = top_toolbar_child_diagnostics(handle)
+            if oz_toolbar_handle_from_diagnostics(children):
+                return children
+        except RuntimeError as error:
+            last_error = error
+        time.sleep(0.25)
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("OZ Report Viewer의 상단 MFC 툴바가 준비됐는지 확인하지 못했습니다.")
+
+
 class _ToolbarButton(ctypes.Structure):
     """Win32 `TBBUTTON`의 현재 프로세스 포인터 크기 대응 구조다."""
 
@@ -246,6 +283,35 @@ def print_dialog_windows() -> list[DesktopWindow]:
     ]
 
 
+def click_print_dialog_confirm(dialog_handle: int) -> None:
+    """Windows 인쇄 창의 기본 확인 동작을 Enter로 실행한다.
+
+    호출자는 이 동작 전에 사용자에게 실제 프린터 전송 사실을 명시적으로 확인받아야 한다.
+    """
+    if os.name != "nt":
+        raise RuntimeError("Windows 인쇄 창 제어는 Windows에서만 지원합니다.")
+    user32 = ctypes.windll.user32
+    activate_window(dialog_handle)
+    # 이 표준 인쇄 대화상자의 기본 버튼은 확인이다. 키 입력은 창 위치·해상도·DPI
+    # 배율 및 다중 모니터 좌표에 의존하지 않는다.
+    user32.keybd_event(VK_RETURN, 0, 0, 0)
+    user32.keybd_event(VK_RETURN, 0, KEYEVENTF_KEYUP, 0)
+
+
+def send_enter_to_foreground_window() -> None:
+    """현재 전면의 모달 창에 Enter를 한 번 전송한다.
+
+    일부 프린터 드라이버 대화상자는 다른 프로세스의 최상위 창 열거에 나타나지
+    않는다. 이 함수는 그 창의 존재를 추정하지 않고, 포털이 연 모달 인쇄창이
+    전면인 명시적 실제 인쇄 단계에서만 사용한다.
+    """
+    if os.name != "nt":
+        raise RuntimeError("Windows 인쇄 창 제어는 Windows에서만 지원합니다.")
+    user32 = ctypes.windll.user32
+    user32.keybd_event(VK_RETURN, 0, 0, 0)
+    user32.keybd_event(VK_RETURN, 0, KEYEVENTF_KEYUP, 0)
+
+
 def activate_window(handle: int) -> None:
     """확인된 창을 전면으로 가져와 사용자 입력 대상이 되도록 한다.
 
@@ -299,7 +365,7 @@ def click_oz_viewer_print_toolbar_button(handle: int) -> None:
     if os.name != "nt":
         raise RuntimeError("OZ Viewer 툴바 제어는 Windows에서만 지원합니다.")
     user32 = ctypes.windll.user32
-    toolbar_handle = oz_toolbar_handle_from_diagnostics(top_toolbar_child_diagnostics(handle))
+    toolbar_handle = oz_toolbar_handle_from_diagnostics(wait_for_oz_toolbar_diagnostics(handle))
     if not toolbar_handle:
         raise RuntimeError("OZ Report Viewer의 상단 MFC 툴바를 하나로 식별하지 못했습니다.")
     command_id = oz_print_command_id(toolbar_button_commands(toolbar_handle))
@@ -308,6 +374,28 @@ def click_oz_viewer_print_toolbar_button(handle: int) -> None:
     user32.SendMessageW(
         wintypes.HWND(handle), WM_COMMAND, command_id, wintypes.HWND(toolbar_handle),
     )
+
+
+def click_oz_viewer_print_toolbar_icon(handle: int) -> None:
+    """준비된 OZ Viewer의 프린터 아이콘을 화면 좌표로 한 번 클릭한다.
+
+    MFC 명령 메시지가 무시되는 환경에서만 사용하는 보조 경로다. 창이나 모니터의
+    절대 좌표를 고정하지 않고 실제 툴바의 클라이언트 좌표를 화면 좌표로 변환한다.
+    """
+    if os.name != "nt":
+        raise RuntimeError("OZ Viewer 툴바 제어는 Windows에서만 지원합니다.")
+    enable_per_monitor_dpi_awareness()
+    user32 = ctypes.windll.user32
+    toolbar_handle = oz_toolbar_handle_from_diagnostics(wait_for_oz_toolbar_diagnostics(handle))
+    if not toolbar_handle:
+        raise RuntimeError("OZ Report Viewer의 상단 MFC 툴바를 하나로 식별하지 못했습니다.")
+    activate_window(handle)
+    point = wintypes.POINT(OZ_PRINT_TOOLBAR_CLIENT_X, OZ_PRINT_TOOLBAR_CLIENT_Y)
+    if not user32.ClientToScreen(wintypes.HWND(toolbar_handle), ctypes.byref(point)):
+        raise RuntimeError("OZ Viewer 프린터 아이콘의 화면 위치를 읽지 못했습니다.")
+    user32.SetCursorPos(point.x, point.y)
+    user32.mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
+    user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
 
 
 def wait_for_new_single_print_dialog(

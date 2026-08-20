@@ -218,6 +218,34 @@ class ParcelReceiptStore:
         except sqlite3.Error as error:
             raise ReceiptStoreError("포털 출력 완료 이력을 저장하지 못했습니다.") from error
 
+    def mark_windows_print_requested(self, regi_nos: list[str]) -> None:
+        """Windows 인쇄 창의 확인을 눌러 프린터 요청을 보낸 이력을 남긴다.
+
+        스풀러·프린터의 물리 출력 완료는 이 이력만으로 증명하지 않는다. 같은 건의
+        자동 재출력을 막기 위한 요청 시점 기록이다.
+        """
+        normalized = [str(regi_no).strip() for regi_no in regi_nos if str(regi_no).strip()]
+        if not normalized or len(set(normalized)) != len(normalized):
+            raise ReceiptStoreError("프린터 요청으로 기록할 등기번호 목록이 올바르지 않습니다.")
+        placeholders = ", ".join("?" for _ in normalized)
+        try:
+            with closing(self._connect()) as connection:
+                with connection:
+                    cursor = connection.execute(
+                        f"""
+                        UPDATE parcel_receipts
+                        SET print_status = 'WINDOWS_PRINT_REQUESTED', print_command_at = ?
+                        WHERE regi_no IN ({placeholders}) AND print_status = 'PORTAL_PRINT_CONFIRMED'
+                        """,
+                        (datetime.now().isoformat(timespec="seconds"), *normalized),
+                    )
+                    if cursor.rowcount != len(normalized):
+                        raise ReceiptStoreError("프린터 요청 이력을 안전하게 기록하지 못했습니다.")
+        except ReceiptStoreError:
+            raise
+        except sqlite3.Error as error:
+            raise ReceiptStoreError("프린터 요청 이력을 저장하지 못했습니다.") from error
+
     @staticmethod
     def _row_to_candidate(row: sqlite3.Row) -> PrintCandidate:
         return PrintCandidate(

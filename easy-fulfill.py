@@ -3987,6 +3987,13 @@ class MainWindow(QMainWindow):
             '출력 확인 단건의 OZ Viewer에서 Windows 인쇄 창 열림만 확인하고 확인 버튼 전에서 멈춤')
         self.act_epost_oz_print_dialog.triggered.connect(self.run_epost_oz_print_dialog)
 
+        self.act_epost_actual_print = QAction(
+            QIcon('image/korea-post-icon.png'), '우체국 단건 실제 인쇄', self)
+        self.act_epost_actual_print.setStatusTip(
+            '확정된 단건의 Windows 인쇄 창 확인을 눌러 실제 프린터 요청을 전송')
+        self.act_epost_actual_print.triggered.connect(
+            lambda: self.run_epost_oz_print_dialog(execute_print=True))
+
         # 외부 바로가기
         self.act_db = QAction(QIcon('image/database-icon.png'), '데이터베이스 시트', self)
         self.act_db.setShortcut('Ctrl+D')
@@ -4064,6 +4071,7 @@ class MainWindow(QMainWindow):
         m_api.addAction(self.act_epost_portal_reprint_popup)
         m_api.addAction(self.act_epost_portal_reprint_oz_viewer)
         m_api.addAction(self.act_epost_oz_print_dialog)
+        m_api.addAction(self.act_epost_actual_print)
 
         m_link = mb.addMenu('바로가기(&L)')
         m_link.addAction(self.act_db)
@@ -7808,8 +7816,8 @@ class MainWindow(QMainWindow):
             f"진단: {details}",
         )
 
-    def run_epost_oz_print_dialog(self):
-        """단건 재출력의 Windows 인쇄 창 열림만 확인한다."""
+    def run_epost_oz_print_dialog(self, execute_print=False):
+        """단건 재출력의 Windows 인쇄 창을 열거나, 명시적 승인 뒤 실제 요청을 전송한다."""
         for process_name in (
             "_epost_portal_process",
             "_epost_portal_diagnostic_process",
@@ -7828,15 +7836,28 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "우체국 인쇄 창 확인", "인쇄 창 확인 단계가 이미 진행 중입니다.")
             return
 
-        answer = QMessageBox.question(
-            self,
-            "우체국 단건 재출력 인쇄 창 확인",
+        confirmation_message = (
             "주의: 이 단계는 포털 재출력 팝업의 ‘인쇄’와 준비된 OZ Viewer의 프린터 아이콘을 누릅니다.\n\n"
             "프로그램은 포털에서 이미 ‘출력’으로 확인된 단건만 다시 찾아 선택합니다.\n"
+        )
+        confirmation_message += (
+            "Windows 인쇄 창의 ‘확인’을 자동으로 눌러 실제 프린터 요청을 전송합니다. "
+            "이 작업은 시작 후 취소할 수 없으며, 물리 출력 성공은 프린터에서 별도로 확인해야 합니다.\n"
+            if execute_print else
             "Windows 인쇄 창이 열리면 용지·프린터·확인 버튼은 누르지 말고 화면만 확인한 뒤 X 또는 취소로 닫아 주세요.\n"
-            "그 뒤 OZ Viewer도 X로 닫아 주세요.\n\n"
-            "이 단계에서는 실제 프린터 전송을 실행하지 않습니다.\n\n"
-            "Windows 인쇄 창 열림을 확인할까요?",
+        )
+        if execute_print:
+            confirmation_message += "\n실제 프린터 요청을 시작할까요?"
+        else:
+            confirmation_message += (
+                "그 뒤 OZ Viewer도 X로 닫아 주세요.\n\n"
+                "이 단계에서는 실제 프린터 전송을 실행하지 않습니다.\n\n"
+                "Windows 인쇄 창 열림을 확인할까요?"
+            )
+        answer = QMessageBox.question(
+            self,
+            "우체국 단건 실제 인쇄" if execute_print else "우체국 단건 재출력 인쇄 창 확인",
+            confirmation_message,
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -7854,7 +7875,11 @@ class MainWindow(QMainWindow):
         process.finished.connect(self._on_epost_oz_print_dialog_finished)
         self._epost_oz_print_dialog_process = process
         self._epost_oz_print_dialog_output = ""
-        process.start(sys.executable, ["epost_oz_print_dialog.py", "--open-reprint-print-dialog"])
+        self._epost_oz_print_dialog_execute_print = execute_print
+        process.start(sys.executable, [
+            "epost_oz_print_dialog.py",
+            "--execute-reprint-print" if execute_print else "--open-reprint-print-dialog",
+        ])
 
     def _on_epost_oz_print_dialog_output(self):
         process = getattr(self, "_epost_oz_print_dialog_process", None)
@@ -7868,6 +7893,7 @@ class MainWindow(QMainWindow):
         self._on_epost_oz_print_dialog_output()
         output = getattr(self, "_epost_oz_print_dialog_output", "")
         self._epost_oz_print_dialog_process = None
+        executed_print = bool(getattr(self, "_epost_oz_print_dialog_execute_print", False))
         result = None
         for line in reversed(output.splitlines()):
             try:
@@ -7875,14 +7901,24 @@ class MainWindow(QMainWindow):
                 break
             except json.JSONDecodeError:
                 continue
-        if exit_code == 0 and isinstance(result, dict) and result.get("printDialogOpened"):
-            QMessageBox.information(
-                self,
-                "우체국 Windows 인쇄 창 확인 완료",
+        if exit_code == 0 and isinstance(result, dict) and (
+            result.get("printDialogOpened") or result.get("printCommandExecuted")
+        ):
+            completion_message = (
                 f"조회일: {result.get('lookupDate', '')}\n"
                 f"선택한 확정 대상: {result.get('selectedCount', 0)}건\n\n"
+            )
+            completion_message += (
+                "인쇄창 열림 뒤 Enter를 전송해 프린터 요청을 시도했습니다.\n"
+                "드라이버 창을 자동 열거할 수 없어, 프린터 출력물과 바코드 인식은 별도로 확인해 주세요."
+                if executed_print else
                 "Windows 인쇄 창을 열어 검토한 뒤 닫았습니다.\n"
-                "용지 선택·확인·실제 프린터 전송은 실행하지 않았습니다.",
+                "용지 선택·확인·실제 프린터 전송은 실행하지 않았습니다."
+            )
+            QMessageBox.information(
+                self,
+                "우체국 실제 인쇄 요청 완료" if executed_print else "우체국 Windows 인쇄 창 확인 완료",
+                completion_message,
             )
             return
         details = output.strip()[-800:] or "Windows 인쇄 창을 열지 못했습니다."

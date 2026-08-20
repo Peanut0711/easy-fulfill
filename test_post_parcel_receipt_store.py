@@ -68,6 +68,11 @@ class ParcelReceiptStoreTests(unittest.TestCase):
                 [RECEIPT.regi_no],
             )
 
+            store.mark_windows_print_requested([RECEIPT.regi_no])
+            self.assertEqual(store.list_portal_print_confirmed(), [])
+            with self.assertRaises(ReceiptStoreError):
+                store.mark_windows_print_requested([RECEIPT.regi_no])
+
 
 if __name__ == "__main__":
     unittest.main()
