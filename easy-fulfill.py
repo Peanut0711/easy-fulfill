@@ -3944,6 +3944,49 @@ class MainWindow(QMainWindow):
             '전용 Chromium에서 운송장출력 화면의 컨트롤만 읽기 전용으로 점검')
         self.act_epost_portal_diagnostic.triggered.connect(self.run_epost_portal_diagnostic)
 
+        self.act_epost_portal_lookup = QAction(
+            QIcon('image/korea-post-icon.png'), '우체국 신규출력 대조', self)
+        self.act_epost_portal_lookup.setStatusTip(
+            '오늘 신규출력 목록을 조회해 프로그램의 실제 접수 등기번호와 읽기 전용으로 대조')
+        self.act_epost_portal_lookup.triggered.connect(self.run_epost_portal_lookup)
+
+        self.act_epost_portal_print_popup = QAction(
+            QIcon('image/korea-post-icon.png'), '우체국 운송장출력 팝업 열기', self)
+        self.act_epost_portal_print_popup.setStatusTip(
+            '검증된 오늘 미출력 행만 선택해 포털 운송장출력 팝업을 열고 인쇄 전에서 멈춤')
+        self.act_epost_portal_print_popup.triggered.connect(self.run_epost_portal_print_popup)
+
+        self.act_epost_portal_oz_viewer = QAction(
+            QIcon('image/korea-post-icon.png'), '우체국 OZ 뷰어 열기 확인', self)
+        self.act_epost_portal_oz_viewer.setStatusTip(
+            '검증된 행의 포털 인쇄 요청 후 OZ Viewer 열림만 확인하고 실제 인쇄 전에서 멈춤')
+        self.act_epost_portal_oz_viewer.triggered.connect(self.run_epost_portal_oz_viewer)
+
+        self.act_epost_portal_output_confirm = QAction(
+            QIcon('image/korea-post-icon.png'), '우체국 포털 출력여부 확인', self)
+        self.act_epost_portal_output_confirm.setStatusTip(
+            '포털 인쇄 요청 건의 출력여부를 전체 조회로 읽기 전용 확인')
+        self.act_epost_portal_output_confirm.triggered.connect(self.run_epost_portal_output_confirm)
+
+        self.act_epost_portal_reprint_popup = QAction(
+            QIcon('image/korea-post-icon.png'), '우체국 단건 재출력 팝업 열기', self)
+        self.act_epost_portal_reprint_popup.setStatusTip(
+            '포털 출력 확인 이력의 정확한 단건만 선택해 재출력 팝업을 열고 인쇄 전에서 멈춤')
+        self.act_epost_portal_reprint_popup.triggered.connect(self.run_epost_portal_reprint_popup)
+
+        self.act_epost_portal_reprint_oz_viewer = QAction(
+            QIcon('image/korea-post-icon.png'), '우체국 단건 재출력 OZ 뷰어 확인', self)
+        self.act_epost_portal_reprint_oz_viewer.setStatusTip(
+            '출력 확인 단건의 포털 인쇄 요청 후 OZ Viewer 열림만 확인하고 실제 인쇄 전에서 멈춤')
+        self.act_epost_portal_reprint_oz_viewer.triggered.connect(
+            lambda: self.run_epost_portal_oz_viewer(reprint=True))
+
+        self.act_epost_oz_print_dialog = QAction(
+            QIcon('image/korea-post-icon.png'), '우체국 단건 재출력 인쇄 창 확인', self)
+        self.act_epost_oz_print_dialog.setStatusTip(
+            '출력 확인 단건의 OZ Viewer에서 Windows 인쇄 창 열림만 확인하고 확인 버튼 전에서 멈춤')
+        self.act_epost_oz_print_dialog.triggered.connect(self.run_epost_oz_print_dialog)
+
         # 외부 바로가기
         self.act_db = QAction(QIcon('image/database-icon.png'), '데이터베이스 시트', self)
         self.act_db.setShortcut('Ctrl+D')
@@ -4014,6 +4057,13 @@ class MainWindow(QMainWindow):
         m_api.addAction(self.act_epost_print_targets)
         m_api.addAction(self.act_epost_portal_login)
         m_api.addAction(self.act_epost_portal_diagnostic)
+        m_api.addAction(self.act_epost_portal_lookup)
+        m_api.addAction(self.act_epost_portal_print_popup)
+        m_api.addAction(self.act_epost_portal_oz_viewer)
+        m_api.addAction(self.act_epost_portal_output_confirm)
+        m_api.addAction(self.act_epost_portal_reprint_popup)
+        m_api.addAction(self.act_epost_portal_reprint_oz_viewer)
+        m_api.addAction(self.act_epost_oz_print_dialog)
 
         m_link = mb.addMenu('바로가기(&L)')
         m_link.addAction(self.act_db)
@@ -7159,7 +7209,7 @@ class MainWindow(QMainWindow):
         dialog.exec()
 
     def connect_epost_portal_login(self):
-        """ID·비밀번호를 저장하지 않고 전용 Chromium 프로필의 포털 세션만 연결한다."""
+        """공유 설정 탭의 로그인 정보로 전용 Chromium 포털 세션을 연결한다."""
         running = getattr(self, "_epost_portal_process", None)
         if running is not None and running.state() != QProcess.ProcessState.NotRunning:
             QMessageBox.information(self, "우체국 포털 로그인", "우체국 포털 로그인 창이 이미 열려 있습니다.")
@@ -7168,10 +7218,9 @@ class MainWindow(QMainWindow):
         QMessageBox.information(
             self,
             "우체국 포털 로그인 연결",
-            "전용 Chromium 창이 열립니다.\n\n"
-            "우체국 계약고객전용시스템에 직접 로그인해 주세요.\n"
+            "전용 Chromium 창이 열리고 설정 탭의 포털 ID·비밀번호로 자동 로그인합니다.\n\n"
             "로그인 완료가 확인되면 창은 자동으로 닫히고, 이 PC의 전용 Chromium 프로필에만 세션이 저장됩니다.\n\n"
-            "ID와 비밀번호는 프로그램·스프레드시트·Git에 저장하지 않습니다.",
+            "ID와 비밀번호는 명령줄·로그·Git에 저장하거나 표시하지 않습니다.",
         )
         process = QProcess(self)
         process.setWorkingDirectory(str(Path(__file__).resolve().parent))
@@ -7218,7 +7267,7 @@ class MainWindow(QMainWindow):
             self,
             "우체국 포털 로그인 연결 실패",
             "로그인 세션을 연결하지 못했습니다.\n\n"
-            "전용 Chromium 창에서 로그인이 완료됐는지 확인한 뒤 다시 시도해 주세요.\n\n"
+            "설정 탭의 epost_portal_member_id, epost_portal_password 값과 포털의 추가 인증 필요 여부를 확인한 뒤 다시 시도해 주세요.\n\n"
             f"진단: {details}",
         )
 
@@ -7237,6 +7286,7 @@ class MainWindow(QMainWindow):
             self,
             "우체국 출력 화면 진단",
             "전용 Chromium 창이 열립니다.\n\n"
+            "0. 공지사항 팝업이 뜨면 우측 상단 X로 모두 닫습니다.\n"
             "1. 계약소포 탭을 누릅니다.\n"
             "2. 왼쪽 메뉴에서 운송장출력으로 이동합니다.\n"
             "3. 조회·행 선택·운송장출력·인쇄는 누르지 마세요.\n\n"
@@ -7289,6 +7339,558 @@ class MainWindow(QMainWindow):
             "우체국 출력 화면 진단 실패",
             "진단을 완료하지 못했습니다.\n\n"
             "전용 Chromium 창에서 계약소포 > 운송장출력 화면까지 이동했는지 확인해 주세요.\n\n"
+            f"진단: {details}",
+        )
+
+    def run_epost_portal_lookup(self):
+        """오늘 신규출력 목록을 조회해 프로그램이 접수한 등기번호만 읽기 전용 대조한다."""
+        for process_name in ("_epost_portal_process", "_epost_portal_diagnostic_process"):
+            process = getattr(self, process_name, None)
+            if process is not None and process.state() != QProcess.ProcessState.NotRunning:
+                QMessageBox.warning(self, "우체국 신규출력 대조", "진행 중인 우체국 포털 작업이 끝난 뒤 실행해 주세요.")
+                return
+        running = getattr(self, "_epost_portal_lookup_process", None)
+        if running is not None and running.state() != QProcess.ProcessState.NotRunning:
+            QMessageBox.information(self, "우체국 신규출력 대조", "신규출력 대조 창이 이미 열려 있습니다.")
+            return
+
+        QMessageBox.information(
+            self,
+            "우체국 신규출력 대조",
+            "전용 Chromium 창이 열립니다.\n\n"
+            "0. 공지사항 팝업이 뜨면 우측 상단 X로 모두 닫습니다.\n"
+            "1. 계약소포 탭을 누릅니다.\n"
+            "2. 왼쪽 메뉴에서 운송장출력으로 이동합니다.\n"
+            "3. 날짜·출력대상·조회 버튼은 누르지 마세요.\n\n"
+            "프로그램이 오늘 날짜와 신규출력 조건으로 조회한 뒤, 프로그램이 실제 접수한 등기번호와만 대조합니다. "
+            "행 선택·운송장출력·인쇄는 실행하지 않습니다.",
+        )
+        process = QProcess(self)
+        process.setWorkingDirectory(str(Path(__file__).resolve().parent))
+        process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
+        environment = QProcessEnvironment.systemEnvironment()
+        environment.insert("PYTHONIOENCODING", "utf-8")
+        environment.insert("PYTHONUNBUFFERED", "1")
+        process.setProcessEnvironment(environment)
+        process.readyReadStandardOutput.connect(self._on_epost_portal_lookup_output)
+        process.finished.connect(self._on_epost_portal_lookup_finished)
+        self._epost_portal_lookup_process = process
+        self._epost_portal_lookup_output = ""
+        process.start(sys.executable, ["epost_portal_lookup.py", "--lookup"])
+
+    def _on_epost_portal_lookup_output(self):
+        process = getattr(self, "_epost_portal_lookup_process", None)
+        if process is None:
+            return
+        output = bytes(process.readAllStandardOutput()).decode("utf-8", errors="replace")
+        self._epost_portal_lookup_output += output
+
+    def _on_epost_portal_lookup_finished(self, exit_code, _status):
+        self._on_epost_portal_lookup_output()
+        output = getattr(self, "_epost_portal_lookup_output", "")
+        self._epost_portal_lookup_process = None
+        result = None
+        for line in reversed(output.splitlines()):
+            try:
+                result = json.loads(line)
+                break
+            except json.JSONDecodeError:
+                continue
+        if exit_code == 0 and isinstance(result, dict) and result.get("lookedUp"):
+            expected = result.get("expectedRegiNos", [])
+            matched = result.get("matchedRegiNos", [])
+            missing = result.get("missingRegiNos", [])
+            portal_count = result.get("portalRowCount")
+            summary = (
+                f"조회일: {result.get('lookupDate', '')}\n"
+                f"프로그램 실제 접수 대상: {len(expected)}건\n"
+                f"포털에서 확인된 대상: {len(matched)}건\n"
+                f"포털 총건수: {portal_count if portal_count is not None else '확인 불가'}건\n"
+                f"그리드 조작 컨트롤: {result.get('gridControlCount', 0)}개"
+            )
+            if missing:
+                QMessageBox.warning(
+                    self,
+                    "우체국 신규출력 대조 불일치",
+                    summary + "\n\n"
+                    "아래 등기번호가 포털 신규출력 결과에서 확인되지 않았습니다. "
+                    "안전을 위해 행 선택·운송장출력·인쇄는 실행하지 않았습니다.\n\n"
+                    + "\n".join(missing),
+                )
+                return
+            if not result.get("targetRowsVerified"):
+                QMessageBox.warning(
+                    self,
+                    "우체국 신규출력 대상 행 불일치",
+                    summary + "\n\n"
+                    "이번 프로그램 접수 건 외의 행, 중복 행 또는 이미 출력된 행이 감지됐습니다.\n"
+                    f"다른 행 수: {result.get('unexpectedRowCount', 0)}건\n"
+                    f"중복 등기번호 수: {len(result.get('duplicateRegiNos', []))}건\n"
+                    f"이미 출력된 대상 수: {len(result.get('printedRegiNos', []))}건\n"
+                    f"체크박스 없는 대상 수: {len(result.get('missingCheckboxRegiNos', []))}건\n\n"
+                    "안전을 위해 행 선택·운송장출력·인쇄는 실행하지 않았습니다.",
+                )
+                return
+            QMessageBox.information(
+                self,
+                "우체국 신규출력 대조 완료",
+                summary + "\n\n"
+                "모든 프로그램 접수 대상을 포털의 미출력 행으로 정확히 확인했습니다.\n"
+                "이번 단계에서는 행 선택·운송장출력·인쇄를 실행하지 않았습니다.",
+            )
+            return
+
+        details = output.strip()[-800:] or "신규출력 대조를 완료하지 못했습니다."
+        QMessageBox.warning(
+            self,
+            "우체국 신규출력 대조 실패",
+            "신규출력 대조를 완료하지 못했습니다.\n\n"
+            "전용 Chromium 창에서 계약소포 > 운송장출력 화면까지 이동했는지, "
+            "오늘 실제 접수한 미출력 건이 있는지 확인해 주세요.\n\n"
+            f"진단: {details}",
+        )
+
+    def run_epost_portal_print_popup(self):
+        """검증된 오늘 신규출력 행만 선택해 포털 팝업을 열고, 인쇄 전에서 멈춘다."""
+        for process_name in (
+            "_epost_portal_process",
+            "_epost_portal_diagnostic_process",
+            "_epost_portal_lookup_process",
+        ):
+            process = getattr(self, process_name, None)
+            if process is not None and process.state() != QProcess.ProcessState.NotRunning:
+                QMessageBox.warning(self, "우체국 운송장출력 팝업", "진행 중인 우체국 포털 작업이 끝난 뒤 실행해 주세요.")
+                return
+        running = getattr(self, "_epost_portal_print_popup_process", None)
+        if running is not None and running.state() != QProcess.ProcessState.NotRunning:
+            QMessageBox.information(self, "우체국 운송장출력 팝업", "운송장출력 팝업 단계가 이미 진행 중입니다.")
+            return
+
+        answer = QMessageBox.question(
+            self,
+            "우체국 운송장출력 팝업 열기",
+            "전용 Chromium 창이 열립니다.\n\n"
+            "0. 공지사항 팝업이 뜨면 우측 상단 X로 모두 닫습니다.\n"
+            "1. 계약소포 탭을 누릅니다.\n"
+            "2. 왼쪽 메뉴에서 운송장출력으로 이동합니다.\n"
+            "3. 날짜·출력대상·조회 버튼은 누르지 마세요.\n\n"
+            "프로그램은 오늘 날짜의 신규출력을 조회하고, 프로그램이 실제 접수한 등기번호만\n"
+            "미출력·중복 없음·다른 행 없음 조건으로 다시 확인한 뒤 해당 행만 선택합니다.\n"
+            "그 다음 포털의 ‘운송장출력’ 팝업을 엽니다.\n\n"
+            "팝업이 열리면 ‘인쇄’는 누르지 말고 내용을 확인한 뒤 우측 상단 X로 닫아 주세요.\n"
+            "이 단계에서는 OZ Viewer·Windows 인쇄창·실제 인쇄를 실행하지 않습니다.\n\n"
+            "계속할까요?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+
+        process = QProcess(self)
+        process.setWorkingDirectory(str(Path(__file__).resolve().parent))
+        process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
+        environment = QProcessEnvironment.systemEnvironment()
+        environment.insert("PYTHONIOENCODING", "utf-8")
+        environment.insert("PYTHONUNBUFFERED", "1")
+        process.setProcessEnvironment(environment)
+        process.readyReadStandardOutput.connect(self._on_epost_portal_print_popup_output)
+        process.finished.connect(self._on_epost_portal_print_popup_finished)
+        self._epost_portal_print_popup_process = process
+        self._epost_portal_print_popup_output = ""
+        process.start(sys.executable, ["epost_portal_print_popup.py", "--open-popup"])
+
+    def _on_epost_portal_print_popup_output(self):
+        process = getattr(self, "_epost_portal_print_popup_process", None)
+        if process is None:
+            return
+        output = bytes(process.readAllStandardOutput()).decode("utf-8", errors="replace")
+        self._epost_portal_print_popup_output += output
+
+    def _on_epost_portal_print_popup_finished(self, exit_code, _status):
+        self._on_epost_portal_print_popup_output()
+        output = getattr(self, "_epost_portal_print_popup_output", "")
+        self._epost_portal_print_popup_process = None
+        result = None
+        for line in reversed(output.splitlines()):
+            try:
+                result = json.loads(line)
+                break
+            except json.JSONDecodeError:
+                continue
+        if exit_code == 0 and isinstance(result, dict) and result.get("popupOpened"):
+            QMessageBox.information(
+                self,
+                "우체국 운송장출력 팝업 검토 완료",
+                f"조회일: {result.get('lookupDate', '')}\n"
+                f"선택한 검증 대상: {result.get('selectedCount', 0)}건\n\n"
+                "포털 운송장출력 팝업을 열어 검토한 뒤 닫았습니다.\n"
+                "인쇄 버튼·OZ Viewer·Windows 인쇄창·실제 인쇄는 실행하지 않았습니다.",
+            )
+            return
+
+        details = output.strip()[-800:] or "운송장출력 팝업을 열지 못했습니다."
+        QMessageBox.warning(
+            self,
+            "우체국 운송장출력 팝업 열기 실패",
+            "운송장출력 팝업을 열지 못했습니다.\n\n"
+            "전용 Chromium 창에서 계약소포 > 운송장출력 화면까지 이동했는지, "
+            "오늘 실제 접수한 미출력 건만 남아 있는지 확인해 주세요.\n\n"
+            f"진단: {details}",
+        )
+
+    def run_epost_portal_oz_viewer(self, reprint=False):
+        """포털 인쇄 요청 후 OZ Viewer 하나가 열렸는지만 확인한다."""
+        for process_name in (
+            "_epost_portal_process",
+            "_epost_portal_diagnostic_process",
+            "_epost_portal_lookup_process",
+            "_epost_portal_print_popup_process",
+        ):
+            process = getattr(self, process_name, None)
+            if process is not None and process.state() != QProcess.ProcessState.NotRunning:
+                QMessageBox.warning(self, "우체국 OZ 뷰어 확인", "진행 중인 우체국 포털 작업이 끝난 뒤 실행해 주세요.")
+                return
+        running = getattr(self, "_epost_portal_oz_viewer_process", None)
+        if running is not None and running.state() != QProcess.ProcessState.NotRunning:
+            QMessageBox.information(self, "우체국 OZ 뷰어 확인", "OZ 뷰어 확인 단계가 이미 진행 중입니다.")
+            return
+
+        message = "주의: 이 단계는 포털 팝업의 빨간 ‘인쇄’ 버튼을 누릅니다.\n\n"
+        if reprint:
+            message += (
+                "프로그램은 포털에서 이미 ‘출력’으로 확인된 단건을 전체 목록에서 다시 찾고,\n"
+                "그 행만 선택해 재출력 인쇄 요청을 합니다.\n\n"
+            )
+        else:
+            message += (
+                "포털은 이 시점에 해당 건을 ‘출력’ 처리하거나 신규출력 목록에서 제외할 수 있습니다.\n"
+                "따라서 이 건은 자동 재시도 대상으로 남기지 않습니다.\n\n"
+                "프로그램은 오늘 신규출력을 다시 엄격히 대조한 뒤 검증된 행만 선택하고,\n"
+            )
+        message += (
+            "OZ Report Viewer가 새로 열린 것까지만 확인합니다.\n"
+            "Viewer가 열리면 프린터 아이콘은 누르지 말고 화면만 확인한 뒤 X로 닫아 주세요.\n"
+            "Windows 인쇄창·실제 인쇄 명령은 실행하지 않습니다.\n\n"
+            + ("실제 포털 재출력 요청을 진행할까요?" if reprint else "실제 포털 인쇄 요청을 진행할까요?")
+        )
+        answer = QMessageBox.question(
+            self,
+            "우체국 단건 재출력 OZ 뷰어 확인" if reprint else "우체국 OZ 뷰어 열기 확인",
+            message,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+
+        process = QProcess(self)
+        process.setWorkingDirectory(str(Path(__file__).resolve().parent))
+        process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
+        environment = QProcessEnvironment.systemEnvironment()
+        environment.insert("PYTHONIOENCODING", "utf-8")
+        environment.insert("PYTHONUNBUFFERED", "1")
+        process.setProcessEnvironment(environment)
+        process.readyReadStandardOutput.connect(self._on_epost_portal_oz_viewer_output)
+        process.finished.connect(self._on_epost_portal_oz_viewer_finished)
+        self._epost_portal_oz_viewer_process = process
+        self._epost_portal_oz_viewer_output = ""
+        process.start(sys.executable, [
+            "epost_portal_oz_viewer.py",
+            "--open-reprint-oz-viewer" if reprint else "--open-oz-viewer",
+        ])
+
+    def _on_epost_portal_oz_viewer_output(self):
+        process = getattr(self, "_epost_portal_oz_viewer_process", None)
+        if process is None:
+            return
+        output = bytes(process.readAllStandardOutput()).decode("utf-8", errors="replace")
+        self._epost_portal_oz_viewer_output += output
+
+    def _on_epost_portal_oz_viewer_finished(self, exit_code, _status):
+        self._on_epost_portal_oz_viewer_output()
+        output = getattr(self, "_epost_portal_oz_viewer_output", "")
+        self._epost_portal_oz_viewer_process = None
+        result = None
+        for line in reversed(output.splitlines()):
+            try:
+                result = json.loads(line)
+                break
+            except json.JSONDecodeError:
+                continue
+        if exit_code == 0 and isinstance(result, dict) and (
+            result.get("ozViewerOpened") or result.get("reprintOzViewerOpened")
+        ):
+            QMessageBox.information(
+                self,
+                "우체국 단건 재출력 OZ 뷰어 확인 완료" if result.get("reprintOzViewerOpened") else "우체국 OZ 뷰어 확인 완료",
+                f"조회일: {result.get('lookupDate', '')}\n"
+                f"포털 인쇄 요청 대상: {result.get('selectedCount', 0)}건\n\n"
+                "OZ Report Viewer가 새로 열렸음을 확인하고 사용자가 닫았습니다.\n"
+                "프린터 아이콘·Windows 인쇄창·실제 인쇄는 실행하지 않았습니다.\n\n"
+                "포털 재출력 요청은 실제 프린터 전송을 뜻하지 않습니다." if result.get("reprintOzViewerOpened") else
+                "포털 인쇄 요청이 눌린 건은 자동 재시도 대상에서 제외했습니다.",
+            )
+            return
+
+        details = output.strip()[-800:] or "OZ Viewer 열림을 확인하지 못했습니다."
+        QMessageBox.warning(
+            self,
+            "우체국 OZ 뷰어 확인 실패",
+            "OZ Viewer 열림을 확인하지 못했습니다.\n\n"
+            "포털 인쇄 요청이 이미 실행됐다면 해당 건은 자동 재시도하지 않습니다.\n"
+            "포털의 출력여부와 OZ Viewer 창 상태를 확인해 주세요.\n\n"
+            f"진단: {details}",
+        )
+
+    def run_epost_portal_output_confirm(self):
+        """포털 인쇄 요청 건의 출력여부를 전체 조회로 읽기 전용 확인한다."""
+        for process_name in (
+            "_epost_portal_process",
+            "_epost_portal_diagnostic_process",
+            "_epost_portal_lookup_process",
+            "_epost_portal_print_popup_process",
+            "_epost_portal_oz_viewer_process",
+        ):
+            process = getattr(self, process_name, None)
+            if process is not None and process.state() != QProcess.ProcessState.NotRunning:
+                QMessageBox.warning(self, "우체국 포털 출력여부 확인", "진행 중인 우체국 포털 작업이 끝난 뒤 실행해 주세요.")
+                return
+        running = getattr(self, "_epost_portal_output_confirm_process", None)
+        if running is not None and running.state() != QProcess.ProcessState.NotRunning:
+            QMessageBox.information(self, "우체국 포털 출력여부 확인", "포털 출력여부 확인이 이미 진행 중입니다.")
+            return
+
+        QMessageBox.information(
+            self,
+            "우체국 포털 출력여부 확인",
+            "전용 Chromium 창이 열립니다.\n\n"
+            "0. 공지사항 팝업이 뜨면 우측 상단 X로 모두 닫습니다.\n"
+            "1. 계약소포 탭을 누릅니다.\n"
+            "2. 왼쪽 메뉴에서 운송장출력으로 이동합니다.\n"
+            "3. 날짜·출력대상·조회 버튼은 누르지 마세요.\n\n"
+            "프로그램이 오늘 날짜와 출력대상 ‘전체’로 조회한 뒤, 앞서 포털 인쇄 요청한 건의\n"
+            "출력여부가 ‘출력’인지 읽기 전용으로 확인합니다.\n"
+            "행 선택·운송장출력·인쇄는 실행하지 않습니다.",
+        )
+        process = QProcess(self)
+        process.setWorkingDirectory(str(Path(__file__).resolve().parent))
+        process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
+        environment = QProcessEnvironment.systemEnvironment()
+        environment.insert("PYTHONIOENCODING", "utf-8")
+        environment.insert("PYTHONUNBUFFERED", "1")
+        process.setProcessEnvironment(environment)
+        process.readyReadStandardOutput.connect(self._on_epost_portal_output_confirm_output)
+        process.finished.connect(self._on_epost_portal_output_confirm_finished)
+        self._epost_portal_output_confirm_process = process
+        self._epost_portal_output_confirm_output = ""
+        process.start(sys.executable, ["epost_portal_output_confirm.py", "--confirm"])
+
+    def _on_epost_portal_output_confirm_output(self):
+        process = getattr(self, "_epost_portal_output_confirm_process", None)
+        if process is None:
+            return
+        output = bytes(process.readAllStandardOutput()).decode("utf-8", errors="replace")
+        self._epost_portal_output_confirm_output += output
+
+    def _on_epost_portal_output_confirm_finished(self, exit_code, _status):
+        self._on_epost_portal_output_confirm_output()
+        output = getattr(self, "_epost_portal_output_confirm_output", "")
+        self._epost_portal_output_confirm_process = None
+        result = None
+        for line in reversed(output.splitlines()):
+            try:
+                result = json.loads(line)
+                break
+            except json.JSONDecodeError:
+                continue
+        if exit_code == 0 and isinstance(result, dict) and result.get("portalOutputConfirmed"):
+            QMessageBox.information(
+                self,
+                "우체국 포털 출력여부 확인 완료",
+                f"조회일: {result.get('lookupDate', '')}\n"
+                f"포털 출력 확인 건: {result.get('confirmedCount', 0)}건\n\n"
+                "포털의 출력여부가 ‘출력’인 것을 읽기 전용으로 확인해 로컬 이력에 기록했습니다.\n"
+                "이는 포털 출력 처리 확인이며 실물 인쇄 성공을 뜻하지는 않습니다.",
+            )
+            return
+
+        details = output.strip()[-800:] or "포털 출력여부를 확인하지 못했습니다."
+        QMessageBox.warning(
+            self,
+            "우체국 포털 출력여부 확인 실패",
+            "포털 출력여부를 확인하지 못했습니다.\n\n"
+            "전용 Chromium 창에서 계약소포 > 운송장출력 화면까지 이동했는지 확인해 주세요.\n\n"
+            f"진단: {details}",
+        )
+
+    def run_epost_portal_reprint_popup(self):
+        """포털 출력 확인 이력의 정확한 단건만 선택해 재출력 팝업을 연다."""
+        for process_name in (
+            "_epost_portal_process",
+            "_epost_portal_diagnostic_process",
+            "_epost_portal_lookup_process",
+            "_epost_portal_print_popup_process",
+            "_epost_portal_oz_viewer_process",
+            "_epost_portal_output_confirm_process",
+        ):
+            process = getattr(self, process_name, None)
+            if process is not None and process.state() != QProcess.ProcessState.NotRunning:
+                QMessageBox.warning(self, "우체국 단건 재출력", "진행 중인 우체국 포털 작업이 끝난 뒤 실행해 주세요.")
+                return
+        running = getattr(self, "_epost_portal_reprint_popup_process", None)
+        if running is not None and running.state() != QProcess.ProcessState.NotRunning:
+            QMessageBox.information(self, "우체국 단건 재출력", "단건 재출력 팝업 단계가 이미 진행 중입니다.")
+            return
+
+        answer = QMessageBox.question(
+            self,
+            "우체국 단건 재출력 팝업 열기",
+            "이 메뉴는 포털에서 이미 ‘출력’으로 확인된 오늘의 프로그램 접수 건만 대상으로 합니다.\n\n"
+            "출력대상 ‘전체’에서 해당 등기번호가 정확히 한 행이고 체크 가능한지 확인한 뒤\n"
+            "그 행만 선택해 운송장출력 팝업을 엽니다.\n\n"
+            "팝업이 열리면 인쇄는 누르지 말고 내용을 확인한 뒤 우측 상단 X로 닫아 주세요.\n"
+            "OZ Viewer·Windows 인쇄창·실제 출력은 실행하지 않습니다.\n\n"
+            "계속할까요?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+
+        process = QProcess(self)
+        process.setWorkingDirectory(str(Path(__file__).resolve().parent))
+        process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
+        environment = QProcessEnvironment.systemEnvironment()
+        environment.insert("PYTHONIOENCODING", "utf-8")
+        environment.insert("PYTHONUNBUFFERED", "1")
+        process.setProcessEnvironment(environment)
+        process.readyReadStandardOutput.connect(self._on_epost_portal_reprint_popup_output)
+        process.finished.connect(self._on_epost_portal_reprint_popup_finished)
+        self._epost_portal_reprint_popup_process = process
+        self._epost_portal_reprint_popup_output = ""
+        process.start(sys.executable, ["epost_portal_reprint_popup.py", "--open-popup"])
+
+    def _on_epost_portal_reprint_popup_output(self):
+        process = getattr(self, "_epost_portal_reprint_popup_process", None)
+        if process is None:
+            return
+        output = bytes(process.readAllStandardOutput()).decode("utf-8", errors="replace")
+        self._epost_portal_reprint_popup_output += output
+
+    def _on_epost_portal_reprint_popup_finished(self, exit_code, _status):
+        self._on_epost_portal_reprint_popup_output()
+        output = getattr(self, "_epost_portal_reprint_popup_output", "")
+        self._epost_portal_reprint_popup_process = None
+        result = None
+        for line in reversed(output.splitlines()):
+            try:
+                result = json.loads(line)
+                break
+            except json.JSONDecodeError:
+                continue
+        if exit_code == 0 and isinstance(result, dict) and result.get("reprintPopupOpened"):
+            QMessageBox.information(
+                self,
+                "우체국 단건 재출력 팝업 검토 완료",
+                f"조회일: {result.get('lookupDate', '')}\n"
+                f"선택한 확정 대상: {result.get('selectedCount', 0)}건\n\n"
+                "포털 재출력 팝업을 열어 검토한 뒤 닫았습니다.\n"
+                "인쇄 버튼·OZ Viewer·Windows 인쇄창·실제 출력은 실행하지 않았습니다.",
+            )
+            return
+
+        details = output.strip()[-800:] or "단건 재출력 팝업을 열지 못했습니다."
+        QMessageBox.warning(
+            self,
+            "우체국 단건 재출력 팝업 열기 실패",
+            "단건 재출력 팝업을 열지 못했습니다.\n\n"
+            "전용 Chromium 창에서 계약소포 > 운송장출력 화면까지 이동했는지 확인해 주세요.\n\n"
+            f"진단: {details}",
+        )
+
+    def run_epost_oz_print_dialog(self):
+        """단건 재출력의 Windows 인쇄 창 열림만 확인한다."""
+        for process_name in (
+            "_epost_portal_process",
+            "_epost_portal_diagnostic_process",
+            "_epost_portal_lookup_process",
+            "_epost_portal_print_popup_process",
+            "_epost_portal_oz_viewer_process",
+            "_epost_portal_output_confirm_process",
+            "_epost_portal_reprint_popup_process",
+        ):
+            process = getattr(self, process_name, None)
+            if process is not None and process.state() != QProcess.ProcessState.NotRunning:
+                QMessageBox.warning(self, "우체국 인쇄 창 확인", "진행 중인 우체국 포털 작업이 끝난 뒤 실행해 주세요.")
+                return
+        running = getattr(self, "_epost_oz_print_dialog_process", None)
+        if running is not None and running.state() != QProcess.ProcessState.NotRunning:
+            QMessageBox.information(self, "우체국 인쇄 창 확인", "인쇄 창 확인 단계가 이미 진행 중입니다.")
+            return
+
+        answer = QMessageBox.question(
+            self,
+            "우체국 단건 재출력 인쇄 창 확인",
+            "주의: 이 단계는 포털 재출력 팝업의 ‘인쇄’와 준비된 OZ Viewer의 프린터 아이콘을 누릅니다.\n\n"
+            "프로그램은 포털에서 이미 ‘출력’으로 확인된 단건만 다시 찾아 선택합니다.\n"
+            "Windows 인쇄 창이 열리면 용지·프린터·확인 버튼은 누르지 말고 화면만 확인한 뒤 X 또는 취소로 닫아 주세요.\n"
+            "그 뒤 OZ Viewer도 X로 닫아 주세요.\n\n"
+            "이 단계에서는 실제 프린터 전송을 실행하지 않습니다.\n\n"
+            "Windows 인쇄 창 열림을 확인할까요?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+
+        process = QProcess(self)
+        process.setWorkingDirectory(str(Path(__file__).resolve().parent))
+        process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
+        environment = QProcessEnvironment.systemEnvironment()
+        environment.insert("PYTHONIOENCODING", "utf-8")
+        environment.insert("PYTHONUNBUFFERED", "1")
+        process.setProcessEnvironment(environment)
+        process.readyReadStandardOutput.connect(self._on_epost_oz_print_dialog_output)
+        process.finished.connect(self._on_epost_oz_print_dialog_finished)
+        self._epost_oz_print_dialog_process = process
+        self._epost_oz_print_dialog_output = ""
+        process.start(sys.executable, ["epost_oz_print_dialog.py", "--open-reprint-print-dialog"])
+
+    def _on_epost_oz_print_dialog_output(self):
+        process = getattr(self, "_epost_oz_print_dialog_process", None)
+        if process is None:
+            return
+        self._epost_oz_print_dialog_output += bytes(process.readAllStandardOutput()).decode(
+            "utf-8", errors="replace",
+        )
+
+    def _on_epost_oz_print_dialog_finished(self, exit_code, _status):
+        self._on_epost_oz_print_dialog_output()
+        output = getattr(self, "_epost_oz_print_dialog_output", "")
+        self._epost_oz_print_dialog_process = None
+        result = None
+        for line in reversed(output.splitlines()):
+            try:
+                result = json.loads(line)
+                break
+            except json.JSONDecodeError:
+                continue
+        if exit_code == 0 and isinstance(result, dict) and result.get("printDialogOpened"):
+            QMessageBox.information(
+                self,
+                "우체국 Windows 인쇄 창 확인 완료",
+                f"조회일: {result.get('lookupDate', '')}\n"
+                f"선택한 확정 대상: {result.get('selectedCount', 0)}건\n\n"
+                "Windows 인쇄 창을 열어 검토한 뒤 닫았습니다.\n"
+                "용지 선택·확인·실제 프린터 전송은 실행하지 않았습니다.",
+            )
+            return
+        details = output.strip()[-800:] or "Windows 인쇄 창을 열지 못했습니다."
+        QMessageBox.warning(
+            self,
+            "우체국 Windows 인쇄 창 확인 실패",
+            "Windows 인쇄 창을 열지 못했습니다.\n\n"
+            "기존 OZ Viewer나 인쇄 창이 열려 있지 않은지 확인해 주세요.\n\n"
             f"진단: {details}",
         )
             
