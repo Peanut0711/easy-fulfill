@@ -276,21 +276,20 @@ def wait_for_login(page):
         print("쿠팡 WING 업로드 로그인 세션이 확인되었습니다.")
         return
     print("열린 Chrome 창에서 쿠팡 WING에 로그인해 주세요. 로그인되면 자동으로 업로드를 시작합니다.")
+    if not _is_wing_url(page.url):
+        page.goto(WING_HOME, wait_until="domcontentloaded", timeout=30_000)
     deadline = time.monotonic() + 300
-    previous_url = page.url
     while True:
         if time.monotonic() > deadline:
             raise RuntimeError("쿠팡 WING 로그인 대기 시간이 초과되었습니다.")
-        if page.url != previous_url:
-            previous_url = page.url
-            if _is_wing_url(page.url) and _has_active_upload_session(page):
-                break
+        if _has_active_upload_session(page):
+            break
         page.wait_for_timeout(1_000)
     print("쿠팡 WING 업로드 로그인 세션이 확인되었습니다.")
 
 
 def _has_active_upload_session(page):
-    """업로드 경로로 인증을 확인하되, 파일 없는 응답을 브라우저 탭에 표시하지 않는다."""
+    """업로드 경로의 JSON 응답으로 인증을 확인하고, 로그인 리다이렉트는 거부한다."""
     try:
         # 이 URL은 파일 없이 GET하면 WING이 파일 오류 JSON을 돌려준다. 탭 이동으로
         # 확인하면 그 JSON이 사용자에게 노출되므로, 동일한 BrowserContext의 요청 API로
@@ -299,7 +298,27 @@ def _has_active_upload_session(page):
     except Exception as error:
         print(f"[로그인 확인] 업로드 권한 확인 요청 실패: {error}")
         return False
-    return _is_wing_url(response.url)
+    if _is_active_upload_response(response):
+        return True
+    print(
+        "[로그인 확인] 업로드 권한이 확인되지 않았습니다: "
+        f"HTTP {response.status} {response.status_text}; "
+        f"Content-Type={response.headers.get('content-type', '(없음)')}; URL={response.url}"
+    )
+    return False
+
+
+def _is_active_upload_response(response):
+    """파일 없는 업로드 GET의 JSON 오류 응답만 유효한 업로드 로그인으로 인정한다."""
+    final_url = urlparse(response.url)
+    upload_url = urlparse(UPLOAD_URL)
+    content_type = response.headers.get("content-type", "").lower()
+    return (
+        response.status not in (401, 403)
+        and final_url.hostname == upload_url.hostname
+        and final_url.path == upload_url.path
+        and "json" in content_type
+    )
 
 
 def _is_wing_url(url: str):
@@ -348,6 +367,15 @@ def self_test():
     assert "grid-2" not in paste_html and 'src="a.jpg"' in paste_html
     assert _redact_upload_response_text('token="secret"\nerror') == 'token="[REDACTED]" error'
     assert _is_wing_url(WING_HOME) and not _is_wing_url("https://xauth.coupang.com/login")
+    class UploadResponse:
+        def __init__(self, status, url, content_type):
+            self.status = status
+            self.url = url
+            self.headers = {"content-type": content_type}
+
+    assert _is_active_upload_response(UploadResponse(400, UPLOAD_URL, "application/json"))
+    assert not _is_active_upload_response(UploadResponse(403, UPLOAD_URL, "text/html"))
+    assert not _is_active_upload_response(UploadResponse(200, "https://wing.coupang.com/sso/login", "text/html"))
     with tempfile.TemporaryDirectory() as temp_dir:
         image_path = Path(temp_dir) / "small.png"
         Image.new("RGB", (120, 120), "white").save(image_path)
