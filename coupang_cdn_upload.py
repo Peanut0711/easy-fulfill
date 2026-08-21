@@ -276,14 +276,19 @@ def wait_for_login(page):
         print("쿠팡 WING 업로드 로그인 세션이 확인되었습니다.")
         return
     print("열린 Chrome 창에서 쿠팡 WING에 로그인해 주세요. 로그인되면 자동으로 업로드를 시작합니다.")
-    if not _is_wing_url(page.url):
-        page.goto(WING_HOME, wait_until="domcontentloaded", timeout=30_000)
+    page.goto(WING_HOME, wait_until="domcontentloaded", timeout=30_000)
     deadline = time.monotonic() + 300
+    checked_url = None
     while True:
         if time.monotonic() > deadline:
             raise RuntimeError("쿠팡 WING 로그인 대기 시간이 초과되었습니다.")
-        if _has_active_upload_session(page):
-            break
+        current_url = page.url
+        if current_url != checked_url:
+            checked_url = current_url
+            # 로그인 페이지에서는 업로드 권한 요청을 반복하지 않는다. 로그인 완료 후
+            # 판매자 WING 화면으로 돌아온 시점에만 한 번 확인한다.
+            if _is_wing_seller_url(current_url) and _has_active_upload_session(page):
+                break
         page.wait_for_timeout(1_000)
     print("쿠팡 WING 업로드 로그인 세션이 확인되었습니다.")
 
@@ -323,6 +328,11 @@ def _is_active_upload_response(response):
 
 def _is_wing_url(url: str):
     return urlparse(url).hostname == "wing.coupang.com"
+
+
+def _is_wing_seller_url(url: str):
+    parsed = urlparse(url)
+    return parsed.hostname == "wing.coupang.com" and not parsed.path.startswith("/sso/")
 
 
 def launch_coupang_context(playwright, headless=False):
@@ -367,6 +377,8 @@ def self_test():
     assert "grid-2" not in paste_html and 'src="a.jpg"' in paste_html
     assert _redact_upload_response_text('token="secret"\nerror') == 'token="[REDACTED]" error'
     assert _is_wing_url(WING_HOME) and not _is_wing_url("https://xauth.coupang.com/login")
+    assert _is_wing_seller_url(WING_HOME)
+    assert not _is_wing_seller_url("https://wing.coupang.com/sso/login")
     class UploadResponse:
         def __init__(self, status, url, content_type):
             self.status = status
