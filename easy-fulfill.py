@@ -8247,7 +8247,7 @@ class MainWindow(QMainWindow):
                     '수취인명': None,
                     '수취인 이동통신': None,
                     '수취인상세주소': None,
-                    '고객주문번호': None
+                    '고객 주문번호': None
                 }
             }
             
@@ -8290,8 +8290,8 @@ class MainWindow(QMainWindow):
                 invoice_phone = _normalize_value(invoice_row[column_mapping['invoice']['수취인 이동통신']])
                 invoice_number = _normalize_value(invoice_row[column_mapping['invoice']['등기번호']])
                 invoice_order_number = ''
-                if column_mapping['invoice']['고객주문번호']:
-                    invoice_order_number = _normalize_digits(invoice_row[column_mapping['invoice']['고객주문번호']])[:13]
+                if column_mapping['invoice']['고객 주문번호']:
+                    invoice_order_number = _normalize_digits(invoice_row[column_mapping['invoice']['고객 주문번호']])[:13]
 
                 matching_rows = order_df.iloc[0:0]
                 if order_number_series is not None and invoice_order_number:
@@ -8305,7 +8305,7 @@ class MainWindow(QMainWindow):
                     print(f"수취인명: {invoice_name}")
                     print(f"전화번호: {invoice_phone}")
                     if invoice_order_number:
-                        print(f"고객주문번호: {invoice_order_number}")
+                        print(f"고객 주문번호: {invoice_order_number}")
                     print(f"송장번호: {invoice_number}")
                     print(f"주소: {matching_rows[column_mapping['order']['통합배송지']].iloc[0]}")
                     
