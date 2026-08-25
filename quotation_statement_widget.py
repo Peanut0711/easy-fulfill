@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QProgressDialog,
     QPushButton,
     QRadioButton,
+    QSpinBox,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -385,12 +386,30 @@ class QuotationStatementWidget(QWidget):
 
         summary_group = QGroupBox("계산 요약")
         summary_layout = QVBoxLayout(summary_group)
+        self.discount_controls = QWidget()
+        discount_layout = QHBoxLayout(self.discount_controls)
+        discount_layout.setContentsMargins(0, 0, 0, 0)
+        discount_layout.addWidget(QLabel("할인 방식"))
+        self.discount_mode_combo = QComboBox()
+        self.discount_mode_combo.addItem("자동(금액 기준)", "auto")
+        self.discount_mode_combo.addItem("미적용(0%)", "none")
+        self.discount_mode_combo.addItem("직접 입력", "manual")
+        discount_layout.addWidget(self.discount_mode_combo)
+        self.discount_rate_spin = QSpinBox()
+        self.discount_rate_spin.setRange(0, 100)
+        self.discount_rate_spin.setSingleStep(1)
+        self.discount_rate_spin.setSuffix(" %")
+        self.discount_rate_spin.setFixedWidth(100)
+        self.discount_rate_spin.setVisible(False)
+        discount_layout.addWidget(self.discount_rate_spin)
+        discount_layout.addStretch(1)
         self.summary_label = QLabel("품목을 입력하면 금액을 계산합니다.")
         self.summary_label.setWordWrap(True)
         self.summary_label.setStyleSheet("font-weight: 600; padding: 4px;")
         self.negotiated_check = QCheckBox("협의 완료 (현재 입력 단가를 협의 확정가로 사용)")
         self.negotiated_check.setVisible(False)
         self.free_shipping_check = QCheckBox("배송비 면제")
+        summary_layout.addWidget(self.discount_controls)
         summary_layout.addWidget(self.summary_label)
         summary_layout.addWidget(self.negotiated_check)
         summary_layout.addWidget(self.free_shipping_check)
@@ -419,11 +438,14 @@ class QuotationStatementWidget(QWidget):
         self.table.itemChanged.connect(self._on_item_changed)
         self.document_type.currentTextChanged.connect(self._on_document_type_changed)
         self.input_mode_group.buttonClicked.connect(self._on_input_mode_changed)
+        self.discount_mode_combo.currentIndexChanged.connect(self._on_discount_mode_changed)
+        self.discount_rate_spin.valueChanged.connect(self.refresh_summary)
         self.negotiated_check.toggled.connect(self.refresh_summary)
         self.free_shipping_check.toggled.connect(self.refresh_summary)
         self.reset_button.clicked.connect(self.reset_form)
         self.create_button.clicked.connect(self.create_document)
         self.pdf_button.clicked.connect(lambda: self.create_document(as_pdf=True))
+        self._on_discount_mode_changed()
         self._on_document_type_changed(self.document_type.currentText())
 
     def _on_document_type_changed(self, document_type):
@@ -451,12 +473,58 @@ class QuotationStatementWidget(QWidget):
             return "coupang"
         return "manual"
 
+    def _discount_mode(self):
+        return str(self.discount_mode_combo.currentData() or "auto")
+
+    def _discount_rate_override(self):
+        mode = self._discount_mode()
+        if mode == "auto":
+            return None
+        if mode == "none":
+            return Decimal("0")
+        return Decimal(str(self.discount_rate_spin.value())) / Decimal("100")
+
+    @staticmethod
+    def _format_discount_rate(rate):
+        percent = Decimal(rate) * Decimal("100")
+        return str(int(percent))
+
+    def _discount_summary_text(self, result, order_import=False):
+        if order_import:
+            return "주문 금액 기준(추가 할인 없음)"
+        mode = self._discount_mode()
+        if self._negotiation_mode and mode == "auto":
+            return "별도 협의"
+        rate = self._format_discount_rate(result.discount_rate)
+        if mode == "none":
+            label = "미적용 0%"
+        elif mode == "manual":
+            label = f"직접 입력 {rate}%"
+        else:
+            label = f"자동 {rate}%"
+        if self._negotiation_mode:
+            label += " (협의 대상)"
+        return label
+
+    def _apply_discount_controls_visibility(self):
+        direct_pricing = (
+            self.document_type.currentText() == "견적서"
+            or self._selected_input_mode() == "manual"
+        ) and not self._is_order_import()
+        self.discount_controls.setVisible(direct_pricing)
+        self.discount_rate_spin.setVisible(direct_pricing and self._discount_mode() == "manual")
+
+    def _on_discount_mode_changed(self, _index=None):
+        self._apply_discount_controls_visibility()
+        self.refresh_summary()
+
     def _apply_input_mode_visibility(self):
         statement = self.document_type.currentText() == "거래명세서"
         mode = self._selected_input_mode()
         self.product_search_widget.setVisible(not statement or mode == "manual")
         self.naver_order_group.setVisible(statement and mode == "naver")
         self.coupang_order_group.setVisible(statement and mode == "coupang")
+        self._apply_discount_controls_visibility()
 
     def _on_input_mode_changed(self, _button):
         mode = self._selected_input_mode()
@@ -618,6 +686,7 @@ class QuotationStatementWidget(QWidget):
             return
         try:
             order_import = self._is_naver_order_import()
+            discount_rate_override = None if order_import else self._discount_rate_override()
             if order_import:
                 self._negotiation_mode = False
                 result = calculate_document(
@@ -634,18 +703,22 @@ class QuotationStatementWidget(QWidget):
                     self._negotiation_mode = False
 
                 if self._negotiation_mode:
-                    result = raw_result
+                    result = calculate_document(
+                        items,
+                        negotiated=True,
+                        discount_rate_override=discount_rate_override,
+                    )
                 else:
-                    result = calculate_document(items, free_shipping=self.free_shipping_check.isChecked())
+                    result = calculate_document(
+                        items,
+                        free_shipping=self.free_shipping_check.isChecked(),
+                        discount_rate_override=discount_rate_override,
+                    )
         except DocumentValidationError as exc:
             self.summary_label.setText(str(exc))
             return
         self.negotiated_check.setVisible(self._negotiation_mode)
-        discount = (
-            "주문 금액 기준(추가 할인 없음)" if order_import
-            else "별도 협의" if self._negotiation_mode
-            else f"{int(result.discount_rate * Decimal('100'))}%"
-        )
+        discount = self._discount_summary_text(result, order_import=order_import)
         self.summary_label.setText(
             f"할인 전 품목 합계 {result.goods_total_before_discount:,}원  |  할인 {discount} "
             f"({result.discount_amount:,}원)  |  공급가액 {result.supply_total:,}원  |  "
@@ -824,6 +897,7 @@ class QuotationStatementWidget(QWidget):
         self.import_source_badge.setText(source_label)
         self.import_source_badge.setVisible(True)
         self.free_shipping_check.setVisible(False)
+        self._apply_discount_controls_visibility()
         shipping_message = (
             f"실제 배송비 {self._naver_order_shipping_gross:,}원을 포함했습니다."
             if self._naver_order_shipping_gross else "고객 부담 배송비가 없어 배송비 행을 만들지 않습니다."
@@ -867,6 +941,8 @@ class QuotationStatementWidget(QWidget):
         self.search_status.setText("API를 사용하지 않아도 아래 표에 상품명과 가격을 직접 입력할 수 있습니다.")
         self.negotiated_check.setChecked(False)
         self.free_shipping_check.setChecked(False)
+        self.discount_mode_combo.setCurrentIndex(0)
+        self.discount_rate_spin.setValue(0)
         self._negotiation_mode = False
         self._clear_order_import()
         self.naver_order_status.setText(
@@ -876,6 +952,7 @@ class QuotationStatementWidget(QWidget):
             "주문을 불러오면 실제 적용 할인 후 상품금액과 고객 부담 배송비를 적용합니다."
         )
         self.free_shipping_check.setVisible(True)
+        self._apply_discount_controls_visibility()
 
     def create_document(self, as_pdf=False):
         try:
@@ -883,6 +960,7 @@ class QuotationStatementWidget(QWidget):
             order_import = self._is_naver_order_import()
             negotiated = not order_import and self._negotiation_mode and self.negotiated_check.isChecked()
             free_shipping = not order_import and self.free_shipping_check.isChecked()
+            discount_rate_override = None if order_import else self._discount_rate_override()
             if self._negotiation_mode and not negotiated:
                 raise NegotiationRequired("500만 원 초과 주문은 협의 완료를 확인해야 합니다.")
             result = calculate_document(
@@ -891,6 +969,7 @@ class QuotationStatementWidget(QWidget):
                 free_shipping=free_shipping,
                 order_import=order_import,
                 shipping_gross_override=(self._naver_order_shipping_gross if order_import else None),
+                discount_rate_override=discount_rate_override,
             )
             organization = self.organization_edit.text().strip()
             name = self.name_edit.text().strip()
@@ -908,7 +987,9 @@ class QuotationStatementWidget(QWidget):
         text = (
             f"{self.document_type.currentText()} {output_label} 생성할까요?\n\n{lines}\n\n"
             f"공급가액 {result.supply_total:,}원 + 세액 {result.tax_total:,}원 = "
-            f"최종 {result.grand_total:,}원"
+            f"최종 {result.grand_total:,}원\n"
+            f"할인: {self._discount_summary_text(result, order_import=order_import)} "
+            f"({result.discount_amount:,}원)"
         )
         if self.document_type.currentText() == "견적서":
             text += f"\n결제 방법: {PAYMENT_METHODS[self.payment_method.currentText()]}"
@@ -930,6 +1011,7 @@ class QuotationStatementWidget(QWidget):
                 free_shipping=free_shipping,
                 order_import=order_import,
                 shipping_gross_override=(self._naver_order_shipping_gross if order_import else None),
+                discount_rate_override=discount_rate_override,
                 payment_method=self.payment_method.currentText(),
                 delivery_term=self.delivery_edit.text(),
                 templates_dir=self._base_dir / "templates",

@@ -144,10 +144,23 @@ def discount_rate_for(goods_total: int) -> Decimal:
     raise NegotiationRequired("500만 원 초과 주문은 별도 협의가 필요합니다.")
 
 
+def _validated_discount_rate(value: str | int | Decimal) -> Decimal:
+    try:
+        rate = Decimal(str(value).strip())
+    except (InvalidOperation, ValueError):
+        raise DocumentValidationError("할인율을 확인해주세요.") from None
+    if not rate.is_finite() or rate < 0 or rate > 1:
+        raise DocumentValidationError("할인율은 0%에서 100% 사이여야 합니다.")
+    if rate * 100 != (rate * 100).to_integral_value():
+        raise DocumentValidationError("할인율은 0%에서 100% 사이 정수로 입력해주세요.")
+    return rate
+
+
 def calculate_document(
     items: list[ItemInput] | tuple[ItemInput, ...], *, negotiated: bool = False,
     free_shipping: bool = False, order_import: bool = False,
     shipping_gross_override: str | int | Decimal | None = None,
+    discount_rate_override: str | int | Decimal | None = None,
 ) -> CalculationResult:
     if not items:
         raise DocumentValidationError("품목을 한 개 이상 입력해주세요.")
@@ -173,7 +186,13 @@ def calculate_document(
         normalized.append((item, gross_unit, quantity, gross_amount_override))
         goods_total += gross_amount_override if gross_amount_override is not None else gross_unit * quantity
 
-    if negotiated or order_import:
+    if order_import:
+        rate = Decimal("0")
+    elif discount_rate_override is not None:
+        if goods_total > NEGOTIATION_LIMIT and not negotiated:
+            raise NegotiationRequired("500만 원 초과 주문은 협의 완료 확인 후 생성할 수 있습니다.")
+        rate = _validated_discount_rate(discount_rate_override)
+    elif negotiated:
         rate = Decimal("0")
     elif goods_total > NEGOTIATION_LIMIT:
         raise NegotiationRequired("500만 원 초과 주문은 협의 완료 확인 후 생성할 수 있습니다.")
@@ -411,6 +430,7 @@ def generate_document(
     free_shipping: bool = False,
     order_import: bool = False,
     shipping_gross_override: str | int | Decimal | None = None,
+    discount_rate_override: str | int | Decimal | None = None,
     payment_method: str = "직거래",
     delivery_term: str = "",
     templates_dir: str | Path | None = None,
@@ -420,6 +440,7 @@ def generate_document(
     result = calculate_document(
         items, negotiated=negotiated, free_shipping=free_shipping, order_import=order_import,
         shipping_gross_override=shipping_gross_override,
+        discount_rate_override=discount_rate_override,
     )
     base = Path(__file__).resolve().parent
     templates = Path(templates_dir) if templates_dir else base / "templates"

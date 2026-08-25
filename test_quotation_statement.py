@@ -9,6 +9,7 @@ from unittest.mock import patch
 from openpyxl import load_workbook
 
 from quotation_statement import (
+    DocumentValidationError,
     ItemInput,
     NegotiationRequired,
     PAYMENT_METHODS,
@@ -90,6 +91,42 @@ class CalculationTests(unittest.TestCase):
         self.assertEqual(result.tax_total, 818)
         self.assertEqual(result.grand_total, 9_000)
 
+    def test_manual_discount_rate_overrides_automatic_rate(self):
+        result = calculate_document(
+            [item(30_000, 4)], discount_rate_override=Decimal("0.07")
+        )
+        self.assertEqual(result.discount_rate, Decimal("0.07"))
+        self.assertEqual(result.discount_amount, 8_400)
+        self.assertEqual(result.grand_total, 111_600)
+
+    def test_zero_discount_override_skips_automatic_discount(self):
+        result = calculate_document(
+            [item(30_000, 4)], discount_rate_override=Decimal("0")
+        )
+        self.assertEqual(result.discount_rate, Decimal("0"))
+        self.assertEqual(result.discount_amount, 0)
+        self.assertEqual(result.grand_total, 120_000)
+
+    def test_manual_discount_rate_must_be_a_valid_percentage(self):
+        for invalid_rate in (
+            Decimal("-0.01"), Decimal("1.01"), Decimal("NaN"), Decimal("0.075")
+        ):
+            with self.subTest(rate=invalid_rate), self.assertRaises(DocumentValidationError):
+                calculate_document([item(30_000)], discount_rate_override=invalid_rate)
+
+    def test_over_limit_manual_discount_still_requires_confirmation(self):
+        with self.assertRaises(NegotiationRequired):
+            calculate_document(
+                [item(5_000_001)], discount_rate_override=Decimal("0.12")
+            )
+        result = calculate_document(
+            [item(5_000_001)],
+            negotiated=True,
+            discount_rate_override=Decimal("0.12"),
+        )
+        self.assertTrue(result.negotiated)
+        self.assertEqual(result.discount_rate, Decimal("0.12"))
+
     def test_one_rate_is_applied_to_all_items(self):
         result = calculate_document([item(70_000, name="A"), item(50_001, name="B")])
         self.assertEqual(result.discount_rate, Decimal("0.05"))
@@ -98,7 +135,7 @@ class CalculationTests(unittest.TestCase):
     def test_naver_order_import_keeps_actual_total_without_extra_discount_or_shipping(self):
         result = calculate_document([
             ItemInput("주문 상품", gross_unit_price=5_000, quantity=2, gross_amount_override=9_999)
-        ], order_import=True)
+        ], order_import=True, discount_rate_override=Decimal("0.20"))
         self.assertEqual(result.discount_rate, Decimal("0"))
         self.assertEqual(result.discount_amount, 0)
         self.assertEqual(result.shipping_gross, 0)
@@ -370,6 +407,26 @@ class CoupangTransactionStatementOrderTests(unittest.TestCase):
 
 
 class WorkbookGenerationTests(unittest.TestCase):
+    def test_manual_discount_is_used_for_generated_document(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, result = generate_document(
+                "거래명세서",
+                "테스트 소속",
+                "홍길동",
+                date(2026, 8, 11),
+                [item(30_000, 4)],
+                discount_rate_override=Decimal("0.07"),
+                templates_dir=TEMPLATES,
+                output_dir=directory,
+            )
+            wb = load_workbook(path, data_only=False)
+            try:
+                self.assertEqual(result.discount_rate, Decimal("0.07"))
+                self.assertEqual(result.grand_total, 111_600)
+                self.assertEqual(wb.active["H7"].value, 111_600)
+            finally:
+                wb.close()
+
     def test_quote_amount_label_preserves_the_original_font_sizes(self):
         with tempfile.TemporaryDirectory() as directory:
             path, _ = generate_document(
