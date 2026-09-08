@@ -76,7 +76,46 @@ class CalculationTests(unittest.TestCase):
         self.assertEqual(calculated.supply_unit_price, 8_182)
         self.assertEqual(calculated.tax_unit_price, 818)
         self.assertEqual(calculated.supply_amount, 3_272_800)
-        self.assertEqual(calculated.tax_amount, 327_200)
+        self.assertEqual(calculated.tax_amount, 327_280)
+        self.assertEqual(result.grand_total, 3_600_080)
+        self.assertEqual(result.discount_amount, 400_000)
+
+    def test_customer_example_rounds_tax_after_multiplying_quantity(self):
+        result = calculate_document([item(23_200, 39, "HG ESP32-S3 N16R8", "USB C Type")])
+        calculated = result.items[0]
+        self.assertEqual(result.discount_rate, Decimal("0.05"))
+        self.assertEqual(calculated.supply_unit_price, 20_036)
+        self.assertEqual(calculated.supply_amount, 781_404)
+        self.assertEqual(calculated.tax_amount, 78_140)
+        self.assertEqual(result.grand_total, 859_544)
+
+    def test_supply_unit_rounds_discounted_input_without_intermediate_rounding(self):
+        result = calculate_document(
+            [item(11, 5)], discount_rate_override=Decimal("0.05"), free_shipping=True
+        )
+        # 11 * 0.95 / 1.1 = 9.5: 중간에 10.45를 10으로 반올림하면 단가가 달라진다.
+        self.assertEqual(result.items[0].supply_unit_price, 10)
+        self.assertEqual(result.items[0].supply_amount, 50)
+        self.assertEqual(result.items[0].tax_amount, 5)
+        self.assertEqual(result.grand_total, 55)
+
+    def test_tax_rounds_half_up_per_line_before_summing(self):
+        result = calculate_document(
+            [item(11, 5, "A"), item(11, 5, "B")],
+            discount_rate_override=Decimal("0.50"), free_shipping=True,
+        )
+        self.assertEqual([x.supply_amount for x in result.items], [25, 25])
+        self.assertEqual([x.tax_amount for x in result.items], [3, 3])
+        self.assertEqual(result.supply_total, 50)
+        self.assertEqual(result.tax_total, 6)
+        self.assertEqual(result.grand_total, 56)
+
+    def test_full_discount_zeroes_goods_amounts(self):
+        result = calculate_document([item(30_000, 4)], discount_rate_override=Decimal("1"))
+        self.assertEqual(result.supply_total, 0)
+        self.assertEqual(result.tax_total, 0)
+        self.assertEqual(result.grand_total, 0)
+        self.assertEqual(result.discount_amount, 120_000)
 
     def test_shipping_vat_split(self):
         result = calculate_document([item(9_000)])
@@ -97,7 +136,9 @@ class CalculationTests(unittest.TestCase):
         )
         self.assertEqual(result.discount_rate, Decimal("0.07"))
         self.assertEqual(result.discount_amount, 8_400)
-        self.assertEqual(result.grand_total, 111_600)
+        self.assertEqual(result.items[0].supply_amount, 101_456)
+        self.assertEqual(result.items[0].tax_amount, 10_146)
+        self.assertEqual(result.grand_total, 111_602)
 
     def test_zero_discount_override_skips_automatic_discount(self):
         result = calculate_document(
@@ -105,7 +146,7 @@ class CalculationTests(unittest.TestCase):
         )
         self.assertEqual(result.discount_rate, Decimal("0"))
         self.assertEqual(result.discount_amount, 0)
-        self.assertEqual(result.grand_total, 120_000)
+        self.assertEqual(result.grand_total, 120_001)
 
     def test_manual_discount_rate_must_be_a_valid_percentage(self):
         for invalid_rate in (
@@ -148,6 +189,11 @@ class CalculationTests(unittest.TestCase):
         ], order_import=True)
         self.assertEqual(result.grand_total, 6_000_000)
         self.assertEqual(result.discount_rate, Decimal("0"))
+
+    def test_order_import_without_amount_override_keeps_input_total(self):
+        result = calculate_document([item(23_200, 39)], order_import=True)
+        self.assertEqual(result.grand_total, 904_800)
+        self.assertEqual(result.discount_amount, 0)
 
     def test_naver_order_import_adds_only_the_actual_customer_shipping_fee(self):
         result = calculate_document([
@@ -407,6 +453,28 @@ class CoupangTransactionStatementOrderTests(unittest.TestCase):
 
 
 class WorkbookGenerationTests(unittest.TestCase):
+    def test_customer_example_is_written_to_both_document_types(self):
+        cases = [
+            ("견적서", {"K16": 39, "N16": 20_036, "R16": 781_404, "V16": 78_140,
+                         "R23": 781_404, "V23": 78_140, "R12": 859_544}),
+            ("거래명세서", {"K10": 39, "M10": 20_036, "Q10": 781_404, "T10": 78_140,
+                           "Q16": 781_404, "T16": 78_140, "H7": 859_544}),
+        ]
+        for document_type, expected in cases:
+            with self.subTest(document_type=document_type), tempfile.TemporaryDirectory() as directory:
+                path, result = generate_document(
+                    document_type, "테스트 소속", "홍길동", date(2026, 9, 8),
+                    [item(23_200, 39, "HG ESP32-S3 N16R8", "USB C Type")],
+                    templates_dir=TEMPLATES, output_dir=directory,
+                )
+                wb = load_workbook(path, data_only=True)
+                try:
+                    for cell, value in expected.items():
+                        self.assertEqual(wb.active[cell].value, value, cell)
+                    self.assertEqual(result.grand_total, 859_544)
+                finally:
+                    wb.close()
+
     def test_manual_discount_is_used_for_generated_document(self):
         with tempfile.TemporaryDirectory() as directory:
             path, result = generate_document(
@@ -422,8 +490,8 @@ class WorkbookGenerationTests(unittest.TestCase):
             wb = load_workbook(path, data_only=False)
             try:
                 self.assertEqual(result.discount_rate, Decimal("0.07"))
-                self.assertEqual(result.grand_total, 111_600)
-                self.assertEqual(wb.active["H7"].value, 111_600)
+                self.assertEqual(result.grand_total, 111_602)
+                self.assertEqual(wb.active["H7"].value, 111_602)
             finally:
                 wb.close()
 

@@ -1,7 +1,7 @@
 """Quotation and transaction-statement calculation and XLSX generation.
 
 The module deliberately has no Qt dependency.  It owns the fixed pricing
-rules, per-unit VAT rounding, and the small amount of template manipulation
+rules, supply-unit and per-line VAT rounding, and template manipulation
 needed by both documents.
 """
 
@@ -212,12 +212,20 @@ def calculate_document(
             tax_amount = gross_amount - supply_amount
             supply_unit = round_won(Decimal(supply_amount) / quantity)
             tax_unit = gross_unit - supply_unit
-        else:
+        elif order_import:
             gross_unit = round_won(Decimal(original_gross) * multiplier)
             supply_unit = round_won(Decimal(gross_unit) / VAT_DIVISOR)
             tax_unit = gross_unit - supply_unit
             supply_amount = supply_unit * quantity
             tax_amount = tax_unit * quantity
+        else:
+            discounted_unit = Decimal(original_gross) * multiplier
+            gross_unit = round_won(discounted_unit)
+            # 공급 단가는 할인 계산의 중간 반올림 없이 구하고, 세액은 품목별로 반올림한다.
+            supply_unit = round_won(discounted_unit / VAT_DIVISOR)
+            tax_unit = round_won(Decimal(supply_unit) / 10)
+            supply_amount = supply_unit * quantity
+            tax_amount = round_won(Decimal(supply_amount) / 10)
         calculated.append(
             CalculatedItem(
                 document_name=str(item.document_name).strip(),
@@ -233,7 +241,10 @@ def calculate_document(
         )
         supply_total += supply_amount
         tax_total += tax_amount
-        discounted_goods_total += supply_amount + tax_amount
+        # 할인 표시액에는 공급 단가/세액 반올림에 따른 총액 조정을 포함하지 않는다.
+        discounted_goods_total += (
+            supply_amount + tax_amount if order_import else gross_unit * quantity
+        )
 
     if shipping_gross_override is not None:
         shipping = _nonnegative_won(shipping_gross_override, "배송비")

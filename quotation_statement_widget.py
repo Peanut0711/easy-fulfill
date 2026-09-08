@@ -724,6 +724,7 @@ class QuotationStatementWidget(QWidget):
             f"({result.discount_amount:,}원)  |  공급가액 {result.supply_total:,}원  |  "
             f"세액 {result.tax_total:,}원  |  배송비 {result.shipping_gross:,}원  |  "
             f"최종 합계 {result.grand_total:,}원"
+            + ("" if order_import else "\n최종 합계는 공급 단가와 품목별 세액을 반올림한 결과로, 할인 적용 금액과 차이가 날 수 있습니다.")
         )
 
     def search_products(self):
@@ -980,7 +981,7 @@ class QuotationStatementWidget(QWidget):
             return
 
         lines = "\n".join(
-            f"- {item.document_name} / {item.specification or '-'} / {item.quantity}개 / 단가 {item.gross_unit_price:,}원"
+            f"- {item.document_name} / {item.specification or '-'} / {item.quantity}개 / 공급 단가 {item.supply_unit_price:,}원"
             for item in result.items
         )
         output_label = "엑셀과 PDF를" if as_pdf else "엑셀을"
