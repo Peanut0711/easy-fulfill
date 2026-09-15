@@ -4,6 +4,7 @@
 import sys
 import os
 import re
+import html
 import math
 import time
 from datetime import datetime, date, timedelta
@@ -20,7 +21,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QFileDialog, QMessageB
                                QProgressBar, QProgressDialog, QFrame, QGraphicsOpacityEffect, QListWidget,
                               QAbstractItemView, QGroupBox, QCheckBox, QSpinBox, QMenu,
                               QStyle, QProxyStyle, QPlainTextEdit, QFormLayout,
-                              QSplitter, QTextEdit, QComboBox)
+                              QSplitter, QTextEdit, QComboBox, QDoubleSpinBox)
 from PySide6.QtUiTools import QUiLoader
 from PySide6.QtCore import (
     QFile,
@@ -1506,6 +1507,11 @@ class DetailHtmlEditorDialog(QDialog):
         self._block_ranges = []
         self._block_details = []
         self._scroll_to_selection = False
+        self._preview_ready = False
+        self._alignment_pending = False
+        self._alignment_request = 0
+        self._format_request = 0
+        self._font_state = None
         self._selected_blocks = set()
         self._selection_anchor = None
         self._selection_range = None
@@ -1540,7 +1546,41 @@ class DetailHtmlEditorDialog(QDialog):
         preview_modes.addWidget(self.preview_pc)
         preview_modes.addWidget(self.preview_mobile)
         preview_modes.addStretch(1)
+        preview_modes.addWidget(QLabel("정렬"))
+        self.alignment_buttons = {}
+        for direction, label in [("left", "왼쪽"), ("center", "가운데"), ("right", "오른쪽")]:
+            button = QPushButton(label)
+            button.setCheckable(True)
+            button.setToolTip("선택한 글자 또는 이미지의 정렬을 변경합니다. 여러 요소에 함께 적용할 수 있습니다.")
+            button.clicked.connect(lambda _checked=False, value=direction: self._apply_alignment(value))
+            self.alignment_buttons[direction] = button
+            preview_modes.addWidget(button)
         preview_layout.addLayout(preview_modes)
+        text_format = QHBoxLayout()
+        text_format.addWidget(QLabel("글자 서식"))
+        self.bold_button = QPushButton("굵게")
+        self.bold_button.setCheckable(True)
+        self.bold_button.setToolTip("선택한 텍스트 전체를 굵게 적용하거나 해제합니다. 서식이 섞여 있으면 모두 굵게 적용합니다.")
+        text_format.addWidget(self.bold_button)
+        text_format.addWidget(QLabel("크기"))
+        self.font_size = QDoubleSpinBox()
+        self.font_size.setRange(0, 1000)
+        self.font_size.setDecimals(1)
+        self.font_size.setSingleStep(1)
+        self.font_size.setSpecialValueText("혼합")
+        self.font_size.setSuffix(" px")
+        self.font_size.setMinimumWidth(95)
+        text_format.addWidget(self.font_size)
+        self.apply_font_size = QPushButton("크기 적용")
+        text_format.addWidget(self.apply_font_size)
+        self.font_status = QLabel("텍스트를 선택하세요")
+        text_format.addWidget(self.font_status)
+        text_format.addStretch(1)
+        preview_layout.addLayout(text_format)
+        self.bold_button.clicked.connect(self._toggle_bold)
+        self.apply_font_size.clicked.connect(self._apply_font_size)
+        self.font_size.valueChanged.connect(lambda value: self.apply_font_size.setEnabled(
+            value > 0 and self._font_state is not None and self._preview_ready and not self._alignment_pending))
         self.preview_canvas = QFrame()
         self.preview_canvas.setStyleSheet("QFrame { background:#e9ecef; }")
         preview_canvas_layout = QHBoxLayout(self.preview_canvas)
@@ -1569,13 +1609,25 @@ class DetailHtmlEditorDialog(QDialog):
         spacing.addWidget(self.spacing_height)
         self.add_spacing = QPushButton("여백 추가")
         self.resize_spacing = QPushButton("높이 변경")
-        self.add_spacing.setToolTip("선택한 본문·인용구·이미지 묶음의 바깥에 여백을 추가합니다. 여러 요소는 연속으로 선택하세요.")
+        self.add_spacing.setToolTip("선택한 항목 바로 위·아래에 여백을 추가합니다. 여러 요소는 연속으로 선택하세요.")
         self.resize_spacing.setToolTip("미리보기에서 여백 하나를 선택한 뒤 높이를 변경합니다.")
         spacing.addWidget(self.add_spacing)
         spacing.addWidget(self.resize_spacing)
         spacing.addWidget(QLabel("추가한 여백을 클릭하면 높이 변경·삭제 가능"))
         spacing.addStretch(1)
         layout.addLayout(spacing)
+
+        movement = QHBoxLayout()
+        movement.addWidget(QLabel("항목 이동"))
+        self.move_up = QPushButton("위로 이동")
+        self.move_down = QPushButton("아래로 이동")
+        self.move_up.setToolTip("선택한 항목을 바로 앞 항목 위로 이동합니다. 여러 항목은 연속으로 선택하세요.")
+        self.move_down.setToolTip("선택한 항목을 바로 뒤 항목 아래로 이동합니다. 여러 항목은 연속으로 선택하세요.")
+        movement.addWidget(self.move_up)
+        movement.addWidget(self.move_down)
+        movement.addWidget(QLabel("문단·이미지·여백 선택 후 이동 · Ctrl+Z로 취소"))
+        movement.addStretch(1)
+        layout.addLayout(movement)
 
         actions = QHBoxLayout()
         actions.addStretch(1)
@@ -1608,6 +1660,8 @@ class DetailHtmlEditorDialog(QDialog):
         self.delete_blocks.clicked.connect(self._delete_selected_blocks)
         self.add_spacing.clicked.connect(self._add_spacing)
         self.resize_spacing.clicked.connect(self._resize_spacing)
+        self.move_up.clicked.connect(lambda: self._move_selected_blocks(-1))
+        self.move_down.clicked.connect(lambda: self._move_selected_blocks(1))
         self.spacing_preset.currentIndexChanged.connect(self._spacing_preset_changed)
         self.spacing_height.valueChanged.connect(self._sync_spacing_preset)
         self.undo_delete.clicked.connect(self._undo_editor)
@@ -1658,6 +1712,7 @@ class DetailHtmlEditorDialog(QDialog):
         self._update_block_controls()
 
     def _refresh(self):
+        self._preview_ready = False
         source = self.editor.toPlainText()
         self._block_details = self._html_block_details(source)
         self._block_ranges = [item["range"] for item in self._block_details]
@@ -1728,7 +1783,7 @@ class DetailHtmlEditorDialog(QDialog):
 
     @classmethod
     def _html_block_details(cls, source):
-        """선택 범위와 여백을 삽입할 묶음의 바깥 경계를 함께 찾는다."""
+        """선택 범위와 원본 트리를 찾아 항목 단위 삽입·이동에 사용한다."""
         line_offsets = [0]
         for match in re.finditer("\n", source):
             line_offsets.append(match.end())
@@ -1738,6 +1793,9 @@ class DetailHtmlEditorDialog(QDialog):
                 super().__init__(convert_charrefs=False)
                 self.stack = []
                 self.blocks = []
+                self.nodes = []
+                self.root = {"tag": "root", "start": 0, "end": len(source), "open_end": 0,
+                             "close_start": len(source), "children": [], "ancestors": [], "attrs": {}}
 
             def source_position(self):
                 line, column = self.getpos()
@@ -1746,16 +1804,32 @@ class DetailHtmlEditorDialog(QDialog):
             def handle_starttag(self, tag, attrs):
                 start = self.source_position()
                 attrs = dict(attrs)
-                spacer = tag == "div" and "data-ef-spacer" in attrs
+                spacer = tag in {"div", "li"} and "data-ef-spacer" in attrs
                 selectable = tag in cls._SELECTABLE_TAGS or spacer
                 node = {"tag": tag, "start": start, "end": None, "ancestors": list(self.stack),
-                        "selected": selectable, "spacer": attrs.get("data-ef-spacer") if spacer else None}
+                        "selected": selectable, "spacer": attrs.get("data-ef-spacer") if spacer else None,
+                        "attrs": attrs, "open_end": start + len(self.get_starttag_text()), "has_text": False,
+                        "children": [], "close_start": None}
+                self.nodes.append(node)
+                (self.stack[-1] if self.stack else self.root)["children"].append(node)
                 if selectable and not any(item["selected"] for item in self.stack):
                     self.blocks.append(node)
                 if tag in cls._VOID_TAGS:
                     node["end"] = start + len(self.get_starttag_text())
+                    node["close_start"] = node["end"]
                     return
                 self.stack.append(node)
+
+            def handle_data(self, data):
+                if data.strip() and not any(item["tag"] in {"script", "style"} for item in self.stack):
+                    for item in self.stack:
+                        item["has_text"] = True
+
+            def handle_entityref(self, _name):
+                self.handle_data("text")
+
+            def handle_charref(self, _name):
+                self.handle_data("text")
 
             def handle_startendtag(self, tag, attrs):
                 self.handle_starttag(tag, attrs)
@@ -1768,6 +1842,7 @@ class DetailHtmlEditorDialog(QDialog):
                         node = self.stack[index]
                         self.stack = self.stack[:index]
                         node["end"] = source.find(">", self.source_position()) + 1
+                        node["close_start"] = self.source_position()
                         return
 
         parser = BlockParser()
@@ -1776,15 +1851,15 @@ class DetailHtmlEditorDialog(QDialog):
         for node in parser.blocks:
             if node["end"] is None:
                 continue
-            boundary = node
-            if node["spacer"] is None:
-                ancestors = [item for item in node["ancestors"] if item["end"] is not None]
-                groups = [item for item in ancestors if item["tag"] in {"blockquote", "ul", "ol", "figure", "table"}]
-                wrappers = [item for item in ancestors if item["tag"] in {"div", "section"}
-                            and any(parent["tag"] not in {"html", "body"} for parent in item["ancestors"])]
-                boundary = groups[0] if groups else wrappers[-1] if wrappers else node
             details.append({"range": (node["start"], node["end"]),
-                            "boundary": (boundary["start"], boundary["end"]), "spacer": node["spacer"]})
+                            "boundary": (node["start"], node["end"]), "spacer": node["spacer"],
+                            "node": node, "root": parser.root,
+                            "tag": node["tag"], "attrs": node["attrs"],
+                            "open_range": (node["start"], node["open_end"]),
+                            "text_nodes": [{"tag": child["tag"], "attrs": child["attrs"],
+                                            "open_range": (child["start"], child["open_end"])}
+                                           for child in parser.nodes if child["has_text"] and child["end"] is not None
+                                           and (child is node or any(parent is node for parent in child["ancestors"]))]})
         return details
 
     def _install_preview_block_selector(self, loaded):
@@ -1807,14 +1882,14 @@ class DetailHtmlEditorDialog(QDialog):
                 });
                 const spacerStyle = document.createElement('style');
                 spacerStyle.textContent = `
-                    div[data-ef-spacer] { position:relative; outline:1px dashed #94a3b8;
+                    [data-ef-spacer] { position:relative; outline:1px dashed #94a3b8;
                         outline-offset:-1px !important; background:#f1f5f9; overflow:visible !important; }
-                    div[data-ef-spacer]::after { content:attr(data-ef-spacer-label); position:absolute;
+                    [data-ef-spacer]::after { content:attr(data-ef-spacer-label); position:absolute;
                         left:0; right:0; top:50%; transform:translateY(-50%); text-align:center;
                         font:12px/16px Arial,'Malgun Gothic',sans-serif; color:#475569; pointer-events:none; }
                 `;
                 document.head.appendChild(spacerStyle);
-                root.querySelectorAll('div[data-ef-spacer]').forEach(element => {
+                root.querySelectorAll('[data-ef-spacer]').forEach(element => {
                     element.dataset.efSpacerLabel = '여백 ' + element.dataset.efSpacer + 'px · 클릭하여 조절';
                 });
                 const overlay = document.createElement('div');
@@ -1961,6 +2036,8 @@ class DetailHtmlEditorDialog(QDialog):
         """, self._preview_selector_ready)
 
     def _preview_selector_ready(self, _result):
+        self._preview_ready = True
+        self._update_alignment_controls()
         self._paint_selected_blocks()
         if self._scroll_to_selection and self._selected_blocks:
             index = min(self._selected_blocks)
@@ -2032,6 +2109,8 @@ class DetailHtmlEditorDialog(QDialog):
         self.undo_delete.setEnabled(self.editor.document().isUndoAvailable())
         selected = sorted(self._selected_blocks)
         self.add_spacing.setEnabled(bool(selected) and selected == list(range(selected[0], selected[-1] + 1)))
+        self.move_up.setEnabled(self._movement_scope(-1) is not None)
+        self.move_down.setEnabled(self._movement_scope(1) is not None)
         spacer = self._selected_spacer()
         self.resize_spacing.setEnabled(spacer is not None)
         self.delete_blocks.setText("여백 삭제 (Del)" if spacer is not None else "선택 영역 삭제 (Del)")
@@ -2041,6 +2120,228 @@ class DetailHtmlEditorDialog(QDialog):
             except (ValueError, TypeError):
                 pass
             self.block_status.setText(f'여백 {self.spacing_height.value()}px 선택 · 높이 변경 또는 Delete 키로 삭제')
+        self._update_alignment_controls()
+
+    def _alignment_targets(self):
+        return [index for index in sorted(self._selected_blocks)
+                if 0 <= index < len(self._block_details) and self._block_details[index]["spacer"] is None]
+
+    def _update_alignment_controls(self):
+        self._update_text_format_controls()
+        self._alignment_request += 1
+        request = self._alignment_request
+        targets = self._alignment_targets()
+        enabled = bool(targets) and self._preview_ready and not self._alignment_pending
+        for button in self.alignment_buttons.values():
+            button.setEnabled(enabled)
+            button.setChecked(False)
+        if not enabled:
+            return
+
+        def show_alignment(values):
+            if request != self._alignment_request:
+                return
+            try:
+                values = json.loads(values)
+            except (TypeError, ValueError):
+                return
+            if not isinstance(values, list):
+                return
+            common = values[0] if values and all(value == values[0] for value in values) else None
+            for direction, button in self.alignment_buttons.items():
+                button.setChecked(direction == common)
+
+        # 계산된 스타일을 읽어 상위 요소에서 상속된 글자 정렬도 표시한다.
+        self.preview.page().runJavaScript("""
+            JSON.stringify((indices => indices.map(index => {
+                const element = document.querySelector(`[data-ef-block="${index}"]`);
+                if (!element) return null;
+                const style = getComputedStyle(element);
+                if (['IMG', 'TABLE', 'HR'].includes(element.tagName)) {
+                    const rect = element.getBoundingClientRect();
+                    const parent = element.parentElement;
+                    const bounds = parent.getBoundingClientRect();
+                    const parentStyle = getComputedStyle(parent);
+                    const left = rect.left - bounds.left - parseFloat(parentStyle.borderLeftWidth) - parseFloat(parentStyle.paddingLeft);
+                    const right = bounds.right - rect.right - parseFloat(parentStyle.borderRightWidth) - parseFloat(parentStyle.paddingRight);
+                    if (Math.abs(left) < 2 && Math.abs(right) < 2) return null;
+                    if (Math.abs(left - right) < 2) return 'center';
+                    if (Math.abs(left) < 2) return 'left';
+                    if (Math.abs(right) < 2) return 'right';
+                    return null;
+                }
+                const align = style.textAlign;
+                if (align === 'start') return style.direction === 'rtl' ? 'right' : 'left';
+                if (align === 'end') return style.direction === 'rtl' ? 'left' : 'right';
+                return align;
+            }))(%s));
+        """ % json.dumps(targets), show_alignment)
+
+    @staticmethod
+    def _tag_with_style(start_tag, style):
+        """시작 태그의 style 속성만 교체하고 URL과 다른 속성 표기는 유지한다."""
+        return DetailHtmlEditorDialog._tag_with_attribute(start_tag, "style", style)
+
+    @staticmethod
+    def _tag_with_attribute(start_tag, name, value):
+        replacement = name + '="' + html.escape(str(value), quote=True) + '"'
+        attributes_start = re.match(r'<\s*[^\s/>]+', start_tag).end()
+        attribute_pattern = re.compile(r'''([^\s=/>]+)(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+))?''')
+        matches = [match for match in attribute_pattern.finditer(start_tag, attributes_start)
+                   if match.group(1).lower() == name]
+        if matches:
+            for match in reversed(matches):
+                start_tag = start_tag[:match.start()] + (replacement if match is matches[0] else "") + start_tag[match.end():]
+            return start_tag
+        position = re.search(r'\s*/?>$', start_tag).start()
+        return start_tag[:position] + ' ' + replacement + start_tag[position:]
+
+    def _apply_alignment(self, direction):
+        targets = self._alignment_targets()
+        if direction not in self.alignment_buttons or not targets or not self._preview_ready or self._alignment_pending:
+            return
+        details = [self._block_details[index] for index in targets]
+        changes = []
+        for item in details:
+            if item["tag"] in {"img", "table", "hr"}:
+                properties = {"float": "none", "margin-left": "0px" if direction == "left" else "auto",
+                              "margin-right": "0px" if direction == "right" else "auto"}
+                if item["tag"] == "img":
+                    properties["display"] = "block"
+            else:
+                properties = {"text-align": direction}
+            changes.append(properties)
+        self._apply_inline_styles(details, changes)
+
+    def _update_text_format_controls(self):
+        self._format_request += 1
+        request = self._format_request
+        self._font_state = None
+        self.bold_button.setEnabled(False)
+        self.bold_button.setChecked(False)
+        self.font_size.setEnabled(False)
+        self.apply_font_size.setEnabled(False)
+        targets = [index for index in self._alignment_targets() if self._block_details[index]["text_nodes"]]
+        if not targets:
+            self.font_status.setText("텍스트를 선택하세요")
+            return
+        if not self._preview_ready or self._alignment_pending:
+            self.font_status.setText("서식 확인 중…")
+            return
+
+        def show_formats(value):
+            if request != self._format_request:
+                return
+            try:
+                values = json.loads(value)
+            except (TypeError, ValueError):
+                return
+            if not isinstance(values, list) or not values:
+                return
+            weights = {item["bold"] for item in values}
+            sizes = {round(item["size"], 1) for item in values}
+            self._font_state = {"bold": weights == {True}}
+            self.bold_button.setEnabled(True)
+            self.bold_button.setChecked(self._font_state["bold"])
+            self.font_size.setEnabled(True)
+            self.font_size.setValue(next(iter(sizes)) if len(sizes) == 1 else 0)
+            self.apply_font_size.setEnabled(self.font_size.value() > 0)
+            self.font_status.setText(" · ".join(
+                label for mixed, label in [(len(weights) > 1, "굵기 혼합"), (len(sizes) > 1, "크기 혼합")] if mixed
+            ) or "선택한 텍스트 전체에 적용")
+
+        self.preview.page().runJavaScript("""
+            JSON.stringify((indices => indices.flatMap(index => {
+                const element = document.querySelector(`[data-ef-block="${index}"]`);
+                if (!element) return [];
+                const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+                const values = [];
+                while (walker.nextNode()) {
+                    const node = walker.currentNode;
+                    if (!node.textContent.trim() || node.parentElement.closest('script,style')) continue;
+                    const style = getComputedStyle(node.parentElement);
+                    values.push({bold: parseFloat(style.fontWeight) >= 600, size: parseFloat(style.fontSize)});
+                }
+                return values;
+            }))(%s));
+        """ % json.dumps(targets), show_formats)
+
+    def _toggle_bold(self):
+        if self._font_state is not None:
+            self._apply_text_property("font-weight", "400" if self._font_state["bold"] else "700")
+
+    def _apply_font_size(self):
+        if self._font_state is not None and self.font_size.value() > 0:
+            self._apply_text_property("font-size", f"{self.font_size.value():g}px")
+
+    def _apply_text_property(self, name, value):
+        if not self._preview_ready or self._alignment_pending:
+            return
+        # strong/b와 span의 개별 지정도 바꿔 선택한 텍스트 전체에 굵기·크기를 적용한다.
+        nodes = {node["open_range"]: node for index in self._alignment_targets()
+                 for node in self._block_details[index]["text_nodes"]}
+        details = [nodes[key] for key in sorted(nodes)]
+        if details:
+            self._apply_inline_styles(details, [{name: value} for _item in details])
+
+    def _apply_inline_styles(self, details, changes):
+        source = self.editor.toPlainText()
+        selected, selected_range = set(self._selected_blocks), self._selection_range
+        records = [{"tag": item["tag"], "style": item["attrs"].get("style") or "", "changes": change}
+                   for item, change in zip(details, changes)]
+        self._alignment_pending = True
+        self._update_alignment_controls()
+
+        def apply_styles(styles):
+            self._alignment_pending = False
+            try:
+                styles = json.loads(styles)
+            except (TypeError, ValueError):
+                styles = None
+            if (source != self.editor.toPlainText() or selected != self._selected_blocks
+                    or not isinstance(styles, list) or len(styles) != len(details)
+                    or not all(isinstance(style, str) for style in styles)):
+                self._update_alignment_controls()
+                return
+            edits = []
+            for item, style in zip(details, styles):
+                start, end = item["open_range"]
+                replacement = self._tag_with_style(source[start:end], style)
+                if replacement != source[start:end]:
+                    edits.append((start, end, replacement))
+            if not edits:
+                self._update_alignment_controls()
+                return
+            cursor = QTextCursor(self.editor.document())
+            self.editor.blockSignals(True)
+            try:
+                cursor.beginEditBlock()
+                for start, end, replacement in reversed(edits):
+                    cursor.setPosition(self._qt_text_position(source, start))
+                    cursor.setPosition(self._qt_text_position(source, end), QTextCursor.KeepAnchor)
+                    cursor.insertText(replacement)
+                cursor.endEditBlock()
+            finally:
+                self.editor.blockSignals(False)
+            self._pending_restored_selection = selected
+            self._pending_restored_range = selected_range
+            self._scroll_to_selection = True
+            self._refresh()
+            self._block_edit_history.append({"before": source, "after": self.editor.toPlainText(),
+                                             "selection": selected, "range": selected_range})
+
+        # CSSOM으로 선언을 갱신해 기존 서식과 세미콜론이 든 URL 등을 보존한다.
+        # 미리보기 DOM의 선택 테두리·커서 스타일은 저장 HTML에 섞지 않는다.
+        self.preview.page().runJavaScript("""
+            JSON.stringify((records => records.map(record => {
+                const element = document.createElement(record.tag);
+                element.setAttribute('style', record.style);
+                for (const [name, value] of Object.entries(record.changes)) {
+                    element.style.setProperty(name, value);
+                }
+                return element.style.cssText;
+            }))(%s));
+        """ % json.dumps(records), apply_styles)
 
     def _selected_spacer(self):
         if len(self._selected_blocks) == 1:
@@ -2064,27 +2365,32 @@ class DetailHtmlEditorDialog(QDialog):
         self.spacing_preset.blockSignals(False)
 
     @staticmethod
-    def _spacer_html(height):
+    def _spacer_html(height, tag="div"):
         height = max(1, min(1000, int(height)))
-        return (f'<div data-ef-spacer="{height}" style="height:{height}px;min-height:{height}px;'
-                'margin:0;padding:0;border:0;font-size:0;line-height:0;overflow:hidden" aria-hidden="true">&nbsp;</div>')
+        tag = "li" if tag == "li" else "div"
+        list_style = "display:block;list-style:none;" if tag == "li" else ""
+        return (f'<{tag} data-ef-spacer="{height}" style="{list_style}height:{height}px;min-height:{height}px;'
+                f'margin:0;padding:0;border:0;font-size:0;line-height:0;overflow:hidden" aria-hidden="true">&nbsp;</{tag}>')
 
     def _add_spacing(self):
         selected = sorted(self._selected_blocks)
         if not selected or selected != list(range(selected[0], selected[-1] + 1)):
             return
-        boundaries = [self._block_details[index]["boundary"] for index in selected]
-        position = min(start for start, _end in boundaries) if self.spacing_position.currentIndex() == 0 else max(end for _start, end in boundaries)
-        self._replace_with_spacing(position, position)
+        above = self.spacing_position.currentIndex() == 0
+        item = self._block_details[selected[0] if above else selected[-1]]
+        position = item["range"][0 if above else 1]
+        ancestors = item["node"]["ancestors"]
+        tag = "li" if ancestors and ancestors[-1]["tag"] in {"ul", "ol"} else "div"
+        self._replace_with_spacing(position, position, tag)
 
     def _resize_spacing(self):
         spacer = self._selected_spacer()
         if spacer is not None:
-            self._replace_with_spacing(*spacer["range"])
+            self._replace_with_spacing(*spacer["range"], spacer["tag"])
 
-    def _replace_with_spacing(self, start, end):
+    def _replace_with_spacing(self, start, end, tag="div"):
         source = self.editor.toPlainText()
-        replacement = self._spacer_html(self.spacing_height.value())
+        replacement = self._spacer_html(self.spacing_height.value(), tag)
         if source[start:end] == replacement:
             return
         selected, selected_range = set(self._selected_blocks), self._selection_range
@@ -2101,6 +2407,116 @@ class DetailHtmlEditorDialog(QDialog):
         updated = self.editor.toPlainText()
         details = self._html_block_details(updated)
         self._pending_restored_selection = {index for index, item in enumerate(details) if item["range"][0] == start}
+        self._scroll_to_selection = True
+        self._refresh()
+        self._block_edit_history.append({"before": source, "after": updated, "selection": selected, "range": selected_range})
+
+    def _movement_scope(self, direction):
+        selected = sorted(self._selected_blocks)
+        if direction not in {-1, 1} or not selected or selected != list(range(selected[0], selected[-1] + 1)):
+            return None
+        neighbor = selected[0] - 1 if direction < 0 else selected[-1] + 1
+        if not 0 <= neighbor < len(self._block_details):
+            return None
+        items = [self._block_details[index] for index in sorted([*selected, neighbor])]
+        chains = [[item["root"], *item["node"]["ancestors"]] for item in items]
+        common = None
+        for level in zip(*chains):
+            if not all(node is level[0] for node in level):
+                break
+            common = level[0]
+        if common is None or common["end"] is None or common["close_start"] is None:
+            return None
+        if any(node["end"] is None for item in items for node in item["node"]["ancestors"]):
+            return None
+        return common, neighbor
+
+    @staticmethod
+    def _balanced_slice(source, node, start, end):
+        """범위 안의 내용만 추출하되 일부만 걸친 상위 태그를 닫아 유효한 조각을 만든다."""
+        if node["end"] is None or node["start"] >= end or node["end"] <= start:
+            return ""
+        if start <= node["start"] and node["end"] <= end:
+            return source[node["start"]:node["end"]]
+        parts = []
+        position = node["open_end"]
+        content_end = node["close_start"]
+        if content_end is None:
+            return ""
+        for child in node["children"]:
+            left, right = max(position, start), min(child["start"], end)
+            if left < right:
+                parts.append(source[left:right])
+            parts.append(DetailHtmlEditorDialog._balanced_slice(source, child, start, end))
+            position = child["end"] if child["end"] is not None else content_end
+        left, right = max(position, start), min(content_end, end)
+        if left < right:
+            parts.append(source[left:right])
+        inner = "".join(parts)
+        if node["tag"] == "root" or not inner.strip():
+            return inner
+        opening = source[node["start"]:node["open_end"]]
+        if node["tag"] == "ol":
+            # 목록 경계를 넘겨 조각으로 나눌 때 기존 항목의 표시 번호를 보존한다.
+            items = [child for child in node["children"] if child["tag"] == "li" and "data-ef-spacer" not in child["attrs"]]
+            step = -1 if "reversed" in node["attrs"] else 1
+            try:
+                counter = int(node["attrs"].get("start", len(items) if step < 0 else 1))
+                for item in items:
+                    counter = int(item["attrs"].get("value", counter))
+                    if item["end"] is not None and item["start"] < end and item["end"] > start:
+                        opening = DetailHtmlEditorDialog._tag_with_attribute(opening, "start", counter)
+                        break
+                    counter += step
+            except (TypeError, ValueError):
+                pass
+        return opening + inner + source[content_end:node["end"]]
+
+    def _move_selected_blocks(self, direction):
+        movement = self._movement_scope(direction)
+        if movement is None:
+            return
+        scope, neighbor = movement
+        source = self.editor.toPlainText()
+        selected, selected_range = set(self._selected_blocks), self._selection_range
+        first, last = min(selected), max(selected)
+        selection_span = (self._block_ranges[first][0], self._block_ranges[last][1])
+        neighbor_span = self._block_ranges[neighbor]
+        left, right = (neighbor_span, selection_span) if direction < 0 else (selection_span, neighbor_span)
+        # 공통 부모의 내용만 재배열한다. 서로 다른 div·인용구·목록은 필요한 조각만
+        # 원래 태그로 감싸므로 선택하지 않은 문단이나 상속 서식이 함께 이동하지 않는다.
+        # 자식 사이의 개행·주석도 보존하기 위해 가상의 내용 루트로 추출한다.
+        content_root = dict(scope, tag="root", start=scope["open_end"], end=scope["close_start"])
+        def fragment(start, end):
+            return self._balanced_slice(source, content_root, start, end)
+
+        start, end = scope["open_end"], scope["close_start"]
+        replacement = (fragment(start, left[0]) + fragment(*right) + fragment(left[1], right[0])
+                       + fragment(*left) + fragment(right[1], end))
+        updated = source[:start] + replacement + source[end:]
+        # 파서가 인식하는 항목 순서도 정확히 한 칸 이동했는지 확인한 뒤 반영한다.
+        actual = self._html_block_ranges(updated)
+        original_items = [source[a:b] for a, b in self._block_ranges]
+        expected = list(original_items)
+        if direction < 0:
+            expected[neighbor:last + 1] = original_items[first:last + 1] + [original_items[neighbor]]
+        else:
+            expected[first:neighbor + 1] = [original_items[neighbor]] + original_items[first:last + 1]
+        if [updated[a:b] for a, b in actual] != expected:
+            QMessageBox.warning(self, "항목 이동", "이 HTML 구조에서는 항목을 안전하게 이동할 수 없습니다.")
+            return
+        cursor = QTextCursor(self.editor.document())
+        self.editor.blockSignals(True)
+        try:
+            cursor.beginEditBlock()
+            cursor.setPosition(self._qt_text_position(source, start))
+            cursor.setPosition(self._qt_text_position(source, end), QTextCursor.KeepAnchor)
+            cursor.insertText(replacement)
+            cursor.endEditBlock()
+        finally:
+            self.editor.blockSignals(False)
+        self._pending_restored_selection = {index + direction for index in selected}
+        self._pending_restored_range = (first + direction, last + direction) if len(selected) > 1 else None
         self._scroll_to_selection = True
         self._refresh()
         self._block_edit_history.append({"before": source, "after": updated, "selection": selected, "range": selected_range})

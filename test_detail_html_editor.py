@@ -1,6 +1,7 @@
 """상세 HTML 편집창만 로드해 외부 계정 연결 없이 Qt 편집·미리보기를 검증한다."""
 
 import ast
+import html
 import json
 import os
 import re
@@ -18,7 +19,7 @@ from PySide6.QtCore import Qt, QUrl, QEvent, QCoreApplication
 from PySide6.QtGui import QAction, QColor, QFont, QFontDatabase, QKeySequence, QTextCursor
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QDialog, QFrame, QHBoxLayout, QLabel, QMessageBox,
-    QPlainTextEdit, QPushButton, QSpinBox, QSplitter, QTextEdit, QVBoxLayout, QWidget,
+    QPlainTextEdit, QPushButton, QSpinBox, QSplitter, QTextEdit, QVBoxLayout, QWidget, QDoubleSpinBox,
 )
 from PySide6.QtWebEngineCore import QWebEngineSettings
 from PySide6.QtWebEngineWidgets import QWebEngineView
@@ -70,51 +71,304 @@ class DetailEditorTests(unittest.TestCase):
 
     def javascript(self, expression):
         results = []
-        self.dialog.preview.page().runJavaScript(expression, results.append)
+        self.dialog.preview.page().runJavaScript(f"JSON.stringify(({expression}) ?? null)", results.append)
         deadline = time.monotonic() + 10
         while not results and time.monotonic() < deadline:
             self.app.processEvents()
             time.sleep(.01)
         self.assertTrue(results, "JavaScript callback timed out")
-        return results[0]
+        return json.loads(results[0])
 
     def wait_preview(self, spacer_count):
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
-            if self.javascript(
+            if self.dialog._preview_ready and self.javascript(
                 "Boolean(window.__easyFulfillPaintBlocks) && "
-                f"document.querySelectorAll('div[data-ef-spacer][data-ef-block]').length === {spacer_count}"
+                f"document.querySelectorAll('[data-ef-spacer][data-ef-block]').length === {spacer_count}"
             ):
                 return
             self.app.processEvents()
             time.sleep(.02)
         self.fail("Preview selector did not initialize")
 
-    def test_quote_and_image_group_boundaries(self):
+    def align(self, direction, spacers=0):
+        self.wait_preview(spacers)
+        self.dialog._update_alignment_controls()
+        self.dialog.alignment_buttons[direction].click()
+        deadline = time.monotonic() + 10
+        while self.dialog._alignment_pending and time.monotonic() < deadline:
+            self.app.processEvents()
+            time.sleep(.01)
+        self.assertFalse(self.dialog._alignment_pending)
+        self.wait_preview(spacers)
+
+    def wait_checked_alignment(self, direction):
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            self.app.processEvents()
+            if self.dialog.alignment_buttons[direction].isChecked():
+                return
+            time.sleep(.01)
+        self.fail(f"Alignment state did not become {direction}")
+
+    def wait_font_state(self):
+        self.wait_preview(0)
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            self.app.processEvents()
+            if self.dialog._font_state is not None and not self.dialog._alignment_pending:
+                return
+            time.sleep(.01)
+        self.fail("Font state did not initialize")
+
+    def finish_format_edit(self):
+        deadline = time.monotonic() + 10
+        while self.dialog._alignment_pending and time.monotonic() < deadline:
+            self.app.processEvents()
+            time.sleep(.01)
+        self.assertFalse(self.dialog._alignment_pending)
+        self.wait_font_state()
+
+    def test_bold_toggle_normalizes_nested_bold_and_preserves_links(self):
+        self.dialog.show()
+        source = '<div><p style="color:red">보통 😀 <strong>굵게 <span style="font-weight:900">매우 굵게</span></strong> <a href="https://example.com">링크</a></p><p>다른 문단</p></div>'
+        self.dialog.editor.setPlainText(source)
+        self.select(0)
+        self.wait_font_state()
+        self.assertFalse(self.dialog.bold_button.isChecked())
+        self.assertIn('굵기 혼합', self.dialog.font_status.text())
+        self.dialog.bold_button.click()
+        self.finish_format_edit()
+        self.assertTrue(self.dialog.bold_button.isChecked())
+        self.assertEqual(self.javascript("[...document.querySelector('p').querySelectorAll('strong,span,a')].map(e=>getComputedStyle(e).fontWeight)"), ['700', '700', '700'])
+        bold = self.dialog.editor.toPlainText()
+        self.dialog.bold_button.click()
+        self.finish_format_edit()
+        self.assertFalse(self.dialog.bold_button.isChecked())
+        self.assertEqual(self.javascript("[document.querySelector('p'),...document.querySelector('p').querySelectorAll('strong,span,a')].map(e=>getComputedStyle(e).fontWeight)"), ['400'] * 4)
+        self.assertIn('href="https://example.com"', self.dialog.editor.toPlainText())
+        self.assertIn('<p>다른 문단</p>', self.dialog.editor.toPlainText())
+        self.assertEqual(self.javascript("getComputedStyle(document.querySelector('p')).color"), 'rgb(255, 0, 0)')
+        self.dialog._undo_editor()
+        self.assertEqual(self.dialog.editor.toPlainText(), bold)
+        self.dialog._undo_editor()
+        self.assertEqual(self.dialog.editor.toPlainText(), source)
+
+    def test_font_size_applies_nested_spans_preserving_other_styles(self):
+        self.dialog.show()
+        source = '<div><h2 style="text-align:right;font-size:24px">제목</h2><p style="line-height:1.75;color:blue">본문 <strong><span style="font-size:12px">작은 글자</span></strong></p><img style="width:50px;height:20px" src="data:,x"></div>'
+        self.dialog.editor.setPlainText(source)
+        self.select(0, 1, 2)
+        self.wait_font_state()
+        self.assertEqual(self.dialog.font_size.value(), 0)
+        self.assertFalse(self.dialog.apply_font_size.isEnabled())
+        self.assertIn('크기 혼합', self.dialog.font_status.text())
+        self.dialog.font_size.setValue(27.5)
+        self.dialog.apply_font_size.click()
+        self.finish_format_edit()
+        for mobile in (False, True):
+            self.dialog._set_preview_mode(mobile)
+            self.app.processEvents()
+            self.assertEqual(self.javascript("[...document.querySelectorAll('h2,p,strong,span')].map(e=>getComputedStyle(e).fontSize)"), ['27.5px'] * 4)
+        self.assertEqual(self.dialog.font_size.value(), 27.5)
+        self.assertEqual(self.javascript("getComputedStyle(document.querySelector('h2')).textAlign"), 'right')
+        self.assertEqual(self.javascript("getComputedStyle(document.querySelector('strong')).fontWeight"), '700')
+        self.assertIn('<img style="width:50px;height:20px" src="data:,x">', self.dialog.editor.toPlainText())
+        self.dialog._undo_editor()
+        self.assertEqual(self.dialog.editor.toPlainText(), source)
+
+    def test_text_format_disabled_for_images_and_spacing(self):
+        self.dialog.show()
+        self.wait_preview(0)
+        self.select(3)
+        self.app.processEvents()
+        self.assertFalse(self.dialog.bold_button.isEnabled())
+        self.assertFalse(self.dialog.font_size.isEnabled())
+        self.dialog.add_spacing.click()
+        self.wait_preview(1)
+        self.assertFalse(self.dialog.bold_button.isEnabled())
+        self.assertFalse(self.dialog.apply_font_size.isEnabled())
+
+    def test_table_text_format_and_save_reload(self):
+        self.dialog.show()
+        source = '<div><table style="width:120px"><tr><th>제목</th><td><a href="https://example.com">값 &amp; 정보</a></td></tr></table></div>'
+        self.dialog.editor.setPlainText(source)
+        self.select(0)
+        self.wait_font_state()
+        self.dialog.bold_button.click()
+        self.finish_format_edit()
+        self.dialog.font_size.setValue(21)
+        self.dialog.apply_font_size.click()
+        self.finish_format_edit()
+        self.assertEqual(self.javascript("[...document.querySelectorAll('th,td,a')].map(e=>[getComputedStyle(e).fontWeight,getComputedStyle(e).fontSize])"), [['700', '21px']] * 3)
+        self.assertIn('width: 120px', self.dialog.editor.toPlainText())
+        with patch.object(QMessageBox, 'information'):
+            self.dialog._save()
+        saved = self.path.read_text(encoding='utf-8')
+        copy_button = next(button for button in self.dialog.findChildren(QPushButton) if button.text() == 'HTML 복사')
+        copy_button.click()
+        self.assertEqual(QApplication.clipboard().text(), saved)
+        self.assertNotIn('data-ef-block', saved)
+        self.assertNotIn('outline', saved)
+        self.dialog.editor.setPlainText(saved)
+        self.select(0)
+        self.wait_font_state()
+        self.assertTrue(self.dialog.bold_button.isChecked())
+        self.assertEqual(self.dialog.font_size.value(), 21)
+
+    def test_heading_bold_off_then_alignment_and_size_keep_history(self):
+        self.dialog.show()
+        source = '<div><h1>큰 제목</h1><p>본문</p></div>'
+        self.dialog.editor.setPlainText(source)
+        self.select(0)
+        self.wait_font_state()
+        self.assertTrue(self.dialog.bold_button.isChecked())
+        self.dialog.bold_button.click()
+        self.finish_format_edit()
+        self.assertEqual(self.javascript("getComputedStyle(document.querySelector('h1')).fontWeight"), '400')
+        self.align('right')
+        self.wait_font_state()
+        self.dialog.font_size.setValue(30)
+        self.dialog.apply_font_size.click()
+        self.finish_format_edit()
+        self.assertEqual(self.javascript("getComputedStyle(document.querySelector('h1')).textAlign"), 'right')
+        self.assertFalse(self.dialog.bold_button.isChecked())
+        for _ in range(3):
+            self.dialog._undo_editor()
+        self.assertEqual(self.dialog.editor.toPlainText(), source)
+
+    def test_text_alignment_preserves_quote_content_and_undo(self):
+        self.dialog.show()
+        self.select(0, 1, 2)
+        self.align('center')
+        self.wait_checked_alignment('center')
+        result = self.dialog.editor.toPlainText()
+        self.assertEqual(result.count('text-align: center'), 3)
+        self.assertIn('<blockquote><div>', result)
+        self.assertIn('제목 😀', result)
+        self.assertIn('1번 핀이 3번 핀', result)
+        self.assertEqual(self.dialog._selected_blocks, {0, 1, 2})
+        self.assertEqual(self.javascript("getComputedStyle(document.querySelector('blockquote p')).textAlign"), 'center')
+        self.assertNotIn('outline', result)
+        self.assertNotIn('cursor', result)
+        self.dialog._undo_editor()
+        self.assertEqual(self.dialog.editor.toPlainText(), SOURCE)
+        self.assertEqual(self.dialog._selected_blocks, {0, 1, 2})
+
+    def test_image_placement_preserves_size_and_vertical_margins(self):
+        self.dialog.show()
+        image_source = SOURCE.replace('<img ', '<img style="width:60px;height:30px;margin:7px auto 19px" ', 1)
+        self.dialog.editor.setPlainText(image_source)
+        self.select(3)
+        for mobile in (False, True):
+            self.dialog._set_preview_mode(mobile)
+            for direction in ('left', 'center', 'right'):
+                self.align(direction)
+                self.wait_checked_alignment(direction)
+                geometry = self.javascript("""(() => {
+                    const image = document.querySelector('img');
+                    const r = image.getBoundingClientRect(), p = image.parentElement.getBoundingClientRect();
+                    const s = getComputedStyle(image);
+                    return [r.left - p.left, p.right - r.right, r.width, r.height, s.marginTop, s.marginBottom];
+                })()""")
+                self.assertEqual(geometry[2:], [60, 30, '7px', '19px'])
+                if direction == 'left':
+                    self.assertAlmostEqual(geometry[0], 0, delta=1)
+                elif direction == 'right':
+                    self.assertAlmostEqual(geometry[1], 0, delta=1)
+                else:
+                    self.assertAlmostEqual(geometry[0], geometry[1], delta=1)
+                self.assertEqual(self.dialog._block_details[4]['attrs'].get('style'), None)
+
+    def test_alignment_mixed_selection_and_spacer_exclusion(self):
+        self.dialog.show()
+        self.select(0)
+        self.dialog.add_spacing.click()
+        self.wait_preview(1)
+        self.assertTrue(all(not button.isEnabled() for button in self.dialog.alignment_buttons.values()))
+        self.select(0, 1, 4)  # 여백, 제목, 첫 이미지의 비연속 선택
+        spacer_before = self.dialog.editor.toPlainText()[slice(*self.dialog._block_details[0]['range'])]
+        self.align('right', spacers=1)
+        self.assertEqual(self.dialog.editor.toPlainText()[slice(*self.dialog._block_details[0]['range'])], spacer_before)
+        self.assertEqual(self.javascript("getComputedStyle(document.querySelector('p')).textAlign"), 'right')
+        self.select(1, 2)  # 오른쪽 제목과 기본 왼쪽 인용구
+        self.javascript('true')
+        self.app.processEvents()
+        self.assertTrue(all(not button.isChecked() for button in self.dialog.alignment_buttons.values()))
+
+    def test_style_attribute_replacement_keeps_other_attributes(self):
+        tag = '''<img data-note="style='wrong' >" src='a?x=1&amp;y=2' STYLE='margin:0 auto' />'''
+        result = self.dialog._tag_with_style(tag, 'margin-left: 0px; background: url("a;b");')
+        self.assertIn('data-note="style=\'wrong\' >"', result)
+        self.assertIn("src='a?x=1&amp;y=2'", result)
+        parser = HTMLParser()
+        attributes = []
+        parser.handle_startendtag = lambda _tag, attrs: attributes.extend(attrs)
+        parser.feed(result)
+        self.assertEqual([value for name, value in attributes if name == 'style'], ['margin-left: 0px; background: url("a;b");'])
+
+    def test_inherited_alignment_and_saved_html(self):
+        self.dialog.show()
+        source = SOURCE.replace('max-width:780px;', 'text-align:right;max-width:780px;')
+        self.dialog.editor.setPlainText(source)
+        self.select(0)
+        self.wait_preview(0)
+        self.wait_checked_alignment('right')
+        self.align('left')
+        saved = self.dialog.editor.toPlainText()
+        with patch.object(QMessageBox, 'information'):
+            self.dialog._save()
+        copy_button = next(button for button in self.dialog.findChildren(QPushButton) if button.text() == 'HTML 복사')
+        copy_button.click()
+        self.assertEqual(self.path.read_text(encoding='utf-8'), saved)
+        self.assertEqual(QApplication.clipboard().text(), saved)
+        self.assertIn('text-align: left', saved)
+        self.assertNotIn('data-ef-block', saved)
+        # 저장 HTML을 다시 불러와도 정렬 상태를 읽을 수 있다.
+        self.dialog.editor.setPlainText(saved)
+        self.select(0)
+        self.wait_preview(0)
+        self.wait_checked_alignment('left')
+
+    def test_css_values_with_semicolons_and_small_table_alignment(self):
+        self.dialog.show()
+        source = '<div><p style="color:red;background-image:url(&quot;https://example.com/a;b.png&quot;)">본문</p><table style="width:120px;margin:3px auto 9px"><tr><td>셀</td></tr></table></div>'
+        # CSSOM 선언 보존만 확인하며 외부 이미지는 요청하지 않는다.
+        source = source.replace('https://example.com/a;b.png', 'data:image/svg+xml;base64,PHN2Zy8+')
+        self.dialog.editor.setPlainText(source)
+        self.select(0, 1)
+        self.align('right')
+        self.assertIn('data:image/svg+xml;base64,PHN2Zy8+', self.dialog.editor.toPlainText())
+        self.assertEqual(self.javascript("getComputedStyle(document.querySelector('p')).color"), 'rgb(255, 0, 0)')
+        self.assertEqual(self.javascript("document.querySelector('table').getBoundingClientRect().width"), 120)
+        self.assertEqual(self.javascript("getComputedStyle(document.querySelector('table')).marginBottom"), '9px')
+
+    def test_spacing_boundaries_match_clicked_items(self):
         details = self.dialog._html_block_details(SOURCE)
         self.assertEqual(len(details), 6)
-        self.assertEqual(details[1]["boundary"], details[2]["boundary"])
-        self.assertTrue(SOURCE[slice(*details[1]["boundary"])].startswith("<blockquote>"))
-        self.assertEqual(details[3]["boundary"], details[4]["boundary"])
-        self.assertEqual(SOURCE[slice(*details[3]["boundary"])].count("<img "), 2)
+        self.assertEqual(details[1]["boundary"], details[1]["range"])
+        self.assertNotEqual(details[1]["boundary"], details[2]["boundary"])
+        self.assertNotEqual(details[3]["boundary"], details[4]["boundary"])
+        self.assertEqual(SOURCE[slice(*details[3]["boundary"])].count("<img "), 1)
 
     def test_add_above_quote_then_undo_preserves_unicode_and_selection(self):
         self.select(2)
         self.dialog.add_spacing.click()
-        self.assertIn('</div>' + self.dialog._spacer_html(24) + '<blockquote>', self.dialog.editor.toPlainText())
+        self.assertIn('</p>' + self.dialog._spacer_html(24) + '<p>1번 핀이', self.dialog.editor.toPlainText())
         self.assertEqual(self.dialog._selected_spacer()["spacer"], "24")
         self.dialog._undo_editor()
         self.assertEqual(self.dialog.editor.toPlainText(), SOURCE)
         self.assertEqual(self.dialog._selected_blocks, {2})
 
-    def test_range_inserts_once_below_image_group(self):
+    def test_range_inserts_once_below_last_selected_image(self):
         self.select(1, 2, 3)
         self.dialog.spacing_position.setCurrentIndex(1)
         self.dialog.spacing_height.setValue(48)
         self.dialog.add_spacing.click()
         result = self.dialog.editor.toPlainText()
         self.assertEqual(result.count('data-ef-spacer='), 1)
-        self.assertIn('</div>' + self.dialog._spacer_html(48) + '<div><p>뒤 본문', result)
+        first_image = SOURCE[slice(*DetailHtmlEditorDialog._html_block_ranges(SOURCE)[3])]
+        self.assertIn(first_image + self.dialog._spacer_html(48) + '<img ', result)
 
     def test_noncontiguous_selection_disabled(self):
         self.select(0, 2)
@@ -145,7 +399,7 @@ class DetailEditorTests(unittest.TestCase):
         source = '<div><ul><li>가</li><li>나</li></ul><table><tr><td><p>셀</p></td></tr></table></div>'
         details = self.dialog._html_block_details(source)
         self.assertEqual(len(details), 3)
-        self.assertEqual(source[slice(*details[0]["boundary"])], '<ul><li>가</li><li>나</li></ul>')
+        self.assertEqual(source[slice(*details[0]["boundary"])], '<li>가</li>')
         self.assertTrue(source[slice(*details[2]["boundary"])].startswith('<table>'))
 
     def test_existing_deletion_and_empty_selection(self):
@@ -157,6 +411,150 @@ class DetailEditorTests(unittest.TestCase):
         self.assertIn('1번 핀이 3번 핀', self.dialog.editor.toPlainText())
         self.dialog._undo_editor()
         self.assertEqual(self.dialog.editor.toPlainText(), SOURCE)
+
+    def item_html(self):
+        source = self.dialog.editor.toPlainText()
+        return [source[start:end] for start, end in self.dialog._block_ranges]
+
+    def test_shared_wrapper_spacing_regression(self):
+        source = '<div><div style="font-size:18px"><h2>상품 소개</h2><p>A</p><p>B</p><p>C</p><p>제품 사양</p></div></div>'
+        self.dialog.editor.setPlainText(source)
+        self.select(3)
+        self.dialog.add_spacing.click()
+        spacer = self.dialog._spacer_html(24)
+        self.assertEqual(self.dialog.editor.toPlainText(), source.replace('<p>C</p>', spacer + '<p>C</p>'))
+        self.dialog._undo_editor()
+        self.select(3)
+        self.dialog.spacing_position.setCurrentIndex(1)
+        self.dialog.add_spacing.click()
+        self.assertEqual(self.dialog.editor.toPlainText(), source.replace('<p>C</p>', '<p>C</p>' + spacer))
+
+    def test_move_single_item_up_down_and_undo(self):
+        source = '<div><p>A 😀</p>\n<p style="color:red">B</p>\n<p>C</p></div>'
+        self.dialog.editor.setPlainText(source)
+        original = self.item_html()
+        self.select(2)
+        self.assertFalse(self.dialog.move_down.isEnabled())
+        self.dialog.move_up.click()
+        self.assertEqual(self.item_html(), [original[0], original[2], original[1]])
+        self.assertEqual(self.dialog._selected_blocks, {1})
+        self.dialog.move_down.click()
+        self.assertEqual(self.dialog.editor.toPlainText(), source)
+        self.assertEqual(self.dialog._selected_blocks, {2})
+        self.dialog._undo_editor()
+        self.assertEqual(self.item_html(), [original[0], original[2], original[1]])
+        self.dialog._undo_editor()
+        self.assertEqual(self.dialog.editor.toPlainText(), source)
+        self.select(0)
+        self.assertFalse(self.dialog.move_up.isEnabled())
+
+    def test_move_contiguous_selection_and_reject_discontiguous(self):
+        source = '<div><p>A</p><p>B</p><p>C</p><p>D</p></div>'
+        self.dialog.editor.setPlainText(source)
+        original = self.item_html()
+        self.select(0, 2)
+        self.assertFalse(self.dialog.move_up.isEnabled())
+        self.assertFalse(self.dialog.move_down.isEnabled())
+        self.select(1, 2)
+        self.dialog.move_up.click()
+        self.assertEqual(self.item_html(), [original[1], original[2], original[0], original[3]])
+        self.assertEqual(self.dialog._selected_blocks, {0, 1})
+        self.assertEqual(self.dialog._selection_range, (0, 1))
+        self.dialog.move_down.click()
+        self.assertEqual(self.dialog.editor.toPlainText(), source)
+        self.assertEqual(self.dialog._selected_blocks, {1, 2})
+
+    def test_cross_wrapper_move_keeps_inherited_styles_and_other_items(self):
+        self.dialog.show()
+        source = '<div><div style="color:red;font-size:14px"><p>A</p><p>B</p></div><!--경계--><div style="color:blue;font-size:23px"><p>C</p><p>D</p></div></div>'
+        self.dialog.editor.setPlainText(source)
+        original = self.item_html()
+        self.select(2)
+        self.dialog.move_up.click()
+        self.wait_preview(0)
+        self.assertEqual(self.item_html(), [original[0], original[2], original[1], original[3]])
+        self.assertEqual(self.javascript("[...document.querySelectorAll('p')].map(e=>[e.textContent,getComputedStyle(e).color,getComputedStyle(e).fontSize])"), [
+            ['A', 'rgb(255, 0, 0)', '14px'], ['C', 'rgb(0, 0, 255)', '23px'],
+            ['B', 'rgb(255, 0, 0)', '14px'], ['D', 'rgb(0, 0, 255)', '23px']])
+        self.assertEqual(self.dialog.editor.toPlainText().count('<!--경계-->'), 1)
+        self.dialog._undo_editor()
+        self.assertEqual(self.dialog.editor.toPlainText(), source)
+
+    def test_list_item_and_quote_cross_boundaries_without_moving_neighbors(self):
+        self.dialog.show()
+        source = '<div><p>A</p><ul><li>B</li><li>C</li></ul><blockquote style="border-left:5px solid red"><p>D</p><p>E</p></blockquote><p>F</p></div>'
+        self.dialog.editor.setPlainText(source)
+        original = self.item_html()
+        self.select(3)
+        self.dialog.move_up.click()
+        self.wait_preview(0)
+        self.assertEqual(self.item_html(), [original[0], original[1], original[3], original[2], original[4], original[5]])
+        self.assertEqual(self.javascript("[...document.querySelectorAll('li')].map(e=>e.parentElement.tagName)"), ['UL', 'UL'])
+        self.assertEqual(self.javascript("[...document.querySelectorAll('blockquote')].map(e=>[e.textContent,getComputedStyle(e).borderLeftWidth])"), [['D', '5px'], ['E', '5px']])
+        self.assertEqual(self.javascript("document.querySelectorAll('[data-ef-block]').length"), 6)
+        self.dialog._undo_editor()
+        self.assertEqual(self.dialog.editor.toPlainText(), source)
+
+    def test_spacing_between_list_items_then_move_resize_delete(self):
+        self.dialog.show()
+        source = '<div><ol start="4"><li>A</li><li>B</li><li>C</li></ol><p>D</p></div>'
+        self.dialog.editor.setPlainText(source)
+        self.select(1)
+        self.dialog.add_spacing.click()
+        self.wait_preview(1)
+        self.assertIn('<li>A</li>' + self.dialog._spacer_html(24, 'li') + '<li>B</li>', self.dialog.editor.toPlainText())
+        self.assertEqual(self.javascript("document.querySelector('[data-ef-spacer]').parentElement.tagName"), 'OL')
+        self.assertEqual(self.javascript("getComputedStyle(document.querySelector('[data-ef-spacer]')).display"), 'block')
+        self.dialog.move_down.click()
+        self.wait_preview(1)
+        self.assertEqual(self.dialog._selected_blocks, {2})
+        self.dialog.spacing_height.setValue(37)
+        self.dialog.resize_spacing.click()
+        self.wait_preview(1)
+        self.assertEqual(self.javascript("document.querySelector('[data-ef-spacer]').getBoundingClientRect().height"), 37)
+        self.dialog.delete_blocks.click()
+        self.assertEqual(self.dialog.editor.toPlainText(), source)
+
+    def test_multi_selection_moves_across_list_and_quote_boundaries(self):
+        source = '<div><p>A</p><ul><li>B</li><li>C</li></ul><blockquote><p>D</p><p>E</p></blockquote><p>F</p></div>'
+        self.dialog.editor.setPlainText(source)
+        original = self.item_html()
+        self.select(1, 2, 3)
+        self.dialog.move_up.click()
+        self.assertEqual(self.item_html(), original[1:4] + [original[0]] + original[4:])
+        self.assertEqual(self.dialog._selected_blocks, {0, 1, 2})
+        self.dialog._undo_editor()
+        self.assertEqual(self.dialog.editor.toPlainText(), source)
+
+    def test_ordered_list_split_keeps_original_numbers(self):
+        self.dialog.show()
+        source = '<div><ol start="4"><li>A</li><li value="9">B</li><li>C</li></ol><p>D</p></div>'
+        self.dialog.editor.setPlainText(source)
+        self.select(2)
+        self.dialog.move_down.click()
+        self.wait_preview(0)
+        self.assertEqual(self.javascript("[...document.querySelectorAll('ol')].map(e=>[e.start,e.textContent])"), [[4, 'AB'], [10, 'C']])
+        self.dialog._undo_editor()
+        self.assertEqual(self.dialog.editor.toPlainText(), source)
+
+    def test_move_image_spacer_and_save_reload(self):
+        self.dialog.show()
+        self.select(3)
+        self.dialog.add_spacing.click()
+        before = self.item_html()
+        self.dialog.move_down.click()
+        self.wait_preview(1)
+        self.assertEqual(self.item_html(), before[:3] + [before[4], before[3]] + before[5:])
+        self.assertEqual(self.javascript("document.querySelectorAll('[data-ef-block]').length"), len(before))
+        with patch.object(QMessageBox, 'information'):
+            self.dialog._save()
+        saved = self.dialog.editor.toPlainText()
+        self.assertEqual(self.path.read_text(encoding='utf-8'), saved)
+        self.assertNotIn('data-ef-block', saved)
+        self.dialog.editor.setPlainText(saved)
+        self.select(4)
+        self.wait_preview(1)
+        self.assertIsNotNone(self.dialog._selected_spacer())
 
     def test_preview_click_height_and_clean_save_copy(self):
         self.dialog.show()
