@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QFileDialog, QMessageB
                                QProgressBar, QProgressDialog, QFrame, QGraphicsOpacityEffect, QListWidget,
                               QAbstractItemView, QGroupBox, QCheckBox, QSpinBox, QMenu,
                               QStyle, QProxyStyle, QPlainTextEdit, QFormLayout,
-                              QSplitter, QTextEdit)
+                              QSplitter, QTextEdit, QComboBox)
 from PySide6.QtUiTools import QUiLoader
 from PySide6.QtCore import (
     QFile,
@@ -1504,10 +1504,12 @@ class DetailHtmlEditorDialog(QDialog):
         self.path = Path(path)
         self.original_html = self.path.read_text(encoding="utf-8")
         self._block_ranges = []
+        self._block_details = []
+        self._scroll_to_selection = False
         self._selected_blocks = set()
         self._selection_anchor = None
         self._selection_range = None
-        self._block_delete_history = []
+        self._block_edit_history = []
         self._pending_restored_selection = None
         self._pending_restored_range = None
         self.setWindowTitle("상세페이지 HTML 편집 및 미리보기")
@@ -1550,6 +1552,31 @@ class DetailHtmlEditorDialog(QDialog):
         splitter.setSizes([640, 640])
         layout.addWidget(splitter, 1)
 
+        spacing = QHBoxLayout()
+        spacing.addWidget(QLabel("여백"))
+        self.spacing_position = QComboBox()
+        self.spacing_position.addItems(["선택 영역 위", "선택 영역 아래"])
+        spacing.addWidget(self.spacing_position)
+        self.spacing_preset = QComboBox()
+        for label, height in [("좁게 · 12px", 12), ("보통 · 24px", 24), ("넓게 · 48px", 48), ("직접 입력", None)]:
+            self.spacing_preset.addItem(label, height)
+        self.spacing_preset.setCurrentIndex(1)
+        spacing.addWidget(self.spacing_preset)
+        self.spacing_height = QSpinBox()
+        self.spacing_height.setRange(1, 1000)
+        self.spacing_height.setSuffix(" px")
+        self.spacing_height.setValue(24)
+        spacing.addWidget(self.spacing_height)
+        self.add_spacing = QPushButton("여백 추가")
+        self.resize_spacing = QPushButton("높이 변경")
+        self.add_spacing.setToolTip("선택한 본문·인용구·이미지 묶음의 바깥에 여백을 추가합니다. 여러 요소는 연속으로 선택하세요.")
+        self.resize_spacing.setToolTip("미리보기에서 여백 하나를 선택한 뒤 높이를 변경합니다.")
+        spacing.addWidget(self.add_spacing)
+        spacing.addWidget(self.resize_spacing)
+        spacing.addWidget(QLabel("추가한 여백을 클릭하면 높이 변경·삭제 가능"))
+        spacing.addStretch(1)
+        layout.addLayout(spacing)
+
         actions = QHBoxLayout()
         actions.addStretch(1)
         self.block_status = QLabel("클릭: 단일 · 드래그/Shift+클릭: 범위 · Ctrl+클릭: 개별 추가/해제")
@@ -1579,6 +1606,10 @@ class DetailHtmlEditorDialog(QDialog):
         copy.clicked.connect(lambda: QApplication.clipboard().setText(self.editor.toPlainText()))
         save.clicked.connect(self._save)
         self.delete_blocks.clicked.connect(self._delete_selected_blocks)
+        self.add_spacing.clicked.connect(self._add_spacing)
+        self.resize_spacing.clicked.connect(self._resize_spacing)
+        self.spacing_preset.currentIndexChanged.connect(self._spacing_preset_changed)
+        self.spacing_height.valueChanged.connect(self._sync_spacing_preset)
         self.undo_delete.clicked.connect(self._undo_editor)
         self.editor.undoAvailable.connect(self.undo_delete.setEnabled)
         undo_action = QAction("실행 취소", self)
@@ -1628,7 +1659,8 @@ class DetailHtmlEditorDialog(QDialog):
 
     def _refresh(self):
         source = self.editor.toPlainText()
-        self._block_ranges = self._html_block_ranges(source)
+        self._block_details = self._html_block_details(source)
+        self._block_ranges = [item["range"] for item in self._block_details]
         restored = self._pending_restored_selection or set()
         restored_range = self._pending_restored_range
         self._pending_restored_selection = None
@@ -1692,7 +1724,11 @@ class DetailHtmlEditorDialog(QDialog):
 
     @classmethod
     def _html_block_ranges(cls, source):
-        """화면의 문단·제목·이미지 등 개별 라인 범위를 찾아 미리보기와 연결한다."""
+        return [item["range"] for item in cls._html_block_details(source)]
+
+    @classmethod
+    def _html_block_details(cls, source):
+        """선택 범위와 여백을 삽입할 묶음의 바깥 경계를 함께 찾는다."""
         line_offsets = [0]
         for match in re.finditer("\n", source):
             line_offsets.append(match.end())
@@ -1707,35 +1743,49 @@ class DetailHtmlEditorDialog(QDialog):
                 line, column = self.getpos()
                 return line_offsets[line - 1] + column
 
-            def handle_starttag(self, tag, _attrs):
+            def handle_starttag(self, tag, attrs):
                 start = self.source_position()
-                block_index = None
-                has_selectable_ancestor = any(index is not None for _tag, index in self.stack)
-                if tag in cls._SELECTABLE_TAGS and not has_selectable_ancestor:
-                    block_index = len(self.blocks)
-                    self.blocks.append([start, None])
+                attrs = dict(attrs)
+                spacer = tag == "div" and "data-ef-spacer" in attrs
+                selectable = tag in cls._SELECTABLE_TAGS or spacer
+                node = {"tag": tag, "start": start, "end": None, "ancestors": list(self.stack),
+                        "selected": selectable, "spacer": attrs.get("data-ef-spacer") if spacer else None}
+                if selectable and not any(item["selected"] for item in self.stack):
+                    self.blocks.append(node)
                 if tag in cls._VOID_TAGS:
-                    if block_index is not None:
-                        self.blocks[block_index][1] = start + len(self.get_starttag_text())
+                    node["end"] = start + len(self.get_starttag_text())
                     return
-                self.stack.append((tag, block_index))
+                self.stack.append(node)
 
             def handle_startendtag(self, tag, attrs):
                 self.handle_starttag(tag, attrs)
+                if tag not in cls._VOID_TAGS:
+                    self.handle_endtag(tag)
 
             def handle_endtag(self, tag):
                 for index in range(len(self.stack) - 1, -1, -1):
-                    if self.stack[index][0] == tag:
-                        _tag, block_index = self.stack[index]
+                    if self.stack[index]["tag"] == tag:
+                        node = self.stack[index]
                         self.stack = self.stack[:index]
-                        if block_index is not None:
-                            end = source.find(">", self.source_position()) + 1
-                            self.blocks[block_index][1] = end
+                        node["end"] = source.find(">", self.source_position()) + 1
                         return
 
         parser = BlockParser()
         parser.feed(source)
-        return [(start, end) for start, end in parser.blocks if end is not None]
+        details = []
+        for node in parser.blocks:
+            if node["end"] is None:
+                continue
+            boundary = node
+            if node["spacer"] is None:
+                ancestors = [item for item in node["ancestors"] if item["end"] is not None]
+                groups = [item for item in ancestors if item["tag"] in {"blockquote", "ul", "ol", "figure", "table"}]
+                wrappers = [item for item in ancestors if item["tag"] in {"div", "section"}
+                            and any(parent["tag"] not in {"html", "body"} for parent in item["ancestors"])]
+                boundary = groups[0] if groups else wrappers[-1] if wrappers else node
+            details.append({"range": (node["start"], node["end"]),
+                            "boundary": (boundary["start"], boundary["end"]), "spacer": node["spacer"]})
+        return details
 
     def _install_preview_block_selector(self, loaded):
         if not loaded:
@@ -1748,12 +1798,24 @@ class DetailHtmlEditorDialog(QDialog):
                 root.style.webkitUserSelect = 'none';
                 root.querySelectorAll('img').forEach(image => image.draggable = false);
                 root.addEventListener('dragstart', event => event.preventDefault());
-                const selector = 'p,h1,h2,h3,h4,h5,h6,li,table,hr,img';
+                const selector = 'p,h1,h2,h3,h4,h5,h6,li,table,hr,img,div[data-ef-spacer]';
                 const blocks = [...root.querySelectorAll(selector)].filter(element => !element.parentElement?.closest(selector));
                 blocks.forEach((element, index) => {
                     element.dataset.efBlock = String(index);
                     element.style.outlineOffset = '2px';
                     element.style.cursor = 'pointer';
+                });
+                const spacerStyle = document.createElement('style');
+                spacerStyle.textContent = `
+                    div[data-ef-spacer] { position:relative; outline:1px dashed #94a3b8;
+                        outline-offset:-1px !important; background:#f1f5f9; overflow:visible !important; }
+                    div[data-ef-spacer]::after { content:attr(data-ef-spacer-label); position:absolute;
+                        left:0; right:0; top:50%; transform:translateY(-50%); text-align:center;
+                        font:12px/16px Arial,'Malgun Gothic',sans-serif; color:#475569; pointer-events:none; }
+                `;
+                document.head.appendChild(spacerStyle);
+                root.querySelectorAll('div[data-ef-spacer]').forEach(element => {
+                    element.dataset.efSpacerLabel = '여백 ' + element.dataset.efSpacer + 'px · 클릭하여 조절';
                 });
                 const overlay = document.createElement('div');
                 overlay.id = 'easy-fulfill-selection-range';
@@ -1896,7 +1958,16 @@ class DetailHtmlEditorDialog(QDialog):
                     notify(value);
                 }, true);
             })();
-        """, lambda _result: self._paint_selected_blocks())
+        """, self._preview_selector_ready)
+
+    def _preview_selector_ready(self, _result):
+        self._paint_selected_blocks()
+        if self._scroll_to_selection and self._selected_blocks:
+            index = min(self._selected_blocks)
+            self.preview.page().runJavaScript(
+                f'document.querySelector(\'[data-ef-block="{index}"]\')?.scrollIntoView({{block:"nearest"}});'
+            )
+        self._scroll_to_selection = False
 
     def _on_preview_title_changed(self, title):
         prefix = "easy-fulfill-block:"
@@ -1959,6 +2030,80 @@ class DetailHtmlEditorDialog(QDialog):
             self.block_status.setText("클릭: 단일 · 드래그/Shift+클릭: 범위 · Ctrl+클릭: 개별 추가/해제")
         self.delete_blocks.setEnabled(bool(self._selected_blocks))
         self.undo_delete.setEnabled(self.editor.document().isUndoAvailable())
+        selected = sorted(self._selected_blocks)
+        self.add_spacing.setEnabled(bool(selected) and selected == list(range(selected[0], selected[-1] + 1)))
+        spacer = self._selected_spacer()
+        self.resize_spacing.setEnabled(spacer is not None)
+        self.delete_blocks.setText("여백 삭제 (Del)" if spacer is not None else "선택 영역 삭제 (Del)")
+        if spacer is not None:
+            try:
+                self.spacing_height.setValue(int(spacer["spacer"]))
+            except (ValueError, TypeError):
+                pass
+            self.block_status.setText(f'여백 {self.spacing_height.value()}px 선택 · 높이 변경 또는 Delete 키로 삭제')
+
+    def _selected_spacer(self):
+        if len(self._selected_blocks) == 1:
+            index = next(iter(self._selected_blocks))
+            if 0 <= index < len(self._block_details) and self._block_details[index]["spacer"] is not None:
+                return self._block_details[index]
+        return None
+
+    def _spacing_preset_changed(self, _index):
+        height = self.spacing_preset.currentData()
+        if height is not None:
+            self.spacing_height.setValue(height)
+        else:
+            self.spacing_height.setFocus()
+            self.spacing_height.selectAll()
+
+    def _sync_spacing_preset(self, height):
+        index = self.spacing_preset.findData(height)
+        self.spacing_preset.blockSignals(True)
+        self.spacing_preset.setCurrentIndex(index if index >= 0 else 3)
+        self.spacing_preset.blockSignals(False)
+
+    @staticmethod
+    def _spacer_html(height):
+        height = max(1, min(1000, int(height)))
+        return (f'<div data-ef-spacer="{height}" style="height:{height}px;min-height:{height}px;'
+                'margin:0;padding:0;border:0;font-size:0;line-height:0;overflow:hidden" aria-hidden="true">&nbsp;</div>')
+
+    def _add_spacing(self):
+        selected = sorted(self._selected_blocks)
+        if not selected or selected != list(range(selected[0], selected[-1] + 1)):
+            return
+        boundaries = [self._block_details[index]["boundary"] for index in selected]
+        position = min(start for start, _end in boundaries) if self.spacing_position.currentIndex() == 0 else max(end for _start, end in boundaries)
+        self._replace_with_spacing(position, position)
+
+    def _resize_spacing(self):
+        spacer = self._selected_spacer()
+        if spacer is not None:
+            self._replace_with_spacing(*spacer["range"])
+
+    def _replace_with_spacing(self, start, end):
+        source = self.editor.toPlainText()
+        replacement = self._spacer_html(self.spacing_height.value())
+        if source[start:end] == replacement:
+            return
+        selected, selected_range = set(self._selected_blocks), self._selection_range
+        cursor = QTextCursor(self.editor.document())
+        self.editor.blockSignals(True)
+        try:
+            cursor.beginEditBlock()
+            cursor.setPosition(self._qt_text_position(source, start))
+            cursor.setPosition(self._qt_text_position(source, end), QTextCursor.KeepAnchor)
+            cursor.insertText(replacement)
+            cursor.endEditBlock()
+        finally:
+            self.editor.blockSignals(False)
+        updated = self.editor.toPlainText()
+        details = self._html_block_details(updated)
+        self._pending_restored_selection = {index for index, item in enumerate(details) if item["range"][0] == start}
+        self._scroll_to_selection = True
+        self._refresh()
+        self._block_edit_history.append({"before": source, "after": updated, "selection": selected, "range": selected_range})
 
     @staticmethod
     def _block_deletion_range(source, start, end):
@@ -1992,7 +2137,7 @@ class DetailHtmlEditorDialog(QDialog):
         finally:
             self.editor.blockSignals(False)
         self._refresh()
-        self._block_delete_history.append({
+        self._block_edit_history.append({
             "before": source,
             "after": self.editor.toPlainText(),
             "selection": selected,
@@ -2003,16 +2148,17 @@ class DetailHtmlEditorDialog(QDialog):
         if not self.editor.document().isUndoAvailable():
             return
         current = self.editor.toPlainText()
-        deleted = self._block_delete_history[-1] if self._block_delete_history else None
-        if deleted and deleted["after"] == current:
-            self._pending_restored_selection = set(deleted["selection"])
-            self._pending_restored_range = deleted.get("range")
+        edit = self._block_edit_history[-1] if self._block_edit_history else None
+        if edit and edit["after"] == current:
+            self._pending_restored_selection = set(edit["selection"])
+            self._pending_restored_range = edit.get("range")
+            self._scroll_to_selection = True
         self.editor.undo()
-        if deleted and self.editor.toPlainText() == deleted["before"]:
-            self._block_delete_history.pop()
+        if edit and self.editor.toPlainText() == edit["before"]:
+            self._block_edit_history.pop()
 
     def _reset_to_original(self):
-        self._block_delete_history.clear()
+        self._block_edit_history.clear()
         self._pending_restored_selection = None
         self._pending_restored_range = None
         self.editor.setPlainText(self.original_html)

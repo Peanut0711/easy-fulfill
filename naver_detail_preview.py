@@ -219,6 +219,12 @@ def build_preview(product_no, product):
             body.append('<hr class="divider">')
             continue
 
+        if "se-quotation" in classes(component):
+            rendered = render_text_component(component)
+            if rendered:
+                body.append(f'<blockquote class="quote-block">{rendered}</blockquote>')
+            continue
+
         if "se-text" in classes(component):
             rendered = render_text_component(component)
             if rendered:
@@ -260,6 +266,7 @@ def build_preview(product_no, product):
     .notice {{ padding: 12px 16px; background: #fff4d6; color: #6b4c00; text-align: center; font-size: 14px; }}
     main {{ width: 100%; max-width: 780px; margin: 24px auto; padding: 42px 36px; background: white; }}
     .text-block {{ margin: 0 0 28px; font-size: 18px; line-height: 1.75; overflow-wrap: anywhere; }}
+    .quote-block {{ margin: 0 0 28px; padding: 0 0 0 14px; border-left: 5px solid #555; font-size: 18px; line-height: 1.75; overflow-wrap: anywhere; }}
     h1 {{ margin: 0 0 28px; font-size: 26px; line-height: 1.4; text-align: center; }}
     h2 {{ margin: 0 0 20px; font-size: 24px; line-height: 1.4; text-align: center; }}
     p {{ margin: 0 0 12px; }}
@@ -299,6 +306,7 @@ def build_preview(product_no, product):
         "sourceHtmlLength": len(source),
         "componentCount": len(components),
         "textComponentCount": sum("se-text" in classes(node) for node in components),
+        "quotationComponentCount": sum("se-quotation" in classes(node) for node in components),
         "imageCount": len(image_records),
         "imageBytes": sum(record["bytes"] for record in image_records),
         "imageFormats": dict(Counter(record["format"] for record in image_records)),
@@ -328,6 +336,27 @@ def self_test():
     parser.feed('<div class="se-component se-sectionTitle"><p>소제목</p></div>')
     section_title = next(node for node in walk(parser.root) if "se-sectionTitle" in classes(node))
     assert render_section_title(section_title) == '<section class="section-title"><h2>소제목</h2></section>'
+    # 실제 누락 경로인 build_preview까지 실행해 인용구의 내용과 순서를 확인한다.
+    import tempfile
+    from unittest.mock import patch
+
+    quote_lines = ["케이블 색상은 바뀔 수 있습니다.", "1번 핀이 3번 핀에 연결되는 케이블입니다."]
+    source = (
+        '<div class="se-component se-text"><p>앞 본문</p></div>'
+        '<div class="se-component se-quotation se-l-quotation_line">'
+        '<div class="se-module se-module-text"><blockquote class="se-quote">'
+        f'<p><span>{quote_lines[0]}</span></p><p><span>{quote_lines[1]}</span></p>'
+        '</blockquote></div></div>'
+        '<div class="se-component se-text"><p>뒤 본문</p></div>'
+    )
+    with tempfile.TemporaryDirectory() as directory:
+        with patch.dict(globals(), OUTPUT_ROOT=Path(directory)):
+            preview_path, _, report = build_preview("test", {"originProduct": {"detailContent": source}})
+        preview = preview_path.read_text(encoding="utf-8")
+    assert '<blockquote class="quote-block">' in preview
+    assert all(preview.count(line) == 1 for line in quote_lines)
+    assert preview.index("앞 본문") < preview.index(quote_lines[0]) < preview.index(quote_lines[1]) < preview.index("뒤 본문")
+    assert report["quotationComponentCount"] == 1
     print("self-test: ok")
 
 

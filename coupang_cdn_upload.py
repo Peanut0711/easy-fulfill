@@ -250,6 +250,10 @@ def render_paste_html(preview_html: str):
         '<div style="margin:0 0 28px;font-size:18px;line-height:1.75;overflow-wrap:anywhere">',
     )
     body = body.replace('<section class="section-title">', '<div style="margin:0 0 20px">')
+    body = body.replace(
+        '<blockquote class="quote-block">',
+        '<blockquote style="margin:0 0 28px;padding:0 0 0 14px;border-left:5px solid #555;font-size:18px;line-height:1.75;overflow-wrap:anywhere">',
+    )
     body = re.sub(
         r'<section class="image-block grid-[123]">',
         '<div style="margin:0 0 30px;text-align:center">',
@@ -375,6 +379,10 @@ def self_test():
         assert _unprotect_for_current_windows_user(_protect_for_current_windows_user(b"session-test")) == b"session-test"
     paste_html = render_paste_html('<main><section class="image-block grid-2"><img src="a.jpg"></section></main>')
     assert "grid-2" not in paste_html and 'src="a.jpg"' in paste_html
+    quote_html = '<p>케이블 색상은 바뀔 수 있습니다.</p><p>1번 핀이 3번 핀에 연결되는 케이블입니다.</p>'
+    paste_html = render_paste_html(f'<main><blockquote class="quote-block">{quote_html}</blockquote></main>')
+    assert quote_html in paste_html and "border-left:5px solid #555" in paste_html
+    assert 'class="quote-block"' not in paste_html
     assert _redact_upload_response_text('token="secret"\nerror') == 'token="[REDACTED]" error'
     assert _is_wing_url(WING_HOME) and not _is_wing_url("https://xauth.coupang.com/login")
     assert _is_wing_seller_url(WING_HOME)
