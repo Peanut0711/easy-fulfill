@@ -502,6 +502,29 @@ class DetailEditorTests(unittest.TestCase):
         popup.assert_not_called()
         self.assertTrue(self.dialog.isVisible())
 
+    def test_youtube_iframes_survive_text_edit_copy_and_save(self):
+        from naver_detail_preview import render_youtube_video
+
+        videos = ''.join(render_youtube_video({
+            'embedUrl': f'https://www.youtube.com/embed/{video_id}', 'title': '제품 시연',
+        }) for video_id in ('5RydDnx4VE4', 'NaL3tsLzK0o'))
+        source = '<div><p>상품 소개</p>' + videos + '<p>제품 사양</p></div>'
+        # 원격 재생 성공 여부와 독립적으로 실제 편집/복사/저장 경로를 검증한다.
+        with patch.object(self.dialog, '_queue_preview_refresh') as preview:
+            self.dialog.editor.setPlainText(source)
+            cursor = self.dialog.editor.document().find('상품 소개')
+            cursor.insertText('수정된 상품 소개')
+            changed = self.dialog.editor.toPlainText()
+            self.assertIn(videos, changed)
+            self.assertIn(videos, preview.call_args.args[0])
+            self.assertIn('수정된 상품 소개', changed)
+            copy_button = next(button for button in self.dialog.findChildren(QPushButton) if button.text() == 'HTML 복사')
+            copy_button.click()
+            self.assertEqual(QApplication.clipboard().text(), changed)
+            with patch.object(QMessageBox, 'information', return_value=QMessageBox.Ok):
+                self.dialog._save()
+            self.assertEqual(self.path.read_text(encoding='utf-8'), changed)
+
     def test_shared_wrapper_spacing_regression(self):
         source = '<div><div style="font-size:18px"><h2>상품 소개</h2><p>A</p><p>B</p><p>C</p><p>제품 사양</p></div></div>'
         self.dialog.editor.setPlainText(source)

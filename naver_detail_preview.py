@@ -8,7 +8,7 @@ import html
 import io
 import json
 import re
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 from collections import Counter
 from html.parser import HTMLParser
 from pathlib import Path
@@ -159,6 +159,94 @@ def render_section_title(component):
     return f"<section class=\"section-title\"><h2>{html.escape(title)}</h2></section>" if title else ""
 
 
+def youtube_video_id(url):
+    """지원하는 YouTube 주소만 영상 ID로 정규화한다."""
+    if not isinstance(url, str):
+        return None
+    try:
+        parsed = urlparse(html.unescape(url).strip())
+        if parsed.scheme not in {"http", "https", ""} or not parsed.netloc:
+            return None
+        if parsed.username or parsed.password or parsed.port not in {None, 80, 443}:
+            return None
+        host = (parsed.hostname or "").lower()
+        parts = parsed.path.strip("/").split("/")
+        if host in {"youtu.be", "www.youtu.be"} and len(parts) == 1:
+            candidate = parts[0]
+        elif host in {"youtube.com", "www.youtube.com", "m.youtube.com", "youtube-nocookie.com", "www.youtube-nocookie.com"}:
+            if parts == ["watch"]:
+                candidate = parse_qs(parsed.query).get("v", [""])[0]
+            elif len(parts) == 2 and parts[0] in {"embed", "shorts", "live"}:
+                candidate = parts[1]
+            else:
+                return None
+        else:
+            return None
+    except ValueError:
+        return None
+    return candidate if re.fullmatch(r"[A-Za-z0-9_-]{11}", candidate) else None
+
+
+def extract_youtube_videos(component):
+    """SmartEditor의 숨겨진 oEmbed JSON과 직접 삽입한 iframe을 읽는다.
+
+    원본 iframe/스크립트는 실행하거나 복사하지 않고 검증한 ID로 새로 만든다.
+    data-module과 data-module-v2에 같은 영상이 있어도 한 번만 출력한다.
+    """
+    videos = []
+    seen = set()
+
+    def add(url, title=""):
+        video_id = youtube_video_id(url)
+        if video_id and video_id not in seen:
+            seen.add(video_id)
+            videos.append({"videoId": video_id, "url": f"https://www.youtube.com/watch?v={video_id}",
+                           "embedUrl": f"https://www.youtube.com/embed/{video_id}",
+                           "title": clean_text(title) if isinstance(title, str) and title.strip() else "제품 시연 영상"})
+
+    def add_iframes(source, title=""):
+        if not isinstance(source, str):
+            return
+        parser = TreeParser()
+        parser.feed(source.replace('\\"', '"'))
+        for node in walk(parser.root):
+            if node.tag == "iframe":
+                add(node.attrs.get("src"), title or node.attrs.get("title", ""))
+
+    for node in walk(component):
+        if node.tag == "iframe":
+            add(node.attrs.get("src"), node.attrs.get("title", ""))
+        for name in ("data-module-v2", "data-module"):
+            raw = node.attrs.get(name)
+            if not raw:
+                continue
+            try:
+                module = json.loads(raw)
+            except (ValueError, TypeError):
+                continue
+            if not isinstance(module, dict) or module.get("type") != "v2_oembed":
+                continue
+            data = module.get("data")
+            if not isinstance(data, dict):
+                continue
+            title = data.get("title", "")
+            add(data.get("inputUrl"), title)
+            add_iframes(data.get("html"), title)
+    return videos
+
+
+def render_youtube_video(video):
+    return (
+        '<div class="video-block" style="margin:0 0 24px;text-align:center">'
+        '<iframe width="680" height="383" style="display:block;width:100%;max-width:100%;'
+        'height:auto;aspect-ratio:16 / 9;min-height:200px;border:0;margin:0 auto" '
+        f'src="{html.escape(video["embedUrl"], quote=True)}" '
+        f'title="{html.escape(video["title"], quote=True)}" '
+        'allow="encrypted-media; fullscreen; picture-in-picture" '
+        'referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe></div>'
+    )
+
+
 def load_config():
     sheet = get_authorized_gspread_client().open_by_key(SPREADSHEET_ID).worksheet(CONFIG_SHEET_TITLE)
     return {
@@ -206,9 +294,23 @@ def build_preview(product_no, product):
     image_dir.mkdir(parents=True, exist_ok=True)
     body = []
     image_records = []
+    video_records = []
+    video_warnings = []
+    skipped_video_count = 0
     image_index = 0
 
-    for component in components:
+    for component_index, component in enumerate(components, 1):
+        component_classes = classes(component)
+        if component_classes & {"se-oembed", "se-video"} or any(node.tag == "iframe" for node in walk(component)):
+            videos = extract_youtube_videos(component)
+            if videos:
+                for video in videos:
+                    body.append(render_youtube_video(video))
+                    video_records.append({**video, "componentIndex": component_index})
+                continue
+            skipped_video_count += 1
+            video_warnings.append(f"구성요소 {component_index}: 지원하는 유튜브 영상 주소를 찾지 못해 재생기를 생성하지 않았습니다.")
+
         if "se-sectionTitle" in classes(component):
             rendered = render_section_title(component)
             if rendered:
@@ -308,12 +410,15 @@ def build_preview(product_no, product):
         "textComponentCount": sum("se-text" in classes(node) for node in components),
         "quotationComponentCount": sum("se-quotation" in classes(node) for node in components),
         "imageCount": len(image_records),
+        "videoCount": len(video_records),
+        "skippedVideoComponentCount": skipped_video_count,
+        "videos": video_records,
         "imageBytes": sum(record["bytes"] for record in image_records),
         "imageFormats": dict(Counter(record["format"] for record in image_records)),
         "tableComponentCount": sum("se-table" in classes(node) for node in components),
         "sectionTitleComponentCount": sum("se-sectionTitle" in classes(node) for node in components),
         "horizontalLineComponentCount": sum("se-horizontalLine" in classes(node) for node in components),
-        "warnings": ["이미지 안의 글자는 선택 가능한 HTML 텍스트로 변환하지 않았습니다."],
+        "warnings": ["이미지 안의 글자는 선택 가능한 HTML 텍스트로 변환하지 않았습니다.", *video_warnings],
         "images": image_records,
     }
     report_path = output_dir / "report.json"

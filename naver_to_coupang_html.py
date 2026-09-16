@@ -63,7 +63,10 @@ def prepare(numbers):
             preview, report_path, report = naver_detail_preview.build_preview(number, naver_detail_preview.fetch_product(number))
             prepared.append((number, report))
             results.append({"productNo": number, "name": report["name"], "status": "prepared", "preview": str(preview), "report": str(report_path)})
-            print(f"[준비] {number} · 이미지 {report['imageCount']}개")
+            print(f"[준비] {number} · 이미지 {report['imageCount']}개 · 유튜브 영상 {report['videoCount']}개")
+            if report["skippedVideoComponentCount"]:
+                for warning in report["warnings"][1:]:
+                    print(f"[영상 확인] {number} · {warning}")
         except Exception as error:
             results.append({"productNo": number, "status": "prepare_failed", "error": str(error)})
             print(f"[준비 실패] {number}: {error}", file=sys.stderr)
