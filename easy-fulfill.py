@@ -1515,6 +1515,7 @@ class DetailHtmlEditorDialog(QDialog):
         self._preview_revision = 0
         self._preview_capture_pending = False
         self._pending_preview_html = ""
+        self._loaded_preview_html = ""
         self._preview_ready = False
         self._alignment_pending = False
         self._alignment_request = 0
@@ -1767,10 +1768,13 @@ class DetailHtmlEditorDialog(QDialog):
                 "JSON.stringify([window.scrollX, window.scrollY])", self._reload_preview_with_scroll
             )
         else:
-            self.preview.setUrl(QUrl(self._http_preview.update(source)))
+            self._load_preview_page(source)
+
+    def _load_preview_page(self, source):
+        self._loaded_preview_html = source
+        self.preview.setUrl(QUrl(self._http_preview.update(source)))
 
     def _reload_preview_with_scroll(self, value):
-        self._preview_capture_pending = False
         # WebEngine은 창을 폐기할 때도 대기 중인 JavaScript 콜백을 호출한다.
         if not isValid(self.preview) or self._http_preview.closed:
             return
@@ -1780,7 +1784,85 @@ class DetailHtmlEditorDialog(QDialog):
                 self._preview_scroll_position = tuple(position)
         except (TypeError, ValueError):
             pass
-        self.preview.setUrl(QUrl(self._http_preview.update(self._pending_preview_html)))
+        self._preview_capture_pending = True
+        source = self._pending_preview_html
+
+        def patched(result):
+            if not isValid(self.preview) or self._http_preview.closed:
+                return
+            self._preview_capture_pending = False
+            if result is True:
+                self._loaded_preview_html = source
+                self._http_preview.update(source)
+                if source != self._pending_preview_html:
+                    self._reload_preview_with_scroll(json.dumps(self._preview_scroll_position))
+                else:
+                    self._install_preview_block_selector(True)
+            else:
+                self._load_preview_page(self._pending_preview_html)
+
+        payload = json.dumps([self._loaded_preview_html, source, self._preview_scroll_position])
+        self.preview.page().runJavaScript(f"({self._PREVIEW_PATCH_SCRIPT})({payload})", patched)
+
+    # 변경 범위를 먼저 검사하고 영상이 포함된 노드를 제거해야 할 때는 전체 로드로 전환한다.
+    # 동일한 iframe과 상위 요소는 DOM에 그대로 두어 재생 상태와 HTTP 출처를 유지한다.
+    _PREVIEW_PATCH_SCRIPT = r"""
+        ([before, after, position]) => {
+            const parser = new DOMParser();
+            const oldDoc = parser.parseFromString(before, 'text/html');
+            const newDoc = parser.parseFromString(after, 'text/html');
+            if (!oldDoc.head.isEqualNode(newDoc.head)) return false;
+            if (!oldDoc.documentElement.cloneNode(false).isEqualNode(newDoc.documentElement.cloneNode(false))) return false;
+            const changes = [];
+            const hasMedia = node => node.nodeType === 1 &&
+                (node.matches('iframe,video,audio,object,embed') || node.querySelector('iframe,video,audio,object,embed'));
+            const children = node => [...node.childNodes].filter(child =>
+                !(child.nodeType === 1 && (child.id === 'easy-fulfill-selection-range' ||
+                  child.classList.contains('easy-fulfill-selection-block'))));
+            const plan = (old, next, live) => {
+                if (!live || old.nodeType !== live.nodeType || old.nodeName !== live.nodeName) return false;
+                if (old.isEqualNode(next)) return true;
+                if (old.nodeType !== next.nodeType || old.nodeName !== next.nodeName) {
+                    if (hasMedia(old)) return false;
+                    changes.push(() => live.replaceWith(next.cloneNode(true)));
+                    return true;
+                }
+                if (old.nodeType !== 1) {
+                    changes.push(() => { live.nodeValue = next.nodeValue; });
+                    return true;
+                }
+                if (old.matches('iframe,video,audio,object,embed')) return false;
+                for (const attr of old.attributes) {
+                    if (!next.hasAttribute(attr.name)) changes.push(() => live.removeAttribute(attr.name));
+                }
+                for (const attr of next.attributes) {
+                    if (old.getAttribute(attr.name) !== attr.value)
+                        changes.push(() => live.setAttribute(attr.name, attr.value));
+                }
+                const a = [...old.childNodes], b = [...next.childNodes], current = children(live);
+                if (a.length !== current.length) return false;
+                let start = 0, endA = a.length, endB = b.length;
+                while (start < endA && start < endB && a[start].isEqualNode(b[start])) start++;
+                while (endA > start && endB > start && a[endA - 1].isEqualNode(b[endB - 1])) { endA--; endB--; }
+                if (endA - start === endB - start) {
+                    for (let i = start; i < endA; i++) if (!plan(a[i], b[i], current[i])) return false;
+                } else {
+                    if (a.slice(start, endA).some(hasMedia)) return false;
+                    const anchor = current[endA] || null;
+                    changes.push(() => {
+                        for (const child of current.slice(start, endA)) child.remove();
+                        for (const child of b.slice(start, endB)) live.insertBefore(child.cloneNode(true), anchor);
+                    });
+                }
+                return true;
+            };
+            if (!plan(oldDoc.body, newDoc.body, document.body)) return false;
+            // 전체 변경과 위치 복원을 한 번의 렌더링 전에 처리한다.
+            for (const apply of changes) apply();
+            window.scrollTo({left:position[0], top:position[1], behavior:'instant'});
+            return true;
+        }
+    """
 
     def closeEvent(self, event):
         self._http_preview.close()
@@ -1913,10 +1995,17 @@ class DetailHtmlEditorDialog(QDialog):
             (() => {
                 const root = document.body.firstElementChild;
                 if (!root) return;
+                window.__easyFulfillSelectorEvents?.abort();
+                const controller = new AbortController();
+                window.__easyFulfillSelectorEvents = controller;
+                const signal = controller.signal;
+                document.querySelectorAll('#easy-fulfill-selection-range, .easy-fulfill-selection-block, #easy-fulfill-spacer-style')
+                    .forEach(element => element.remove());
+                root.querySelectorAll('[data-ef-block]').forEach(element => element.removeAttribute('data-ef-block'));
                 root.style.userSelect = 'none';
                 root.style.webkitUserSelect = 'none';
                 root.querySelectorAll('img').forEach(image => image.draggable = false);
-                root.addEventListener('dragstart', event => event.preventDefault());
+                root.addEventListener('dragstart', event => event.preventDefault(), {signal});
                 const selector = 'p,h1,h2,h3,h4,h5,h6,li,table,hr,img,div[data-ef-spacer]';
                 const blocks = [...root.querySelectorAll(selector)].filter(element => !element.parentElement?.closest(selector));
                 blocks.forEach((element, index) => {
@@ -1925,6 +2014,7 @@ class DetailHtmlEditorDialog(QDialog):
                     element.style.cursor = 'pointer';
                 });
                 const spacerStyle = document.createElement('style');
+                spacerStyle.id = 'easy-fulfill-spacer-style';
                 spacerStyle.textContent = `
                     [data-ef-spacer] { position:relative; outline:1px dashed #94a3b8;
                         outline-offset:-1px !important; background:#f1f5f9; overflow:visible !important; }
@@ -2005,10 +2095,10 @@ class DetailHtmlEditorDialog(QDialog):
                     const last = window.__easyFulfillLastPaint;
                     if (last) window.__easyFulfillPaintBlocks(last.indices, last.groupedIndices);
                 };
-                window.addEventListener('resize', repaint);
+                window.addEventListener('resize', repaint, {signal});
                 document.addEventListener('load', event => {
                     if (event.target instanceof HTMLImageElement) repaint();
-                }, true);
+                }, {capture:true, signal});
                 let dragStart = null;
                 let dragCurrent = null;
                 let dragOrigin = null;
@@ -2034,7 +2124,7 @@ class DetailHtmlEditorDialog(QDialog):
                     dragCurrent = dragStart;
                     dragOrigin = { x: event.clientX, y: event.clientY };
                     dragging = false;
-                }, true);
+                }, {capture:true, signal});
                 document.addEventListener('mousemove', event => {
                     if (dragStart === null) return;
                     event.preventDefault();
@@ -2046,7 +2136,7 @@ class DetailHtmlEditorDialog(QDialog):
                     const block = blockAt(event.target);
                     if (block) dragCurrent = Number(block.dataset.efBlock);
                     paintDragRange(dragStart, dragCurrent);
-                }, true);
+                }, {capture:true, signal});
                 document.addEventListener('mouseup', event => {
                     if (dragStart === null) return;
                     const start = dragStart;
@@ -2059,7 +2149,7 @@ class DetailHtmlEditorDialog(QDialog):
                         suppressClick = true;
                         notify({ index: end, dragStart: start, drag: true });
                     }
-                }, true);
+                }, {capture:true, signal});
                 root.addEventListener('click', event => {
                     const block = event.target.closest('[data-ef-block]');
                     if (!block) return;
@@ -2075,7 +2165,7 @@ class DetailHtmlEditorDialog(QDialog):
                         ctrl: event.ctrlKey
                     };
                     notify(value);
-                }, true);
+                }, {capture:true, signal});
             })();
         """, lambda result: self._preview_selector_ready(result, revision))
 
@@ -2173,7 +2263,8 @@ class DetailHtmlEditorDialog(QDialog):
 
     def _alignment_targets(self):
         return [index for index in sorted(self._selected_blocks)
-                if 0 <= index < len(self._block_details) and self._block_details[index]["spacer"] is None]
+                if 0 <= index < len(self._block_details) and self._block_details[index]["spacer"] is None
+                and "data-ef-image-group" not in self._block_details[index]["attrs"]]
 
     def _update_alignment_controls(self):
         self._update_text_format_controls()

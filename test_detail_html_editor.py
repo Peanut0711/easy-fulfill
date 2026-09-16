@@ -526,6 +526,112 @@ class DetailEditorTests(unittest.TestCase):
                 self.dialog._save()
             self.assertEqual(self.path.read_text(encoding='utf-8'), changed)
 
+    def test_image_group_selection_spacing_movement_and_save(self):
+        from detail_image_layout import render_image_group
+
+        pixel = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'
+        group = render_image_group([{'src': pixel}, {'src': pixel}], [84, 16])
+        source = '<div><p>앞 본문</p>' + group + '<p>뒤 본문</p></div>'
+        self.dialog.show()
+        self.dialog.editor.setPlainText(source)
+        self.wait_preview(0)
+        self.assertEqual(len(self.dialog._block_details), 3)
+        self.assertEqual(self.javascript('document.querySelectorAll("img[data-ef-block]").length'), 0)
+        self.javascript('document.querySelector("table img").click()')
+        deadline = time.monotonic() + 2
+        while not self.dialog._selected_blocks and time.monotonic() < deadline:
+            self.app.processEvents()
+            time.sleep(.01)
+        self.assertEqual(self.dialog._selected_blocks, {1})
+        self.assertFalse(self.dialog.bold_button.isEnabled())
+        self.assertFalse(self.dialog.alignment_buttons['left'].isEnabled())
+        self.dialog.add_spacing.click()
+        self.wait_preview(1)
+        spacer = self.dialog._spacer_html(24)
+        self.assertEqual(self.dialog.editor.toPlainText(), source.replace(group, spacer + group))
+        self.dialog._undo_editor()
+        self.wait_preview(0)
+        self.select(1)
+        self.dialog.move_down.click()
+        self.wait_preview(0)
+        self.assertEqual(self.dialog.editor.toPlainText(), '<div><p>앞 본문</p><p>뒤 본문</p>' + group + '</div>')
+        self.dialog.delete_blocks.click()
+        self.wait_preview(0)
+        self.assertNotIn('<img ', self.dialog.editor.toPlainText())
+        self.dialog._undo_editor()
+        self.wait_preview(0)
+        with patch.object(QMessageBox, 'information', return_value=QMessageBox.Ok):
+            self.dialog._save()
+        self.assertIn(group, self.path.read_text(encoding='utf-8'))
+
+    def test_spacing_keeps_iframe_document_and_scroll_without_reload(self):
+        self.dialog.show()
+        source = ('<div><p>영상 앞</p><iframe style="width:500px;height:300px" '
+                  'srcdoc="<p>영상 플레이어 대체 화면</p>"></iframe>' +
+                  ''.join(f'<p style="height:80px;margin:0">본문 {i}</p>' for i in range(70)) + '</div>')
+        self.dialog.editor.setPlainText(source)
+        self.wait_preview(0)
+        self.javascript('window.scrollTo(0,1600)')
+        self.javascript('''(() => {
+            window.keptFrame = document.querySelector('iframe');
+            window.keptDocument = keptFrame.contentDocument;
+            window.scrollSamples = [];
+            window.keepSampling = true;
+            const sample = () => {
+                scrollSamples.push(window.scrollY);
+                if (keepSampling) requestAnimationFrame(sample);
+            };
+            sample();
+        })()''')
+        loads = []
+        self.dialog.preview.loadStarted.connect(lambda: loads.append(True))
+
+        def unchanged(spacers):
+            self.wait_preview(spacers)
+            self.assertEqual(loads, [], '편집 도중 전체 페이지를 다시 불러왔습니다.')
+            self.assertTrue(self.javascript('document.querySelector("iframe") === window.keptFrame'))
+            self.assertTrue(self.javascript('document.querySelector("iframe").contentDocument === window.keptDocument'))
+            self.assertEqual(self.javascript('window.scrollY'), 1600)
+
+        self.select(25)
+        self.dialog.add_spacing.click()
+        unchanged(1)
+        self.dialog.spacing_height.setValue(48)
+        self.dialog.resize_spacing.click()
+        unchanged(1)
+        self.dialog.delete_blocks.click()
+        unchanged(0)
+        self.dialog._undo_editor()
+        unchanged(1)
+        self.dialog._undo_editor()
+        unchanged(1)
+        self.dialog._undo_editor()
+        unchanged(0)
+        # 영상 앞쪽에 여백을 넣어도 플레이어 자체는 DOM에서 분리하지 않는다.
+        self.select(0)
+        self.dialog.add_spacing.click()
+        unchanged(1)
+        self.select(26)
+        self.align('right', spacers=1)
+        unchanged(1)
+        self.javascript('window.keepSampling = false')
+        self.assertTrue(all(y == 1600 for y in self.javascript('window.scrollSamples')))
+        # 반복 갱신 후에도 클릭 리스너가 중복되어 Ctrl 선택을 두 번 토글하지 않는다.
+        self.javascript('''(() => {
+            window.sequenceBefore = window.__easyFulfillBlockSequence || 0;
+            document.querySelector('[data-ef-block="26"]').dispatchEvent(
+                new MouseEvent('click', {bubbles:true, ctrlKey:true}));
+        })()''')
+        self.assertEqual(self.javascript('window.__easyFulfillBlockSequence - window.sequenceBefore'), 1)
+
+    def test_changed_iframe_source_still_reloads_preview(self):
+        self.dialog.show()
+        self.dialog.editor.setPlainText('<div><p>영상</p><iframe srcdoc="첫 영상"></iframe></div>')
+        self.wait_preview(0)
+        self.dialog.editor.setPlainText('<div><p>영상</p><iframe srcdoc="바꾼 영상"></iframe></div>')
+        self.wait_preview(0)
+        self.assertEqual(self.javascript('document.querySelector("iframe").contentDocument.body.textContent'), '바꾼 영상')
+
     def test_http_preview_origin_relative_images_and_cleanup(self):
         import base64
         from urllib.error import URLError

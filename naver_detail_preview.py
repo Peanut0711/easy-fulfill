@@ -15,6 +15,7 @@ from pathlib import Path
 
 import requests
 from PIL import Image
+from detail_image_layout import normalized_widths, render_image_group
 
 import naver_commerce
 from google_sheets_oauth import get_authorized_gspread_client
@@ -277,6 +278,43 @@ def download_image(url, path):
     return {"width": image.width, "height": image.height, "format": image.format, "bytes": len(response.content)}
 
 
+def image_rows(component):
+    """SmartEditor의 이미지 행 경계와 열 개수를 보존한다."""
+    row, row_owner, columns = [], None, 1
+    for image in (node for node in walk(component) if node.tag == "img" and node.attrs.get("src")):
+        owner, count = image, 1
+        ancestor = image.parent
+        while ancestor is not None:
+            match = re.search(r'(?:^|\s)se-imageStrip(?:-col-)?([23])(?=\s|$)', ancestor.attrs.get("class", ""))
+            if match:
+                owner, count = ancestor, int(match[1])
+                break
+            if ancestor is component:
+                break
+            ancestor = ancestor.parent
+        if row and (owner is not row_owner or len(row) == columns):
+            yield row, columns
+            row = []
+        row_owner, columns = owner, count
+        row.append(image)
+    if row:
+        yield row, columns
+
+
+def image_width_percent(image, component):
+    node = image
+    while node is not None:
+        if node is image or "se-module-image" in classes(node):
+            match = re.search(r'(?:^|;)\s*width\s*:\s*(\d+(?:\.\d+)?)\s*%\s*(?:;|$)',
+                              node.attrs.get("style", ""), re.IGNORECASE)
+            if match and 0 < float(match[1]) <= 100:
+                return float(match[1])
+        if node is component:
+            break
+        node = node.parent
+    return None
+
+
 def build_preview(product_no, product):
     origin = product.get("originProduct") or {}
     source = origin.get("detailContent") or ""
@@ -294,6 +332,7 @@ def build_preview(product_no, product):
     image_dir.mkdir(parents=True, exist_ok=True)
     body = []
     image_records = []
+    image_groups = []
     video_records = []
     video_warnings = []
     skipped_video_count = 0
@@ -339,21 +378,25 @@ def build_preview(product_no, product):
                 body.append(rendered)
             continue
 
-        image_nodes = [node for node in walk(component) if node.tag == "img" and node.attrs.get("src")]
-        if not image_nodes:
-            continue
-        strip_classes = {name for node in walk(component) for name in classes(node) if "imageStrip-col-" in name}
-        columns = 3 if "se-imageStrip-col-3" in strip_classes else 2 if "se-imageStrip-col-2" in strip_classes else 1
-        rendered_images = []
-        for image_node in image_nodes:
-            image_index += 1
-            path = image_dir / f"image-{image_index:02d}.jpg"
-            metadata = download_image(image_node.attrs["src"], path)
-            metadata.update({"index": image_index, "source": image_node.attrs["src"], "file": path.name})
-            image_records.append(metadata)
-            alt = html.escape(f"{origin.get('name', '상품 상세')} 이미지 {image_index}", quote=True)
-            rendered_images.append(f'<img src="images/{path.name}" alt="{alt}">')
-        body.append(f'<section class="image-block grid-{columns}">{"".join(rendered_images)}</section>')
+        for image_nodes, columns in image_rows(component):
+            images = []
+            for image_node in image_nodes:
+                image_index += 1
+                path = image_dir / f"image-{image_index:02d}.jpg"
+                metadata = dict(download_image(image_node.attrs["src"], path))
+                metadata.update({"index": image_index, "source": image_node.attrs["src"], "file": path.name})
+                image_records.append(metadata)
+                images.append({**metadata, "src": f"images/{path.name}",
+                               "alt": f"{origin.get('name', '상품 상세')} 이미지 {image_index}"})
+            if columns > 1:
+                widths = normalized_widths(images, [image_width_percent(node, component) for node in image_nodes])
+                body.append(render_image_group(images, widths))
+                image_groups.append({"componentIndex": component_index,
+                                     "imageIndices": [item["index"] for item in images], "widthPercentages": widths})
+            else:
+                image = images[0]
+                body.append(f'<section class="image-block grid-1"><img src="{image["src"]}" '
+                            f'alt="{html.escape(image["alt"], quote=True)}"></section>')
 
     title = html.escape(origin.get("name") or f"네이버 상품 {product_no}")
     preview = f"""<!doctype html>
@@ -410,6 +453,7 @@ def build_preview(product_no, product):
         "textComponentCount": sum("se-text" in classes(node) for node in components),
         "quotationComponentCount": sum("se-quotation" in classes(node) for node in components),
         "imageCount": len(image_records),
+        "imageGroups": image_groups,
         "videoCount": len(video_records),
         "skippedVideoComponentCount": skipped_video_count,
         "videos": video_records,

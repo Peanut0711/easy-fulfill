@@ -21,6 +21,7 @@ from urllib.parse import urlparse
 
 from PIL import Image
 from playwright.sync_api import sync_playwright
+from detail_image_layout import upgrade_legacy_image_groups
 
 
 ROOT = Path(__file__).resolve().parent
@@ -227,6 +228,11 @@ def prepare_image_for_upload(image_path: Path, upload_dir: Path, index: int):
 def write_cdn_html(output_dir: Path, mapping: list[dict]):
     preview_path = output_dir / "coupang-preview.html"
     html = preview_path.read_text(encoding="utf-8")
+    report_path = output_dir / "report.json"
+    report = json.loads(report_path.read_text(encoding="utf-8")) if report_path.exists() else {}
+    image_sizes = {f'images/{item["file"]}': {"width": item.get("width"), "height": item.get("height")}
+                   for item in report.get("images", [])}
+    html = upgrade_legacy_image_groups(html, image_sizes)
     for item in mapping:
         html = html.replace(f'images/{item["file"]}', item["cdnUrl"])
     if re.search(r'src="images/', html):
@@ -244,7 +250,16 @@ def render_paste_html(preview_html: str):
     match = re.search(r"<main>(.*)</main>", preview_html, re.DOTALL)
     if not match:
         raise RuntimeError("미리보기 본문을 찾지 못했습니다.")
-    body = match.group(1)
+    body = upgrade_legacy_image_groups(match.group(1))
+    image_groups = []
+
+    def keep_image_group(match):
+        image_groups.append(match[0])
+        return f'<!--easy-fulfill-image-group-{len(image_groups) - 1}-->'
+
+    # 이미지 행은 이미 인라인 스타일이 완성되어 있으므로 일반 표·이미지 변환에서 제외한다.
+    body = re.sub(r'<table\b[^>]*\bdata-ef-image-group="\d+"[^>]*>.*?</table>',
+                  keep_image_group, body, flags=re.DOTALL)
     body = body.replace(
         '<section class="text-block">',
         '<div style="margin:0 0 28px;font-size:18px;line-height:1.75;overflow-wrap:anywhere">',
@@ -272,6 +287,8 @@ def render_paste_html(preview_html: str):
     body = body.replace('<table>', '<table style="width:100%;border-collapse:collapse;font-size:16px">')
     body = re.sub(r"<(th|td)([^>]*)>", r'<\1 style="padding:10px 12px;border:1px solid #d6d6d6;text-align:left;vertical-align:top"\2>', body)
     body = body.replace('<th style="', '<th style="background:#f5f5f5;font-weight:700;')
+    for index, group in enumerate(image_groups):
+        body = body.replace(f'<!--easy-fulfill-image-group-{index}-->', group)
     return f'<div style="max-width:780px;margin:0 auto;color:#222;font-family:Arial,Malgun Gothic,sans-serif">{body}</div>\n'
 
 
