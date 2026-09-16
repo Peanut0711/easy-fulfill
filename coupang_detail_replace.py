@@ -86,6 +86,37 @@ def close_context(context, playwright_error):
             raise
 
 
+def watch_completion_popup_close(page):
+    """완료 팝업의 닫기를 사용자가 누른 경우에만 종료 요청을 전달한다."""
+    requested = threading.Event()
+    page.expose_function("__easyFulfillCompletionClosed", requested.set)
+    script = r"""
+        (() => {
+            if (window.__easyFulfillCompletionWatcher) return;
+            window.__easyFulfillCompletionWatcher = true;
+            const normalize = text => (text || '').replace(/\s+/g, '');
+            document.addEventListener('click', event => {
+                if (!event.isTrusted || !(event.target instanceof Element)) return;
+                const button = event.target.closest('button, a, [role="button"], input[type="button"]');
+                if (!button || normalize(button.innerText || button.value) !== '닫기') return;
+                // 상위 페이지에 남은 완료 문구와 다른 닫기 버튼을 혼동하지 않는다.
+                for (let panel = button.parentElement; panel && panel !== document.body; panel = panel.parentElement) {
+                    if (!panel.getClientRects().length) continue;
+                    const text = normalize(panel.innerText);
+                    if (!/^수정요청이완료되었습니다[.!。]?/.test(text)) continue;
+                    const controls = text.replace(/^수정요청이완료되었습니다[.!。]?/, '');
+                    if (!['닫기', '닫기상품목록', '상품목록닫기'].includes(controls)) continue;
+                    window.__easyFulfillCompletionClosed().catch(() => {});
+                    return;
+                }
+            }, true);
+        })();
+    """
+    page.add_init_script(script)
+    page.evaluate(script)
+    return requested
+
+
 def wait_for_wing_close_or_finish(page, context, playwright_error):
     """WING 창 닫힘 또는 GUI의 작업 종료 요청까지 기다린다."""
     finish_requests = queue.Queue()
@@ -93,6 +124,7 @@ def wait_for_wing_close_or_finish(page, context, playwright_error):
 
     page.on("close", lambda _page: wing_closed.set())
     context.on("close", lambda _context: wing_closed.set())
+    completion_closed = watch_completion_popup_close(page)
 
     def read_finish_request():
         try:
@@ -102,8 +134,13 @@ def wait_for_wing_close_or_finish(page, context, playwright_error):
             finish_requests.put("")
 
     threading.Thread(target=read_finish_request, daemon=True).start()
-    print("WING에서 저장 후 창을 닫으면 작업이 자동으로 종료됩니다.")
+    print("WING 수정요청 완료 팝업에서 닫기를 누르거나 창을 닫으면 작업이 자동으로 종료됩니다.")
     while not wing_closed.is_set():
+        if completion_closed.is_set():
+            print("[WING 수정요청 완료] 완료 팝업의 닫기를 눌러 WING 창을 종료합니다.")
+            close_context(context, playwright_error)
+            wing_closed.set()
+            break
         try:
             finish_requests.get_nowait()
         except queue.Empty:
