@@ -55,6 +55,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWebEngineCore import QWebEngineSettings
 from PySide6.QtWebEngineWidgets import QWebEngineView
+from shiboken6 import isValid
 import requests
 from io import BytesIO
 import warnings
@@ -1506,7 +1507,10 @@ class DetailHtmlEditorDialog(QDialog):
         self.original_html = self.path.read_text(encoding="utf-8")
         self._block_ranges = []
         self._block_details = []
-        self._scroll_to_selection = False
+        self._preview_scroll_position = (0, 0)
+        self._preview_revision = 0
+        self._preview_capture_pending = False
+        self._pending_preview_html = ""
         self._preview_ready = False
         self._alignment_pending = False
         self._alignment_request = 0
@@ -1633,6 +1637,7 @@ class DetailHtmlEditorDialog(QDialog):
         actions.addStretch(1)
         self.block_status = QLabel("클릭: 단일 · 드래그/Shift+클릭: 범위 · Ctrl+클릭: 개별 추가/해제")
         self.delete_blocks = QPushButton("선택 영역 삭제 (Del)")
+        self.delete_blocks.setToolTip("미리보기에서 선택한 항목을 Delete 또는 Backspace 키로 삭제합니다.")
         self.undo_delete = QPushButton("실행 취소 (Ctrl+Z)")
         reset = QPushButton("원본으로 되돌리기")
         copy = QPushButton("HTML 복사")
@@ -1696,7 +1701,7 @@ class DetailHtmlEditorDialog(QDialog):
             if focused is self or (focused is not None and self.isAncestorOf(focused)):
                 self._clear_block_selection()
                 return True
-        if event.key() == Qt.Key_Delete:
+        if event.key() in (Qt.Key_Delete, Qt.Key_Backspace):
             focused = QApplication.focusWidget()
             if focused is self.preview or (focused is not None and self.preview.isAncestorOf(focused)):
                 self._delete_selected_blocks()
@@ -1712,7 +1717,6 @@ class DetailHtmlEditorDialog(QDialog):
         self._update_block_controls()
 
     def _refresh(self):
-        self._preview_ready = False
         source = self.editor.toPlainText()
         self._block_details = self._html_block_details(source)
         self._block_ranges = [item["range"] for item in self._block_details]
@@ -1727,7 +1731,7 @@ class DetailHtmlEditorDialog(QDialog):
         self._selection_anchor = min(self._selected_blocks) if self._selected_blocks else None
         safe_preview = re.sub(r"<script\b[^>]*>.*?</script\s*>", "", source, flags=re.IGNORECASE | re.DOTALL)
         safe_preview = re.sub(r"\s+on[a-z]+\s*=\s*(['\"]).*?\1", "", safe_preview, flags=re.IGNORECASE | re.DOTALL)
-        self.preview.setHtml(safe_preview, QUrl.fromLocalFile(str(self.path)))
+        self._queue_preview_refresh(safe_preview)
         matches = list(self._SMARTSTORE_URL_PATTERN.finditer(source))
         self._update_editor_highlights(matches=matches)
         if matches:
@@ -1742,6 +1746,35 @@ class DetailHtmlEditorDialog(QDialog):
             self.warning.setText("네이버 스마트스토어 주소가 없습니다.")
             self.warning.setStyleSheet("color:#237804")
         self._update_block_controls()
+
+    def _queue_preview_refresh(self, source):
+        """갱신 직전 위치를 읽고 연속 입력은 가장 최근 HTML로 합쳐 불러온다."""
+        was_ready = self._preview_ready
+        self._preview_ready = False
+        self._preview_revision += 1
+        self._pending_preview_html = source
+        if self._preview_capture_pending:
+            return
+        if was_ready:
+            self._preview_capture_pending = True
+            self.preview.page().runJavaScript(
+                "JSON.stringify([window.scrollX, window.scrollY])", self._reload_preview_with_scroll
+            )
+        else:
+            self.preview.setHtml(source, QUrl.fromLocalFile(str(self.path)))
+
+    def _reload_preview_with_scroll(self, value):
+        self._preview_capture_pending = False
+        # WebEngine은 창을 폐기할 때도 대기 중인 JavaScript 콜백을 호출한다.
+        if not isValid(self.preview):
+            return
+        try:
+            position = json.loads(value)
+            if len(position) == 2 and all(isinstance(number, (int, float)) and math.isfinite(number) for number in position):
+                self._preview_scroll_position = tuple(position)
+        except (TypeError, ValueError):
+            pass
+        self.preview.setHtml(self._pending_preview_html, QUrl.fromLocalFile(str(self.path)))
 
     def _update_editor_highlights(self, matches=None, scroll_to=None):
         """미리보기 선택 범위와 스마트스토어 URL을 HTML 편집창에 함께 표시한다."""
@@ -1865,6 +1898,7 @@ class DetailHtmlEditorDialog(QDialog):
     def _install_preview_block_selector(self, loaded):
         if not loaded:
             return
+        revision = self._preview_revision
         self.preview.page().runJavaScript("""
             (() => {
                 const root = document.body.firstElementChild;
@@ -2033,18 +2067,23 @@ class DetailHtmlEditorDialog(QDialog):
                     notify(value);
                 }, true);
             })();
-        """, self._preview_selector_ready)
+        """, lambda result: self._preview_selector_ready(result, revision))
 
-    def _preview_selector_ready(self, _result):
-        self._preview_ready = True
-        self._update_alignment_controls()
-        self._paint_selected_blocks()
-        if self._scroll_to_selection and self._selected_blocks:
-            index = min(self._selected_blocks)
-            self.preview.page().runJavaScript(
-                f'document.querySelector(\'[data-ef-block="{index}"]\')?.scrollIntoView({{block:"nearest"}});'
-            )
-        self._scroll_to_selection = False
+    def _preview_selector_ready(self, _result, revision):
+        if not isValid(self.preview) or revision != self._preview_revision:
+            return
+
+        def restored(_result):
+            if not isValid(self.preview) or revision != self._preview_revision:
+                return
+            self._preview_ready = True
+            self._update_alignment_controls()
+            self._paint_selected_blocks()
+
+        x, y = self._preview_scroll_position
+        self.preview.page().runJavaScript(
+            f'window.scrollTo({{left:{x},top:{y},behavior:"instant"}});', restored
+        )
 
     def _on_preview_title_changed(self, title):
         prefix = "easy-fulfill-block:"
@@ -2102,7 +2141,7 @@ class DetailHtmlEditorDialog(QDialog):
 
     def _update_block_controls(self):
         if self._selected_blocks:
-            self.block_status.setText(f"선택된 라인 {len(self._selected_blocks)}개, Delete 키로 선택 영역 삭제")
+            self.block_status.setText(f"선택된 라인 {len(self._selected_blocks)}개, Delete/Backspace 키로 삭제")
         else:
             self.block_status.setText("클릭: 단일 · 드래그/Shift+클릭: 범위 · Ctrl+클릭: 개별 추가/해제")
         self.delete_blocks.setEnabled(bool(self._selected_blocks))
@@ -2119,7 +2158,7 @@ class DetailHtmlEditorDialog(QDialog):
                 self.spacing_height.setValue(int(spacer["spacer"]))
             except (ValueError, TypeError):
                 pass
-            self.block_status.setText(f'여백 {self.spacing_height.value()}px 선택 · 높이 변경 또는 Delete 키로 삭제')
+            self.block_status.setText(f'여백 {self.spacing_height.value()}px 선택 · 높이 변경 또는 Delete/Backspace 키로 삭제')
         self._update_alignment_controls()
 
     def _alignment_targets(self):
@@ -2325,7 +2364,6 @@ class DetailHtmlEditorDialog(QDialog):
                 self.editor.blockSignals(False)
             self._pending_restored_selection = selected
             self._pending_restored_range = selected_range
-            self._scroll_to_selection = True
             self._refresh()
             self._block_edit_history.append({"before": source, "after": self.editor.toPlainText(),
                                              "selection": selected, "range": selected_range})
@@ -2407,7 +2445,6 @@ class DetailHtmlEditorDialog(QDialog):
         updated = self.editor.toPlainText()
         details = self._html_block_details(updated)
         self._pending_restored_selection = {index for index, item in enumerate(details) if item["range"][0] == start}
-        self._scroll_to_selection = True
         self._refresh()
         self._block_edit_history.append({"before": source, "after": updated, "selection": selected, "range": selected_range})
 
@@ -2517,7 +2554,6 @@ class DetailHtmlEditorDialog(QDialog):
             self.editor.blockSignals(False)
         self._pending_restored_selection = {index + direction for index in selected}
         self._pending_restored_range = (first + direction, last + direction) if len(selected) > 1 else None
-        self._scroll_to_selection = True
         self._refresh()
         self._block_edit_history.append({"before": source, "after": updated, "selection": selected, "range": selected_range})
 
@@ -2568,7 +2604,6 @@ class DetailHtmlEditorDialog(QDialog):
         if edit and edit["after"] == current:
             self._pending_restored_selection = set(edit["selection"])
             self._pending_restored_range = edit.get("range")
-            self._scroll_to_selection = True
         self.editor.undo()
         if edit and self.editor.toPlainText() == edit["before"]:
             self._block_edit_history.pop()
@@ -2581,7 +2616,8 @@ class DetailHtmlEditorDialog(QDialog):
 
     def _save(self):
         self.path.write_text(self.editor.toPlainText(), encoding="utf-8")
-        QMessageBox.information(self, "상세페이지", "수정한 HTML을 저장했습니다.")
+        if QMessageBox.information(self, "상세페이지", "수정한 HTML을 저장했습니다.") == QMessageBox.Ok:
+            self.accept()
 
     def _toggle_maximize(self):
         if self.isMaximized():

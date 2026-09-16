@@ -3,6 +3,7 @@
 import ast
 import html
 import json
+import math
 import os
 import re
 import tempfile
@@ -23,6 +24,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtWebEngineCore import QWebEngineSettings
 from PySide6.QtWebEngineWidgets import QWebEngineView
+from shiboken6 import isValid
 
 
 # MainWindow의 주문·설정 초기화를 실행하지 않고 실제 편집창 클래스 전체를 사용한다.
@@ -415,6 +417,90 @@ class DetailEditorTests(unittest.TestCase):
     def item_html(self):
         source = self.dialog.editor.toPlainText()
         return [source[start:end] for start, end in self.dialog._block_ranges]
+
+    def test_preview_scroll_preserved_across_edit_operations(self):
+        source = '<div style="width:1200px">' + ''.join(f'<p style="height:80px;margin:0">문단 {index}</p>' for index in range(75)) + '</div>'
+        self.dialog.show()
+        self.dialog.editor.setPlainText(source)
+        for mobile in (False, True):
+            self.dialog._set_preview_mode(mobile)
+            self.wait_preview(0)
+            self.javascript('window.scrollTo({left:120,top:1400,behavior:"instant"})')
+            expected = self.javascript('[window.scrollX,window.scrollY]')
+            self.assertEqual(expected, [120, 1400])
+
+            def unchanged(spacers=0):
+                self.wait_preview(spacers)
+                actual = self.javascript('[window.scrollX,window.scrollY]')
+                self.assertEqual(actual, expected)
+
+            self.select(18)
+            self.align('right')
+            unchanged()
+            self.wait_font_state()
+            self.dialog.bold_button.click()
+            self.finish_format_edit()
+            unchanged()
+            self.dialog.font_size.setValue(22)
+            self.dialog.apply_font_size.click()
+            self.finish_format_edit()
+            unchanged()
+            self.dialog.move_up.click()
+            unchanged()
+            self.dialog._undo_editor()
+            unchanged()
+            # 화면 밖 항목을 선택해도 추가 후 선택 항목으로 강제 이동하지 않는다.
+            self.select(50)
+            self.dialog.add_spacing.click()
+            unchanged(1)
+            self.dialog.spacing_height.setValue(48)
+            self.dialog.resize_spacing.click()
+            unchanged(1)
+            self.dialog.delete_blocks.click()
+            unchanged()
+
+    def test_rapid_preview_refresh_keeps_scroll_and_latest_html(self):
+        self.dialog.show()
+        source = '<div>' + ''.join(f'<p style="height:90px">문단 {index}</p>' for index in range(60)) + '</div>'
+        self.dialog.editor.setPlainText(source)
+        self.wait_preview(0)
+        self.javascript('window.scrollTo(0,1200)')
+        self.dialog.editor.setPlainText(source.replace('문단 59', '첫 수정'))
+        self.dialog.editor.setPlainText(source.replace('문단 59', '마지막 수정'))
+        self.wait_preview(0)
+        self.assertEqual(self.javascript('window.scrollY'), 1200)
+        self.assertIn('마지막 수정', self.javascript('document.body.textContent'))
+        self.assertNotIn('첫 수정', self.javascript('document.body.textContent'))
+        self.select(30)
+        for _ in range(3):
+            self.dialog.add_spacing.click()
+        self.wait_preview(3)
+        self.assertEqual(self.javascript('window.scrollY'), 1200)
+
+    def test_save_confirmation_closes_editor_after_writing(self):
+        self.dialog.show()
+        changed = SOURCE.replace('뒤 본문', '저장된 본문')
+        self.dialog.editor.setPlainText(changed)
+
+        def confirm(*_args):
+            self.assertTrue(self.dialog.isVisible())
+            self.assertEqual(self.path.read_text(encoding='utf-8'), changed)
+            return QMessageBox.Ok
+
+        with patch.object(QMessageBox, 'information', side_effect=confirm) as popup:
+            save_action = next(action for action in self.dialog.actions() if action.text() == '저장')
+            save_action.trigger()
+        popup.assert_called_once()
+        self.assertEqual(self.dialog.result(), QDialog.Accepted)
+        self.assertFalse(self.dialog.isVisible())
+
+    def test_save_failure_keeps_editor_open(self):
+        self.dialog.show()
+        with patch.object(Path, 'write_text', side_effect=OSError('write failed')), patch.object(QMessageBox, 'information') as popup:
+            with self.assertRaises(OSError):
+                self.dialog._save()
+        popup.assert_not_called()
+        self.assertTrue(self.dialog.isVisible())
 
     def test_shared_wrapper_spacing_regression(self):
         source = '<div><div style="font-size:18px"><h2>상품 소개</h2><p>A</p><p>B</p><p>C</p><p>제품 사양</p></div></div>'
