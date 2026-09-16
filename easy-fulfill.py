@@ -56,6 +56,7 @@ from PySide6.QtGui import (
 from PySide6.QtWebEngineCore import QWebEngineSettings
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from shiboken6 import isValid
+from detail_preview_server import DetailPreviewServer
 import requests
 from io import BytesIO
 import warnings
@@ -1505,6 +1506,9 @@ class DetailHtmlEditorDialog(QDialog):
         super().__init__(parent)
         self.path = Path(path)
         self.original_html = self.path.read_text(encoding="utf-8")
+        self._http_preview = DetailPreviewServer(self.path)
+        self.finished.connect(self._http_preview.close)
+        self.destroyed.connect(self._http_preview.close)
         self._block_ranges = []
         self._block_details = []
         self._preview_scroll_position = (0, 0)
@@ -1749,6 +1753,8 @@ class DetailHtmlEditorDialog(QDialog):
 
     def _queue_preview_refresh(self, source):
         """갱신 직전 위치를 읽고 연속 입력은 가장 최근 HTML로 합쳐 불러온다."""
+        if self._http_preview.closed:
+            return
         was_ready = self._preview_ready
         self._preview_ready = False
         self._preview_revision += 1
@@ -1761,12 +1767,12 @@ class DetailHtmlEditorDialog(QDialog):
                 "JSON.stringify([window.scrollX, window.scrollY])", self._reload_preview_with_scroll
             )
         else:
-            self.preview.setHtml(source, QUrl.fromLocalFile(str(self.path)))
+            self.preview.setUrl(QUrl(self._http_preview.update(source)))
 
     def _reload_preview_with_scroll(self, value):
         self._preview_capture_pending = False
         # WebEngine은 창을 폐기할 때도 대기 중인 JavaScript 콜백을 호출한다.
-        if not isValid(self.preview):
+        if not isValid(self.preview) or self._http_preview.closed:
             return
         try:
             position = json.loads(value)
@@ -1774,7 +1780,11 @@ class DetailHtmlEditorDialog(QDialog):
                 self._preview_scroll_position = tuple(position)
         except (TypeError, ValueError):
             pass
-        self.preview.setHtml(self._pending_preview_html, QUrl.fromLocalFile(str(self.path)))
+        self.preview.setUrl(QUrl(self._http_preview.update(self._pending_preview_html)))
+
+    def closeEvent(self, event):
+        self._http_preview.close()
+        super().closeEvent(event)
 
     def _update_editor_highlights(self, matches=None, scroll_to=None):
         """미리보기 선택 범위와 스마트스토어 URL을 HTML 편집창에 함께 표시한다."""
@@ -5251,7 +5261,20 @@ class MainWindow(QMainWindow):
         if not path.exists():
             QMessageBox.warning(self, "상세페이지", f"파일이 없습니다. 먼저 HTML을 생성하세요.\n{path}")
             return
-        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+        if not hasattr(self, "_detail_preview_servers"):
+            self._detail_preview_servers = {}
+        key = path.resolve()
+        server = self._detail_preview_servers.get(key)
+        if server is None or server.closed:
+            try:
+                server = DetailPreviewServer(path)
+            except OSError as error:
+                QMessageBox.warning(self, "상세페이지", f"미리보기를 시작하지 못했습니다.\n{error}")
+                return
+            self._detail_preview_servers[key] = server
+            QApplication.instance().aboutToQuit.connect(server.close)
+            self.destroyed.connect(server.close)
+        QDesktopServices.openUrl(QUrl(server.url))
 
     def _on_detail_open_preview_clicked(self):
         product_no = self._detail_product_no(self.lineEdit_detail_naver_create, "네이버 상품번호", "naver")

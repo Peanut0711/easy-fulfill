@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtWebEngineCore import QWebEngineSettings
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from shiboken6 import isValid
+from detail_preview_server import DetailPreviewServer
 
 
 # MainWindow의 주문·설정 초기화를 실행하지 않고 실제 편집창 클래스 전체를 사용한다.
@@ -524,6 +525,58 @@ class DetailEditorTests(unittest.TestCase):
             with patch.object(QMessageBox, 'information', return_value=QMessageBox.Ok):
                 self.dialog._save()
             self.assertEqual(self.path.read_text(encoding='utf-8'), changed)
+
+    def test_http_preview_origin_relative_images_and_cleanup(self):
+        import base64
+        from urllib.error import URLError
+        from urllib.request import urlopen
+
+        self.dialog.show()
+        images = self.path.parent / 'images'
+        images.mkdir()
+        (images / 'pixel.gif').write_bytes(base64.b64decode('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'))
+        source = '<div><p>미리보기</p><img src="images/pixel.gif"></div>'
+        self.dialog.editor.setPlainText(source)
+        self.wait_preview(0)
+        self.assertEqual(self.javascript('location.protocol'), 'http:')
+        self.assertEqual(self.javascript('location.hostname'), '127.0.0.1')
+        self.assertEqual(self.javascript('document.querySelector("img").naturalWidth'), 1)
+        self.assertEqual(self.dialog.editor.toPlainText(), source)
+        url = self.dialog._http_preview.url
+        self.dialog.accept()
+        self.assertTrue(self.dialog._http_preview.closed)
+        with self.assertRaises(URLError):
+            urlopen(url, timeout=1)
+
+    def test_http_preview_sends_origin_as_cross_origin_referer(self):
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        from threading import Thread
+        from urllib.parse import urlsplit
+
+        self.dialog.show()
+        referers = []
+        class Receiver(BaseHTTPRequestHandler):
+            def do_GET(self):
+                referers.append(self.headers.get('Referer'))
+                self.send_response(204)
+                self.end_headers()
+            def log_message(self, *_args):
+                pass
+
+        receiver = ThreadingHTTPServer(('127.0.0.1', 0), Receiver)
+        thread = Thread(target=receiver.serve_forever, kwargs={'poll_interval': .05}, daemon=True)
+        thread.start()
+        try:
+            self.dialog.editor.setPlainText(
+                f'<div><p>출처 확인</p><iframe src="http://127.0.0.1:{receiver.server_port}/probe"></iframe></div>'
+            )
+            self.wait_preview(0)
+            parsed = urlsplit(self.dialog._http_preview.url)
+            self.assertIn(f'{parsed.scheme}://{parsed.netloc}/', referers)
+        finally:
+            receiver.shutdown()
+            receiver.server_close()
+            thread.join(timeout=1)
 
     def test_shared_wrapper_spacing_regression(self):
         source = '<div><div style="font-size:18px"><h2>상품 소개</h2><p>A</p><p>B</p><p>C</p><p>제품 사양</p></div></div>'
