@@ -2391,7 +2391,6 @@ class DetailHtmlEditorDialog(QDialog):
         for chip in self.color_palette_buttons.values():
             chip.setEnabled(False)
             chip.setChecked(False)
-            chip.setText("")
         targets = [index for index in self._alignment_targets() if self._block_details[index]["text_nodes"]]
         if not targets:
             self.font_status.setText("텍스트를 선택하세요")
@@ -2425,7 +2424,6 @@ class DetailHtmlEditorDialog(QDialog):
                 active = current_color.isValid() and current_color.name() == value
                 chip.setEnabled(True)
                 chip.setChecked(active)
-                chip.setText("●" if active else "")
             if current_color.isValid():
                 swatch = QPixmap(14, 14)
                 swatch.fill(current_color)
