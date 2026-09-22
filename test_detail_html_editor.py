@@ -873,6 +873,27 @@ class DetailEditorTests(unittest.TestCase):
         self.wait_preview(1)
         self.assertIsNotNone(self.dialog._selected_spacer())
 
+    def test_generated_nested_lists_preview_save_and_copy_use_same_html(self):
+        from test_detail_text_layout import SOURCE as nested_source, render
+        from coupang_cdn_upload import render_paste_html
+
+        source = render_paste_html('<main><section class="text-block">' + render(nested_source) + '</section></main>')
+        self.dialog.editor.setPlainText(source)
+        self.dialog.show()
+        self.wait_preview(0)
+        for mobile in (False, True):
+            self.dialog._set_preview_mode(mobile)
+            self.app.processEvents()
+            self.assertEqual(self.javascript("[...document.querySelectorAll('ul')].map(e=>getComputedStyle(e).listStyleType)"), ['disc', 'circle', 'square'])
+            ys = self.javascript("[...document.querySelectorAll('li > p')].map(e=>e.getBoundingClientRect().y)")
+            self.assertEqual(ys, sorted(set(ys)))
+        with patch.object(QMessageBox, 'information'):
+            self.dialog._save()
+        copy_button = next(button for button in self.dialog.findChildren(QPushButton) if button.text() == 'HTML 복사')
+        copy_button.click()
+        self.assertEqual(self.path.read_text(encoding='utf-8'), source)
+        self.assertEqual(QApplication.clipboard().text(), source)
+
     def test_preview_click_height_and_clean_save_copy(self):
         self.dialog.show()
         self.wait_preview(0)

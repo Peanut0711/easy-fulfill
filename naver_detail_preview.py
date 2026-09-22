@@ -16,6 +16,7 @@ from pathlib import Path
 import requests
 from PIL import Image
 from detail_image_layout import normalized_widths, render_image_group
+from detail_text_style import portable_text_html, source_text_style, style_attribute
 
 import naver_commerce
 from google_sheets_oauth import get_authorized_gspread_client
@@ -25,7 +26,8 @@ SPREADSHEET_ID = "1F0l6FMjXvKXAR9WyDvxEWcRvji-TaJbBim_G12TJ2Pw"
 CONFIG_SHEET_TITLE = "설정"
 OUTPUT_ROOT = Path(__file__).resolve().parent / "output" / "detail-preview"
 VOID_TAGS = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"}
-ZERO_WIDTH = re.compile("[\u200b\u200c\u200d\ufeff]")
+# ZWJ/ZWNJ는 이모지 조합과 문자 모양에 필요하므로 제거하지 않는다.
+ZERO_WIDTH = re.compile("[\u200b\ufeff]")
 
 
 class Node:
@@ -84,55 +86,63 @@ def node_text(node):
 
 
 def inline_html(node):
-    parts = []
-    for child in node.children:
-        if isinstance(child, str):
-            parts.append(html.escape(ZERO_WIDTH.sub("", child)))
-        elif child.tag in {"b", "strong"}:
-            parts.append(f"<strong>{inline_html(child)}</strong>")
-        elif child.tag in {"i", "em"}:
-            parts.append(f"<em>{inline_html(child)}</em>")
-        elif child.tag == "br":
-            parts.append("<br>")
-        elif child.tag == "a":
-            href = child.attrs.get("href", "").strip()
+    return "".join(render_text_node(child) for child in node.children)
+
+
+def render_text_node(node):
+    """문단/하위 목록의 경계를 유지하면서 SmartEditor 전용 래퍼를 벗긴다."""
+    if isinstance(node, str):
+        return html.escape(ZERO_WIDTH.sub("", node))
+    if node.tag in {"script", "style"}:
+        return ""
+    if node.tag == "br":
+        return "<br>"
+    content = inline_html(node)
+    tag = {"b": "strong", "i": "em", "strike": "s"}.get(node.tag, node.tag)
+    style = source_text_style(node.attrs)
+    extra = ""
+    if tag == "a":
+        href = node.attrs.get("href", "").strip()
+        try:
             parsed_href = urlparse(href)
-            if parsed_href.scheme in {"http", "https"} and parsed_href.netloc:
-                parts.append(
-                    f'<a href="{html.escape(href, quote=True)}" target="_blank" rel="noopener noreferrer">'
-                    f"{inline_html(child)}</a>"
-                )
-            else:
-                parts.append(inline_html(child))
-        else:
-            parts.append(inline_html(child))
-    return "".join(parts)
-
-
-def has_ancestor(node, tags):
-    parent = node.parent
-    while parent:
-        if parent.tag in tags:
-            return True
-        parent = parent.parent
-    return False
+        except ValueError:
+            return content
+        if parsed_href.scheme not in {"http", "https"} or not parsed_href.netloc:
+            return content
+        extra = f' href="{html.escape(href, quote=True)}" target="_blank" rel="noopener noreferrer"'
+    elif tag in {"ol", "li"}:
+        key = "start" if tag == "ol" else "value"
+        value = node.attrs.get(key, "")
+        if re.fullmatch(r"-?\d+", value):
+            extra += f' {key}="{value}"'
+        if tag == "ol":
+            if "reversed" in node.attrs:
+                extra += " reversed"
+            marker = {"1": "decimal", "a": "lower-alpha", "A": "upper-alpha", "i": "lower-roman", "I": "upper-roman"}.get(node.attrs.get("type"))
+            if marker and "list-style-type" not in style:
+                style += f";list-style-type:{marker}"
+    if tag == "li":
+        # SmartEditor는 들여쓰기만 있는 상위 li 아래에 실제 목록을 넣기도 한다.
+        nested = any(isinstance(child, Node) and child.tag in {"ul", "ol"} for child in node.children)
+        own_text = any(clean_text(child) if isinstance(child, str) else
+                       (child.tag not in {"ul", "ol"} and node_text(child)) for child in node.children)
+        if nested and not own_text:
+            style += ";list-style-type:none;margin:0"
+    if tag == "p" and not node_text(node) and not any(child.tag == "br" for child in walk(node)):
+        content += "<br>"
+    if tag == "span" and not style:
+        return content
+    if tag in {"p", "ul", "ol", "li", "strong", "em", "u", "s", "span", "a", "sub", "sup", "h1", "h2", "h3", "h4", "h5", "h6"}:
+        return f"<{tag}{extra}{style_attribute(style.strip(';'))}>{content}</{tag}>"
+    # 일반 div 안의 문단은 그대로 재귀 처리하고, div 자체에 의미 있는 서식이 있으면 보존한다.
+    return f"<div{style_attribute(style)}>{content}</div>" if style else content
 
 
 def render_text_component(component):
-    large = any("se-fs-fs24" in classes(node) for node in walk(component))
-    rendered = []
-    for node in walk(component):
-        if node.tag in {"ul", "ol"} and not has_ancestor(node, {"ul", "ol"}):
-            items = [child for child in node.children if isinstance(child, Node) and child.tag == "li"]
-            item_html = "".join(f"<li>{inline_html(item).strip()}</li>" for item in items if node_text(item))
-            if item_html:
-                rendered.append(f"<{node.tag}>{item_html}</{node.tag}>")
-        elif node.tag == "p" and not has_ancestor(node, {"li"}) and node_text(node):
-            tag = "h1" if large and not rendered else "p"
-            rendered.append(f"<{tag}>{inline_html(node).strip()}</{tag}>")
-    if not rendered and node_text(component):
-        rendered.append(f"<p>{html.escape(node_text(component))}</p>")
-    return "\n".join(rendered)
+    rendered = render_text_node(component).strip()
+    if rendered and not any(node.tag in {"p", "ul", "ol", "h1", "h2", "h3", "h4", "h5", "h6"} for node in walk(component)):
+        rendered = f"<p>{rendered}</p>"
+    return rendered
 
 
 def render_table_component(component):
@@ -437,7 +447,7 @@ def build_preview(product_no, product):
 </head>
 <body>
   <div class="notice">로컬 변환 미리보기 · 네이버/쿠팡 상품에는 반영되지 않았습니다.</div>
-  <main>{''.join(body)}</main>
+  <main>{portable_text_html(''.join(body))}</main>
 </body>
 </html>
 """

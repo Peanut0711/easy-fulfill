@@ -247,6 +247,8 @@ def write_cdn_html(output_dir: Path, mapping: list[dict]):
 
 
 def render_paste_html(preview_html: str):
+    from detail_text_style import portable_text_html
+
     match = re.search(r"<main>(.*)</main>", preview_html, re.DOTALL)
     if not match:
         raise RuntimeError("미리보기 본문을 찾지 못했습니다.")
@@ -289,7 +291,8 @@ def render_paste_html(preview_html: str):
     body = body.replace('<th style="', '<th style="background:#f5f5f5;font-weight:700;')
     for index, group in enumerate(image_groups):
         body = body.replace(f'<!--easy-fulfill-image-group-{index}-->', group)
-    return f'<div style="max-width:780px;margin:0 auto;color:#222;font-family:Arial,Malgun Gothic,sans-serif">{body}</div>\n'
+    body = portable_text_html(body)
+    return f'<div style="max-width:780px;margin:0 auto;color:#222;font-family:Arial,Malgun Gothic,sans-serif;font-size:18px;line-height:1.75;text-align:left">{body}</div>\n'
 
 
 def wait_for_login(page):
