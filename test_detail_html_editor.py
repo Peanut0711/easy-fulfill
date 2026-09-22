@@ -17,10 +17,10 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--disable-gpu")
 
 from PySide6.QtCore import Qt, QUrl, QEvent, QCoreApplication
-from PySide6.QtGui import QAction, QColor, QFont, QFontDatabase, QKeySequence, QTextCursor
+from PySide6.QtGui import QAction, QColor, QFont, QFontDatabase, QKeySequence, QTextCursor, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QDialog, QFrame, QHBoxLayout, QLabel, QMessageBox,
-    QPlainTextEdit, QPushButton, QSpinBox, QSplitter, QTextEdit, QVBoxLayout, QWidget, QDoubleSpinBox,
+    QPlainTextEdit, QPushButton, QSpinBox, QSplitter, QTextEdit, QVBoxLayout, QWidget, QDoubleSpinBox, QColorDialog,
 )
 from PySide6.QtWebEngineCore import QWebEngineSettings
 from PySide6.QtWebEngineWidgets import QWebEngineView
@@ -187,10 +187,59 @@ class DetailEditorTests(unittest.TestCase):
         self.app.processEvents()
         self.assertFalse(self.dialog.bold_button.isEnabled())
         self.assertFalse(self.dialog.font_size.isEnabled())
+        self.assertFalse(self.dialog.color_button.isEnabled())
         self.dialog.add_spacing.click()
         self.wait_preview(1)
         self.assertFalse(self.dialog.bold_button.isEnabled())
         self.assertFalse(self.dialog.apply_font_size.isEnabled())
+        self.assertFalse(self.dialog.color_button.isEnabled())
+
+    def test_text_color_updates_nested_multi_selection_copy_save_and_undo(self):
+        self.dialog.show()
+        source = ('<div><h2 style="text-align:right;color:blue">제목</h2>'
+                  '<p style="font-size:22px;line-height:1.75;background-color:yellow">본문 '
+                  '<strong style="color:red !important">굵게 <span style="color:green">강조</span></strong>'
+                  '<a href="https://example.com">링크</a></p><p>변경 제외</p></div>')
+        self.dialog.editor.setPlainText(source)
+        self.select(0, 1)
+        self.wait_font_state()
+        self.assertIn('색상 혼합', self.dialog.font_status.text())
+        with patch.object(QColorDialog, 'getColor', return_value=QColor('#336699')) as choose:
+            self.dialog.color_button.click()
+        choose.assert_called_once()
+        self.finish_format_edit()
+        self.assertEqual(self.javascript("[...document.querySelectorAll('h2,p:first-of-type,strong,span,a')].map(e=>getComputedStyle(e).color)"), ['rgb(51, 102, 153)'] * 5)
+        self.assertEqual(self.javascript("getComputedStyle(document.querySelector('p')).backgroundColor"), 'rgb(255, 255, 0)')
+        self.assertEqual(self.javascript("getComputedStyle(document.querySelector('p')).fontSize"), '22px')
+        self.assertEqual(self.javascript("getComputedStyle(document.querySelector('h2')).textAlign"), 'right')
+        self.assertNotIn('색상 혼합', self.dialog.font_status.text())
+        self.assertIn('#336699', self.dialog.color_button.toolTip())
+        changed = self.dialog.editor.toPlainText()
+        self.assertIn('href="https://example.com"', changed)
+        self.assertIn('<p>변경 제외</p>', changed)
+        next(button for button in self.dialog.findChildren(QPushButton) if button.text() == 'HTML 복사').click()
+        self.assertEqual(QApplication.clipboard().text(), changed)
+        with patch.object(QMessageBox, 'information'):
+            self.dialog._save()
+        self.assertEqual(self.path.read_text(encoding='utf-8'), changed)
+        self.dialog._undo_editor()
+        self.wait_font_state()
+        self.assertEqual(self.dialog.editor.toPlainText(), source)
+        self.assertIn('색상 혼합', self.dialog.font_status.text())
+
+    def test_text_color_picker_starts_with_inherited_color_and_cancel_is_noop(self):
+        self.dialog.show()
+        source = '<div style="color:#123456"><p>상속된 색상</p></div>'
+        self.dialog.editor.setPlainText(source)
+        self.select(0)
+        self.wait_font_state()
+        history = list(self.dialog._block_edit_history)
+        with patch.object(QColorDialog, 'getColor', return_value=QColor()) as choose:
+            self.dialog.color_button.click()
+        self.assertEqual(choose.call_args.args[0].name(), '#123456')
+        self.assertEqual(choose.call_args.args[3], QColorDialog.ColorDialogOption.DontUseNativeDialog)
+        self.assertEqual(self.dialog.editor.toPlainText(), source)
+        self.assertEqual(self.dialog._block_edit_history, history)
 
     def test_table_text_format_and_save_reload(self):
         self.dialog.show()

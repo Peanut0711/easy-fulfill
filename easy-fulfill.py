@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QFileDialog, QMessageB
                                QProgressBar, QProgressDialog, QFrame, QGraphicsOpacityEffect, QListWidget,
                               QAbstractItemView, QGroupBox, QCheckBox, QSpinBox, QMenu,
                               QStyle, QProxyStyle, QPlainTextEdit, QFormLayout,
-                              QSplitter, QTextEdit, QComboBox, QDoubleSpinBox)
+                              QSplitter, QTextEdit, QComboBox, QDoubleSpinBox, QColorDialog)
 from PySide6.QtUiTools import QUiLoader
 from PySide6.QtCore import (
     QFile,
@@ -1582,12 +1582,37 @@ class DetailHtmlEditorDialog(QDialog):
         text_format.addWidget(self.font_size)
         self.apply_font_size = QPushButton("크기 적용")
         text_format.addWidget(self.apply_font_size)
+        self.color_button = QPushButton("다른 색상…")
+        self.color_button.setToolTip("선택한 텍스트 전체의 색상을 선택하거나 HTML 색상 코드(#RRGGBB)를 입력합니다.")
         self.font_status = QLabel("텍스트를 선택하세요")
         text_format.addWidget(self.font_status)
         text_format.addStretch(1)
         preview_layout.addLayout(text_format)
+        color_row = QHBoxLayout()
+        color_row.addWidget(QLabel("글자색"))
+        self.color_palette_buttons = {}
+        for name, value in [("검정", "#222222"), ("진회색", "#666666"), ("빨강", "#D32F2F"),
+                            ("주황", "#E65100"), ("파랑", "#1565C0"), ("초록", "#2E7D32")]:
+            chip = QPushButton()
+            chip.setFixedSize(26, 24)
+            chip.setCheckable(True)
+            chip.setAutoDefault(False)
+            chip.setToolTip(f"{name} {value} · 선택한 텍스트에 적용")
+            chip.setAccessibleName(f"{name} 글자색 {value}")
+            chip.setStyleSheet(
+                f"QPushButton {{ background-color:{value}; color:white; border:2px solid transparent; border-radius:3px; }}"
+                "QPushButton:hover, QPushButton:focus { border-color:#94a3b8; }"
+                "QPushButton:checked { border-color:#111827; }"
+                "QPushButton:disabled { background-color:#e5e7eb; border-color:#d1d5db; }")
+            chip.clicked.connect(lambda _checked=False, color=value: self._apply_text_property("color", color))
+            self.color_palette_buttons[value.lower()] = chip
+            color_row.addWidget(chip)
+        color_row.addWidget(self.color_button)
+        color_row.addStretch(1)
+        preview_layout.addLayout(color_row)
         self.bold_button.clicked.connect(self._toggle_bold)
         self.apply_font_size.clicked.connect(self._apply_font_size)
+        self.color_button.clicked.connect(self._choose_text_color)
         self.font_size.valueChanged.connect(lambda value: self.apply_font_size.setEnabled(
             value > 0 and self._font_state is not None and self._preview_ready and not self._alignment_pending))
         self.preview_canvas = QFrame()
@@ -2361,6 +2386,12 @@ class DetailHtmlEditorDialog(QDialog):
         self.bold_button.setChecked(False)
         self.font_size.setEnabled(False)
         self.apply_font_size.setEnabled(False)
+        self.color_button.setEnabled(False)
+        self.color_button.setIcon(QIcon())
+        for chip in self.color_palette_buttons.values():
+            chip.setEnabled(False)
+            chip.setChecked(False)
+            chip.setText("")
         targets = [index for index in self._alignment_targets() if self._block_details[index]["text_nodes"]]
         if not targets:
             self.font_status.setText("텍스트를 선택하세요")
@@ -2380,14 +2411,31 @@ class DetailHtmlEditorDialog(QDialog):
                 return
             weights = {item["bold"] for item in values}
             sizes = {round(item["size"], 1) for item in values}
-            self._font_state = {"bold": weights == {True}}
+            colors = {item["color"] for item in values}
+            color = next(iter(colors)) if len(colors) == 1 else None
+            self._font_state = {"bold": weights == {True}, "color": color}
             self.bold_button.setEnabled(True)
             self.bold_button.setChecked(self._font_state["bold"])
             self.font_size.setEnabled(True)
             self.font_size.setValue(next(iter(sizes)) if len(sizes) == 1 else 0)
             self.apply_font_size.setEnabled(self.font_size.value() > 0)
+            self.color_button.setEnabled(True)
+            current_color = self._qt_text_color(color)
+            for value, chip in self.color_palette_buttons.items():
+                active = current_color.isValid() and current_color.name() == value
+                chip.setEnabled(True)
+                chip.setChecked(active)
+                chip.setText("●" if active else "")
+            if current_color.isValid():
+                swatch = QPixmap(14, 14)
+                swatch.fill(current_color)
+                self.color_button.setIcon(QIcon(swatch))
+            self.color_button.setToolTip(
+                f'현재 글자색: {current_color.name() if current_color.isValid() else "혼합"}\n'
+                '선택한 텍스트 전체에 적용합니다. 색상 선택창에서 HTML 색상 코드(#RRGGBB)를 입력할 수 있습니다.')
             self.font_status.setText(" · ".join(
-                label for mixed, label in [(len(weights) > 1, "굵기 혼합"), (len(sizes) > 1, "크기 혼합")] if mixed
+                label for mixed, label in [(len(weights) > 1, "굵기 혼합"), (len(sizes) > 1, "크기 혼합"),
+                                          (len(colors) > 1, "색상 혼합")] if mixed
             ) or "선택한 텍스트 전체에 적용")
 
         self.preview.page().runJavaScript("""
@@ -2400,7 +2448,7 @@ class DetailHtmlEditorDialog(QDialog):
                     const node = walker.currentNode;
                     if (!node.textContent.trim() || node.parentElement.closest('script,style')) continue;
                     const style = getComputedStyle(node.parentElement);
-                    values.push({bold: parseFloat(style.fontWeight) >= 600, size: parseFloat(style.fontSize)});
+                    values.push({bold: parseFloat(style.fontWeight) >= 600, size: parseFloat(style.fontSize), color:style.color});
                 }
                 return values;
             }))(%s));
@@ -2414,10 +2462,26 @@ class DetailHtmlEditorDialog(QDialog):
         if self._font_state is not None and self.font_size.value() > 0:
             self._apply_text_property("font-size", f"{self.font_size.value():g}px")
 
+    @staticmethod
+    def _qt_text_color(css_color):
+        if not css_color:
+            return QColor()
+        match = re.fullmatch(r'rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*[\d.]+)?\s*\)', css_color)
+        return QColor(*(int(value) for value in match.groups())) if match else QColor(css_color)
+
+    def _choose_text_color(self):
+        if self._font_state is None or not self._preview_ready or self._alignment_pending:
+            return
+        initial = self._qt_text_color(self._font_state.get("color"))
+        color = QColorDialog.getColor(initial if initial.isValid() else QColor("#222222"), self,
+                                      "글자색 선택", QColorDialog.ColorDialogOption.DontUseNativeDialog)
+        if color.isValid():
+            self._apply_text_property("color", color.name())
+
     def _apply_text_property(self, name, value):
         if not self._preview_ready or self._alignment_pending:
             return
-        # strong/b와 span의 개별 지정도 바꿔 선택한 텍스트 전체에 굵기·크기를 적용한다.
+        # 중첩 태그의 개별 지정도 바꿔 선택한 텍스트 전체에 굵기·크기·색상을 적용한다.
         nodes = {node["open_range"]: node for index in self._alignment_targets()
                  for node in self._block_details[index]["text_nodes"]}
         details = [nodes[key] for key in sorted(nodes)]
