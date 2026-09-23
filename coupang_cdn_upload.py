@@ -75,25 +75,40 @@ def save_coupang_session(context, page):
         raise RuntimeError("쿠팡 로그인 세션 저장은 Windows에서만 지원합니다.")
     state = context.storage_state()
     origin = urlparse(page.url)
-    if origin.scheme == "https" and origin.hostname and origin.hostname.endswith("coupang.com"):
-        state["easyFulfillSessionStorage"] = {
-            f"{origin.scheme}://{origin.netloc}": page.evaluate("Object.fromEntries(Object.entries(sessionStorage))")
-        }
+    # 숨김 업로드는 about:blank에서 끝날 수 있어 이전 탭의 sessionStorage를 보존한다.
+    if AUTH_STATE_PATH.exists():
+        try:
+            previous = json.loads(_unprotect_for_current_windows_user(AUTH_STATE_PATH.read_bytes()).decode("utf-8"))
+            state["easyFulfillSessionStorage"] = previous.get("easyFulfillSessionStorage", {})
+        except Exception:
+            pass
+    if origin.scheme == "https" and (origin.hostname == "coupang.com" or (origin.hostname or "").endswith(".coupang.com")):
+        state.setdefault("easyFulfillSessionStorage", {})[f"{origin.scheme}://{origin.netloc}"] = page.evaluate(
+            "Object.fromEntries(Object.entries(sessionStorage))")
     AUTH_STATE_PATH.write_bytes(_protect_for_current_windows_user(
         json.dumps(state, ensure_ascii=False).encode("utf-8")
     ))
 
 
 def restore_coupang_session(context):
-    """새 Chromium 실행 시 이전 로그인 쿠키를 먼저 되살린다."""
+    """프로필의 현재 값을 보존하고, 누락된 로그인 정보만 복원한다."""
     if not AUTH_STATE_PATH.exists():
         return False
     try:
         state = json.loads(_unprotect_for_current_windows_user(AUTH_STATE_PATH.read_bytes()).decode("utf-8"))
-        cookies = state.get("cookies", [])
-        for cookie in cookies:
+        cookie_key = lambda item: (item["name"], item["domain"], item["path"])
+        current_keys = {cookie_key(item) for item in context.cookies()}
+        cookies = []
+        for saved in state.get("cookies", []):
+            if cookie_key(saved) in current_keys:
+                continue
+            expires = saved.get("expires", -1)
+            if expires >= 0 and expires <= time.time():
+                continue
+            cookie = dict(saved)
             if cookie.get("expires", -1) < 0:
                 cookie.pop("expires", None)
+            cookies.append(cookie)
         if cookies:
             context.add_cookies(cookies)
         for origin_state in state.get("origins", []):
@@ -102,17 +117,16 @@ def restore_coupang_session(context):
             if local_storage:
                 values = [(item["name"], item["value"]) for item in local_storage]
                 context.add_init_script(
-                    f"if (location.origin === {json.dumps(origin)}) for (const [key, value] of {json.dumps(values)}) localStorage.setItem(key, value);"
+                    f"if (location.origin === {json.dumps(origin)}) for (const [key, value] of {json.dumps(values)}) if (localStorage.getItem(key) === null) localStorage.setItem(key, value);"
                 )
         for origin, values in state.get("easyFulfillSessionStorage", {}).items():
             if values:
                 context.add_init_script(
-                    f"if (location.origin === {json.dumps(origin)}) for (const [key, value] of {json.dumps(list(values.items()))}) sessionStorage.setItem(key, value);"
+                    f"if (location.origin === {json.dumps(origin)}) for (const [key, value] of {json.dumps(list(values.items()))}) if (sessionStorage.getItem(key) === null) sessionStorage.setItem(key, value);"
                 )
         return bool(cookies)
     except Exception:
-        AUTH_STATE_PATH.unlink(missing_ok=True)
-        print("저장된 쿠팡 로그인 세션을 복원하지 못했습니다. 새 로그인이 필요합니다.")
+        print("저장된 쿠팡 로그인 정보를 복원하지 못했습니다. 기존 브라우저 프로필로 권한을 확인합니다.")
         return False
 
 
@@ -160,12 +174,22 @@ def _read_upload_response(response):
     return payload
 
 
-def upload_images(context, output_dir: Path, report: dict):
+def cached_image_mapping(output_dir: Path):
     progress_path = output_dir / "coupang-cdn-progress.json"
     previous = []
     if progress_path.exists():
         previous = json.loads(progress_path.read_text(encoding="utf-8"))
-    previous_by_source = {(item.get("source"), item.get("file")): item for item in previous}
+    return {(item.get("source"), item.get("file")): item for item in previous if item.get("cdnUrl")}
+
+
+def needs_image_upload(output_dir: Path, report: dict):
+    cached = cached_image_mapping(output_dir)
+    return any((item.get("source"), item.get("file")) not in cached for item in report["images"])
+
+
+def upload_images(context, output_dir: Path, report: dict):
+    progress_path = output_dir / "coupang-cdn-progress.json"
+    previous_by_source = cached_image_mapping(output_dir)
     mapping = []
     for item in report["images"]:
         saved = previous_by_source.get((item.get("source"), item.get("file")))
@@ -173,6 +197,8 @@ def upload_images(context, output_dir: Path, report: dict):
             mapping.append(saved)
             print(f"[{item['index']:02d}/{len(report['images']):02d}] 재사용 {saved['cdnUrl']}")
             continue
+        if context is None:
+            raise RuntimeError("새 이미지 업로드에 필요한 쿠팡 연결이 없습니다.")
         image_path = output_dir / "images" / item["file"]
         upload_path = prepare_image_for_upload(image_path, output_dir / "upload-images", item["index"])
         response = context.request.post(
@@ -299,8 +325,12 @@ def wait_for_login(page):
     if _has_active_upload_session(page):
         print("쿠팡 WING 업로드 로그인 세션이 확인되었습니다.")
         return
-    print("열린 Chrome 창에서 쿠팡 WING에 로그인해 주세요. 로그인되면 자동으로 업로드를 시작합니다.")
+    # 저장된 SSO 정보로 자동 복귀할 수 있으므로 먼저 WING으로 이동한다.
     page.goto(WING_HOME, wait_until="domcontentloaded", timeout=30_000)
+    if _is_wing_seller_url(page.url) and _has_active_upload_session(page):
+        print("쿠팡 WING 업로드 로그인 세션이 확인되었습니다.")
+        return
+    print("프로그램 전용 WING 브라우저에서 로그인해 주세요. 일반 Chrome 로그인과는 별도이며, 로그인되면 작업을 계속합니다.")
     deadline = time.monotonic() + 300
     checked_url = None
     while True:
@@ -318,23 +348,47 @@ def wait_for_login(page):
 
 
 def _has_active_upload_session(page):
-    """업로드 경로의 JSON 응답으로 인증을 확인하고, 로그인 리다이렉트는 거부한다."""
+    """로그인 필요만 False로 반환하고, 차단·통신 오류는 별도로 전달한다."""
     try:
         # 이 URL은 파일 없이 GET하면 WING이 파일 오류 JSON을 돌려준다. 탭 이동으로
         # 확인하면 그 JSON이 사용자에게 노출되므로, 동일한 BrowserContext의 요청 API로
         # 최종 리다이렉트 URL만 확인한다. BrowserContext.request는 쿠키를 공유한다.
         response = page.context.request.get(UPLOAD_URL, timeout=30_000)
     except Exception as error:
-        print(f"[로그인 확인] 업로드 권한 확인 요청 실패: {error}")
-        return False
+        raise RuntimeError("[로그인 확인] 통신 오류로 업로드 권한을 확인하지 못했습니다. 네트워크 상태를 확인한 뒤 다시 시도하세요.") from error
+    try:
+        status = _upload_session_status(response)
+        if status == "active":
+            return True
+        # 인증 리다이렉트 URL의 쿼리에는 인증 상태값이 들어갈 수 있다.
+        parsed = urlparse(response.url)
+        detail = f"HTTP {response.status}; URL={parsed.scheme}://{parsed.netloc}{parsed.path}"
+        if status == "login_required":
+            print(f"[로그인 확인] 프로그램 전용 WING 세션에 로그인이 필요합니다: {detail}")
+            return False
+        reasons = {
+            "blocked": "접근 차단 또는 요청 제한으로 권한을 확인하지 못했습니다. 로그인 만료로 판단하지 않습니다",
+            "server_error": "쿠팡 서버 오류로 권한을 확인하지 못했습니다. 잠시 후 다시 시도하세요",
+            "unknown": "예상하지 못한 응답으로 권한을 확인하지 못했습니다. 로그인 만료로 판단하지 않습니다",
+        }
+        raise RuntimeError(f"[로그인 확인] {reasons[status]}: {detail}")
+    finally:
+        response.dispose()
+
+
+def _upload_session_status(response):
+    if response.status in (403, 429):
+        return "blocked"
+    if response.status >= 500:
+        return "server_error"
     if _is_active_upload_response(response):
-        return True
-    print(
-        "[로그인 확인] 업로드 권한이 확인되지 않았습니다: "
-        f"HTTP {response.status} {response.status_text}; "
-        f"Content-Type={response.headers.get('content-type', '(없음)')}; URL={response.url}"
-    )
-    return False
+        return "active"
+    parsed = urlparse(response.url)
+    login_url = (parsed.hostname == "xauth.coupang.com" or
+                 (parsed.hostname == "wing.coupang.com" and parsed.path.startswith("/sso/")))
+    if response.status == 401 or (200 <= response.status < 400 and login_url):
+        return "login_required"
+    return "unknown"
 
 
 def _is_active_upload_response(response):
@@ -343,7 +397,8 @@ def _is_active_upload_response(response):
     upload_url = urlparse(UPLOAD_URL)
     content_type = response.headers.get("content-type", "").lower()
     return (
-        response.status not in (401, 403)
+        response.status in (200, 400)
+        and final_url.scheme == "https"
         and final_url.hostname == upload_url.hostname
         and final_url.path == upload_url.path
         and "json" in content_type
@@ -377,20 +432,28 @@ def launch_coupang_context(playwright, headless=False):
 def launch_coupang_upload_context(playwright):
     """저장 세션으로는 숨김 업로드하고, 로그인이 필요할 때만 창을 연다."""
     context = launch_coupang_context(playwright, headless=True)
-    restore_coupang_session(context)
-    page = context.pages[0] if context.pages else context.new_page()
-    if _has_active_upload_session(page):
-        print("저장된 쿠팡 로그인 세션으로 숨김 업로드를 진행합니다.")
-        return context, page
-
+    try:
+        restore_coupang_session(context)
+        page = context.pages[0] if context.pages else context.new_page()
+        if _has_active_upload_session(page):
+            save_coupang_session(context, page)
+            print("저장된 쿠팡 로그인 세션으로 숨김 업로드를 진행합니다.")
+            return context, page
+    except Exception:
+        context.close()
+        raise
     context.close()
-    print("저장된 쿠팡 로그인 세션에 업로드 권한이 없습니다. WING 창에서 로그인해 주세요.")
+    print("프로그램 전용 WING 브라우저에서 저장된 로그인 정보를 다시 확인합니다.")
     context = launch_coupang_context(playwright)
-    restore_coupang_session(context)
-    page = context.pages[0] if context.pages else context.new_page()
-    wait_for_login(page)
-    save_coupang_session(context, page)
-    return context, page
+    try:
+        restore_coupang_session(context)
+        page = context.pages[0] if context.pages else context.new_page()
+        wait_for_login(page)
+        save_coupang_session(context, page)
+        return context, page
+    except Exception:
+        context.close()
+        raise
 
 
 def self_test():
@@ -401,7 +464,8 @@ def self_test():
     assert "grid-2" not in paste_html and 'src="a.jpg"' in paste_html
     quote_html = '<p>케이블 색상은 바뀔 수 있습니다.</p><p>1번 핀이 3번 핀에 연결되는 케이블입니다.</p>'
     paste_html = render_paste_html(f'<main><blockquote class="quote-block">{quote_html}</blockquote></main>')
-    assert quote_html in paste_html and "border-left:5px solid #555" in paste_html
+    assert "케이블 색상은 바뀔 수 있습니다." in paste_html and "border-left:5px solid #555" in paste_html
+    assert "1번 핀이 3번 핀에 연결되는 케이블입니다." in paste_html
     assert 'class="quote-block"' not in paste_html
     assert _redact_upload_response_text('token="secret"\nerror') == 'token="[REDACTED]" error'
     assert _is_wing_url(WING_HOME) and not _is_wing_url("https://xauth.coupang.com/login")
@@ -448,16 +512,18 @@ def main():
         parser.error("실제 CDN 업로드는 --upload 옵션으로만 실행합니다.")
 
     output_dir, report = load_report(args.product_no)
-    if not report.get("images"):
-        raise RuntimeError("업로드할 이미지가 없습니다.")
-    with sync_playwright() as playwright:
-        context, page = launch_coupang_upload_context(playwright)
-        try:
-            mapping = upload_images(context, output_dir, report)
-            html_path, map_path, paste_path = write_cdn_html(output_dir, mapping)
-            print(json.dumps({"preview": str(html_path), "mapping": str(map_path), "pasteHtml": str(paste_path)}, ensure_ascii=False))
-        finally:
-            context.close()
+    if needs_image_upload(output_dir, report):
+        with sync_playwright() as playwright:
+            context, page = launch_coupang_upload_context(playwright)
+            try:
+                mapping = upload_images(context, output_dir, report)
+            finally:
+                context.close()
+    else:
+        print("[이미지 확인] 새 이미지가 없어 로그인 없이 HTML을 생성합니다.")
+        mapping = upload_images(None, output_dir, report)
+    html_path, map_path, paste_path = write_cdn_html(output_dir, mapping)
+    print(json.dumps({"preview": str(html_path), "mapping": str(map_path), "pasteHtml": str(paste_path)}, ensure_ascii=False))
 
 
 if __name__ == "__main__":

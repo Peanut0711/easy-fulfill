@@ -5366,11 +5366,9 @@ class MainWindow(QMainWindow):
                     profile = Path(__file__).resolve().parent / "output" / "coupang-browser-profile"
                     profile.mkdir(parents=True, exist_ok=True)
                     (profile / "seller-name.txt").write_text(seller, encoding="utf-8")
-                self.label_detail_session.setText(
-                    f"저장된 로그인 세션: {seller}" if seller else "저장된 로그인 세션 있음"
-                )
+                self.label_detail_session.setText(self._detail_session_label())
             except (json.JSONDecodeError, IndexError):
-                self.label_detail_session.setText("저장된 로그인 세션 있음")
+                self.label_detail_session.setText(self._detail_session_label())
         elif title == "쿠팡 로그인 세션 삭제" and exit_code == 0:
             self.label_detail_session.setText("저장된 로그인 세션 없음")
         self._detail_log(f"[{title}] {'완료' if exit_code == 0 else f'실패 ({exit_code})'}")

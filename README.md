@@ -54,7 +54,9 @@ python naver_to_coupang_html.py 13204504134 --prepare-only
 python naver_to_coupang_html.py --list product_numbers.txt --upload
 ```
 
-처음 실행 시 열린 전용 쿠팡 WING 브라우저에서 로그인합니다. 로그인 세션은 로컬 `output/coupang-browser-profile`에만 저장됩니다. 완료된 상품별 `output/detail-preview/<상품번호>/coupang-paste.html` 파일의 내용을 쿠팡 **기본 등록 → HTML 작성**에 붙여 넣으면 됩니다.
+새로 업로드할 이미지가 있을 때 전용 쿠팡 WING 브라우저의 로그인 권한을 확인합니다. 기존 CDN 이미지만 재사용하거나 이미지가 없으면 브라우저·로그인 없이 HTML을 생성합니다. 로그인 세션은 로컬 `output/coupang-browser-profile`에만 저장되며, 일반 Chrome 로그인과는 별도입니다. 완료된 상품별 `output/detail-preview/<상품번호>/coupang-paste.html` 파일의 내용을 쿠팡 **기본 등록 → HTML 작성**에 붙여 넣으면 됩니다.
+
+화면의 `저장된 로그인 정보`는 로컬 저장 여부를 나타냅니다. 새 이미지 업로드 시 로그인 필요 응답과 접근 차단(403)·요청 제한(429)·서버/통신 오류를 구분하며, 차단이나 통신 오류만으로 재로그인을 요구하지 않습니다. 여러 상품 처리 중 연결에 실패해도 CDN 이미지를 재사용할 수 있는 상품의 HTML은 계속 생성합니다.
 
 기존 쿠팡 상품의 옵션별 이미지 상세를 공용 HTML로 바꾸는 시험 도구는 다음처럼 실행합니다. 기본 실행은 HTML을 화면에 채운 뒤 저장하지 않고 종료합니다.
 

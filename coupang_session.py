@@ -45,8 +45,9 @@ def main():
 
     with sync_playwright() as playwright:
         context = coupang_cdn_upload.launch_coupang_context(playwright)
-        page = context.pages[0] if context.pages else context.new_page()
         try:
+            coupang_cdn_upload.restore_coupang_session(context)
+            page = context.pages[0] if context.pages else context.new_page()
             coupang_cdn_upload.wait_for_login(page)
             coupang_cdn_upload.save_coupang_session(context, page)
             print(json.dumps({"connected": True, "seller": seller_name(page)}, ensure_ascii=False))

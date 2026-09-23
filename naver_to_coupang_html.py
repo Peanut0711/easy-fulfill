@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from contextlib import ExitStack
 from datetime import datetime
 from pathlib import Path
 
@@ -75,23 +76,34 @@ def prepare(numbers):
 
 def upload(prepared, results):
     sync_playwright, coupang_cdn_upload = load_coupang_upload_modules()
-    with sync_playwright() as playwright:
-        context, page = coupang_cdn_upload.launch_coupang_upload_context(playwright)
-        try:
-            for number, report in prepared:
-                try:
-                    output_dir = OUTPUT_ROOT / number
-                    mapping = coupang_cdn_upload.upload_images(context, output_dir, report)
-                    preview, mapping_path, paste_html = coupang_cdn_upload.write_cdn_html(output_dir, mapping)
-                    result = next(item for item in results if item["productNo"] == number)
-                    result.update({"status": "completed", "cdnPreview": str(preview), "cdnMapping": str(mapping_path), "pasteHtml": str(paste_html)})
-                    print(f"[완료] {number} · {paste_html}")
-                except Exception as error:
-                    result = next(item for item in results if item["productNo"] == number)
-                    result.update({"status": "upload_failed", "error": str(error)})
-                    print(f"[업로드 실패] {number}: {error}", file=sys.stderr)
-        finally:
-            context.close()
+    context = None
+    connection_error = None
+    with ExitStack() as stack:
+        for number, report in prepared:
+            result = next(item for item in results if item["productNo"] == number)
+            try:
+                output_dir = OUTPUT_ROOT / number
+                needs_upload = coupang_cdn_upload.needs_image_upload(output_dir, report)
+                if needs_upload and context is None:
+                    if connection_error is not None:
+                        raise connection_error
+                    try:
+                        playwright = stack.enter_context(sync_playwright())
+                        context, page = coupang_cdn_upload.launch_coupang_upload_context(playwright)
+                        stack.callback(context.close)
+                    except Exception as error:
+                        # 동일 배치에서 로그인 창을 반복해서 열지 않는다.
+                        connection_error = error
+                        raise
+                if not needs_upload:
+                    print(f"[이미지 확인] {number} · 새 이미지가 없어 로그인 없이 HTML을 생성합니다.")
+                mapping = coupang_cdn_upload.upload_images(context if needs_upload else None, output_dir, report)
+                preview, mapping_path, paste_html = coupang_cdn_upload.write_cdn_html(output_dir, mapping)
+                result.update({"status": "completed", "cdnPreview": str(preview), "cdnMapping": str(mapping_path), "pasteHtml": str(paste_html)})
+                print(f"[완료] {number} · {paste_html}")
+            except Exception as error:
+                result.update({"status": "upload_failed", "error": str(error)})
+                print(f"[업로드 실패] {number}: {error}", file=sys.stderr)
 
 
 def self_test():
