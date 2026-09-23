@@ -5,6 +5,19 @@ import re
 from html.parser import HTMLParser
 
 
+# 장식용 그림문자는 제거하되 사양의 ×, ≥, ±, °, Ω와 일반 글머리표는 유지한다.
+_DECORATIVE_ICONS = re.compile(
+    r"[\U0001f300-\U0001faff\U0001f1e6-\U0001f1ff\u2600-\u27bf]"
+    r"(?:[\ufe0e\ufe0f\u200d\U000e0020-\U000e007f]*"
+    r"[\U0001f300-\U0001faff\U0001f1e6-\U0001f1ff\u2600-\u27bf])*"
+    r"[\ufe0e\ufe0f\u200d\U000e0020-\U000e007f]*[ \t]*"
+)
+
+
+def remove_decorative_icons(value):
+    return _DECORATIVE_ICONS.sub("", value)
+
+
 def source_text_style(attrs):
     """SmartEditor의 텍스트 관련 속성만 옮긴다. 임의 CSS/URL은 복사하지 않는다."""
     styles = {}
@@ -44,9 +57,10 @@ def style_attribute(value):
 class _PortableTextStyles(HTMLParser):
     """태그 위치만 수정해 이미지/영상/표 본문과 기존 속성은 그대로 보존한다."""
 
-    def __init__(self, source):
+    def __init__(self, source, style_text=True):
         super().__init__(convert_charrefs=False)
         self.source = source
+        self.style_text = style_text
         self.offsets = [0]
         self.offsets.extend(match.end() for match in re.finditer("\n", source))
         self.edits = []
@@ -84,7 +98,7 @@ class _PortableTextStyles(HTMLParser):
             defaults["text-decoration"] = "line-through"
         elif tag == "a":
             defaults.update(color="#0655ba", **{"text-decoration": "underline"})
-        if defaults:
+        if defaults and self.style_text:
             existing = attributes.get("style") or ""
             keys = {match[1].lower() for match in re.finditer(r"(?:^|;)\s*([\w-]+)\s*:", existing)}
             merged = ";".join(f"{key}:{value}" for key, value in defaults.items() if key not in keys)
@@ -109,9 +123,31 @@ class _PortableTextStyles(HTMLParser):
                 del self.stack[index:]
                 break
 
+    def handle_data(self, data):
+        if any(tag in {"script", "style"} for tag in self.stack):
+            return
+        cleaned = remove_decorative_icons(data)
+        if cleaned != data:
+            line, column = self.getpos()
+            start = self.offsets[line - 1] + column
+            self.edits.append((start, start + len(data), cleaned))
 
-def portable_text_html(source):
-    parser = _PortableTextStyles(source)
+    def handle_charref(self, name):
+        # 기존 HTML의 숫자 참조로 작성된 아이콘도 본문에서 제거한다.
+        if any(tag in {"script", "style"} for tag in self.stack):
+            return
+        token = f"&#{name};"
+        decoded = html.unescape(token)
+        if not remove_decorative_icons(decoded) or decoded in {"\ufe0e", "\ufe0f"}:
+            line, column = self.getpos()
+            start = self.offsets[line - 1] + column
+            length = len(token) if self.source.startswith(token, start) else len(token) - 1
+            self.edits.append((start, start + length, ""))
+
+
+def portable_text_html(source, *, style_text=True):
+    """본문 아이콘을 제거한다. 기존 편집본은 style_text=False로 서식을 보존한다."""
+    parser = _PortableTextStyles(source, style_text=style_text)
     parser.feed(source)
     parser.close()
     for start, end, replacement in reversed(parser.edits):

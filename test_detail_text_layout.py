@@ -64,6 +64,22 @@ class DetailTextLayoutTests(unittest.TestCase):
         self.assertIn('font-size:24px', result)
         self.assertEqual(result.count('<p>'), 2)
 
+    def test_final_html_removes_icons_but_preserves_specs_links_and_layout(self):
+        source = ('<p>🧩 상품 설명</p><p>⚙️ 주요 특징</p><p>📐 주요 사양</p>'
+                  '<p>🔹 기본 정보 🔌 인터페이스 🔧 활용 예시 📦 구성품 ⚠️ 주의사항</p>'
+                  '<p>👩\u200d💻 개발 • 1280 × 720 ≥ 5mil ± 1°C Ω 1D / 2D</p>'
+                  '<ul><li>목록</li></ul><p>&#x1F9E9;&#xFE0F;상품 설명</p>'
+                  '<a href="https://example.com/🧩">자료</a>')
+        result = cdn.render_paste_html('<main>' + source + '</main>')
+        paragraphs = [detail.node_text(n) for n in detail.walk(tree(result)) if n.tag == 'p']
+        self.assertEqual(paragraphs, ['상품 설명', '주요 특징', '주요 사양',
+            '기본 정보 인터페이스 활용 예시 구성품 주의사항',
+            '개발 • 1280 × 720 ≥ 5mil ± 1°C Ω 1D / 2D', '상품 설명'])
+        self.assertIn('href="https://example.com/🧩"', result)
+        self.assertEqual(portable_text_html(result), result)
+        edited = '<p style="color:red">🧩 제목</p><div style="height:24px">&nbsp;</div>'
+        self.assertEqual(portable_text_html(edited, style_text=False), edited.replace('🧩 ', ''))
+
     def test_ordered_list_numbering_and_safe_source_styles(self):
         result = render('<div><ol start="3" reversed type="A"><li value="7"><p>일곱</p></li></ol>'
                         '<p class="se-text-paragraph-align-center" style="line-height:1.5;position:fixed">'
