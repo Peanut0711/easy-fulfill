@@ -322,17 +322,18 @@ def render_paste_html(preview_html: str):
 
 
 def wait_for_login(page):
-    if _has_active_upload_session(page):
-        print("쿠팡 WING 업로드 로그인 세션이 확인되었습니다.")
-        return
-    # 저장된 SSO 정보로 자동 복귀할 수 있으므로 먼저 WING으로 이동한다.
-    page.goto(WING_HOME, wait_until="domcontentloaded", timeout=30_000)
-    if _is_wing_seller_url(page.url) and _has_active_upload_session(page):
-        print("쿠팡 WING 업로드 로그인 세션이 확인되었습니다.")
-        return
-    print("프로그램 전용 WING 브라우저에서 로그인해 주세요. 일반 Chrome 로그인과는 별도이며, 로그인되면 작업을 계속합니다.")
+    # 대화형 로그인은 세션이 전혀 없어도 시작할 수 있어야 한다. 업로드 API를
+    # 먼저 호출하면 로그인 리다이렉트의 403 때문에 로그인 화면조차 열리지 않는다.
+    # 저장 세션의 사전 검사는 launch_coupang_upload_context에서만 수행한다.
+    navigation = page.goto(WING_HOME, wait_until="domcontentloaded", timeout=30_000)
+    if navigation is not None:
+        if navigation.status in (403, 429):
+            raise RuntimeError(f"[로그인 화면] 접근 차단 또는 요청 제한으로 WING 화면을 열지 못했습니다: HTTP {navigation.status}")
+        if navigation.status >= 500:
+            raise RuntimeError(f"[로그인 화면] 쿠팡 서버 오류로 WING 화면을 열지 못했습니다: HTTP {navigation.status}")
     deadline = time.monotonic() + 300
     checked_url = None
+    prompted = False
     while True:
         if time.monotonic() > deadline:
             raise RuntimeError("쿠팡 WING 로그인 대기 시간이 초과되었습니다.")
@@ -343,6 +344,9 @@ def wait_for_login(page):
             # 판매자 WING 화면으로 돌아온 시점에만 한 번 확인한다.
             if _is_wing_seller_url(current_url) and _has_active_upload_session(page):
                 break
+        if not prompted:
+            print("프로그램 전용 WING 브라우저에서 로그인해 주세요. 일반 Chrome 로그인과는 별도이며, 로그인되면 작업을 계속합니다.")
+            prompted = True
         page.wait_for_timeout(1_000)
     print("쿠팡 WING 업로드 로그인 세션이 확인되었습니다.")
 

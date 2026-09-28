@@ -42,7 +42,7 @@ class SessionTests(unittest.TestCase):
         result = response(403, "https://xauth.coupang.com/login?state=private-value", "text/html")
         page.context.request.get.return_value = result
         with self.assertRaisesRegex(RuntimeError, "접근 차단") as raised:
-            cdn.wait_for_login(page)
+            cdn._has_active_upload_session(page)
         self.assertNotIn("private-value", str(raised.exception))
         page.goto.assert_not_called()
         result.dispose.assert_called_once()
@@ -51,15 +51,74 @@ class SessionTests(unittest.TestCase):
         page = Mock()
         page.context.request.get.side_effect = TimeoutError("network")
         with self.assertRaisesRegex(RuntimeError, "통신 오류"):
-            cdn.wait_for_login(page)
+            cdn._has_active_upload_session(page)
         page.goto.assert_not_called()
 
     def test_sso_can_return_without_manual_login(self):
         page = Mock(url=cdn.WING_HOME)
-        with patch.object(cdn, "_has_active_upload_session", side_effect=[False, True]), patch("builtins.print") as log:
+        page.goto.return_value = SimpleNamespace(status=200)
+        with patch.object(cdn, "_has_active_upload_session", return_value=True) as check, patch("builtins.print") as log:
             cdn.wait_for_login(page)
         page.goto.assert_called_once()
+        check.assert_called_once_with(page)
         self.assertFalse(any("로그인해 주세요" in str(call) for call in log.call_args_list))
+
+    def test_fresh_login_opens_screen_before_upload_probe(self):
+        page = Mock(url="about:blank")
+        events = []
+
+        def navigate(*args, **kwargs):
+            events.append("navigate")
+            page.url = "https://wing.coupang.com/sso/login"
+            return SimpleNamespace(status=200)
+
+        def wait(milliseconds):
+            events.append("wait")
+            if events.count("wait") == 2:
+                page.url = cdn.WING_HOME
+
+        def probe(*args, **kwargs):
+            events.append("probe")
+            # 세션 삭제 직후 사전 검사였다면 사용자가 보고한 것과 같은 403이다.
+            if page.url != cdn.WING_HOME:
+                return response(403, "https://wing.coupang.com/sso/login", "text/html")
+            return response()
+
+        page.goto.side_effect = navigate
+        page.wait_for_timeout.side_effect = wait
+        page.context.request.get.side_effect = probe
+        cdn.wait_for_login(page)
+        self.assertEqual(events, ["navigate", "wait", "wait", "probe"])
+
+    def test_login_navigation_errors_remain_errors(self):
+        for status in (403, 429, 503):
+            with self.subTest(status=status):
+                page = Mock(url="https://wing.coupang.com/sso/login")
+                page.goto.return_value = SimpleNamespace(status=status)
+                with self.assertRaisesRegex(RuntimeError, f"로그인 화면.*HTTP {status}"):
+                    cdn.wait_for_login(page)
+                page.context.request.get.assert_not_called()
+                page.wait_for_timeout.assert_not_called()
+
+    def test_upload_block_after_seller_transition_is_not_login_success(self):
+        page = Mock(url=cdn.WING_HOME)
+        page.goto.return_value = SimpleNamespace(status=200)
+        page.context.request.get.return_value = response(403)
+        with self.assertRaisesRegex(RuntimeError, "접근 차단"):
+            cdn.wait_for_login(page)
+        page.goto.assert_called_once()
+        page.wait_for_timeout.assert_not_called()
+
+    def test_login_timeout_does_not_repeat_upload_probe(self):
+        for url, expected_calls in [("https://xauth.coupang.com/login", 0), (cdn.WING_HOME, 1)]:
+            with self.subTest(url=url):
+                page = Mock(url=url)
+                page.goto.return_value = SimpleNamespace(status=200)
+                with patch.object(cdn, "_has_active_upload_session", return_value=False) as check, \
+                     patch.object(cdn.time, "monotonic", side_effect=[0, 1, 2, 301]):
+                    with self.assertRaisesRegex(RuntimeError, "로그인 대기 시간이 초과"):
+                        cdn.wait_for_login(page)
+                self.assertEqual(check.call_count, expected_calls)
 
     def test_context_refresh_fallback_and_cleanup(self):
         for active, failure in [(True, False), (False, False), (False, True)]:
