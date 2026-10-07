@@ -98,9 +98,11 @@ from orders.bulk import (
     build_coupang_orders,
     build_gmarket_orders,
     build_naver_orders,
+    consolidate_11st_orders,
     consolidate_gmarket_orders,
 )
 from orders.invoice import INVOICE_COLUMNS, build_invoice_rows
+from orders.matching import match_naver_invoice_rows
 from post_parcel import (
     ParcelApiError,
     ParcelValidationError,
@@ -7374,7 +7376,8 @@ class MainWindow(QMainWindow):
                     self.current_idx_gmarket = 1
                     self.ui.lineEdit_idx_gmarket.setText(str(self.current_idx_gmarket))
             
-            for customer_name, info in consolidated_orders.items():
+            for info in consolidated_orders.values():
+                customer_name = info['수령인명']
                 # 총판매금액과 총배송비금액 합산
                 total_sale_amount = info.get('총판매금액', 0)
                 total_shipping_amount = info.get('총배송비금액', 0)
@@ -7505,22 +7508,8 @@ class MainWindow(QMainWindow):
 
             self.orders = build_11st_orders(df, required_columns)
 
-            # 같은 주문자(수취인명)로 주문 통합
-            consolidated_orders = {}
-            for order_number, info in self.orders.items():
-                customer_name = info['수취인명']
-
-                if customer_name not in consolidated_orders:
-                    consolidated_orders[customer_name] = {
-                        '수취인명': customer_name,
-                        '주문번호목록': [order_number],
-                        '상품목록': info['상품목록'].copy(),
-                        '총주문금액': info.get('주문금액', 0),
-                    }
-                else:
-                    consolidated_orders[customer_name]['주문번호목록'].append(order_number)
-                    consolidated_orders[customer_name]['상품목록'].extend(info['상품목록'])
-                    consolidated_orders[customer_name]['총주문금액'] += info.get('주문금액', 0)
+            # 작업 목록은 수취인과 배송지가 같은 주문만 통합한다.
+            consolidated_orders = consolidate_11st_orders(self.orders)
 
             # 마크다운 형식으로 주문 정보 생성
             markdown_text = ""
@@ -7534,7 +7523,8 @@ class MainWindow(QMainWindow):
                     self.current_idx_11st = 1
                     self.ui.lineEdit_idx_11st.setText(str(self.current_idx_11st))
 
-            for customer_name, info in consolidated_orders.items():
+            for info in consolidated_orders.values():
+                customer_name = info['수취인명']
                 # 주문금액 합산 (만원 단위 표기, 지마켓과 동일한 내림 규칙)
                 total_amount = info.get('총주문금액', 0)
                 amount_in_100 = total_amount // 100  # 100원 단위로 내림
@@ -9012,12 +9002,15 @@ class MainWindow(QMainWindow):
                     '수취인명': None,
                     '수취인연락처1': None,
                     '통합배송지': None,
+                    '우편번호': None,
                     '주문번호': None
                 },
                 'invoice': {
                     '등기번호': None,
                     '수취인명': None,
                     '수취인 이동통신': None,
+                    '수취인주소': None,
+                    '수취인 주소': None,
                     '수취인상세주소': None,
                     '고객 주문번호': None
                 }
@@ -9067,9 +9060,23 @@ class MainWindow(QMainWindow):
 
                 matching_rows = order_df.iloc[0:0]
                 if order_number_series is not None and invoice_order_number:
-                    matching_rows = order_df[
-                        order_number_series == invoice_order_number
-                    ]
+                    invoice_base_address = ''
+                    for key in ('수취인주소', '수취인 주소'):
+                        column = column_mapping['invoice'][key]
+                        if column:
+                            invoice_base_address = _normalize_value(invoice_row[column])
+                            if invoice_base_address:
+                                break
+                    invoice_detail_address = (
+                        _normalize_value(invoice_row[column_mapping['invoice']['수취인상세주소']])
+                        if column_mapping['invoice']['수취인상세주소'] else ''
+                    )
+                    matching_rows = match_naver_invoice_rows(
+                        order_df, order_number_series, invoice_order_number,
+                        column_mapping['order'], invoice_name, invoice_phone,
+                        (invoice_base_address, invoice_detail_address,
+                         f"{invoice_base_address} {invoice_detail_address}"),
+                    )
                 
                 if not matching_rows.empty:
                     matched_count += 1

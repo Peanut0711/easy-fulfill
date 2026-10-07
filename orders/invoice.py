@@ -77,7 +77,7 @@ def build_invoice_rows(store_type: str, orders: Mapping[str, dict]) -> list[dict
             if info["배송방법"] != "택배,등기,소포":
                 continue
             rows.append(_invoice_row(
-                order_number,
+                info.get("원주문번호", order_number),
                 info["수취인명"],
                 info["우편번호"],
                 info["통합배송지"],
@@ -99,7 +99,7 @@ def build_invoice_rows(store_type: str, orders: Mapping[str, dict]) -> list[dict
             ))
         elif store_type == "gmarket":
             rows.append(_invoice_row(
-                order_number,
+                info.get("원주문번호", order_number),
                 info["수령인명"],
                 info.get("우편번호", ""),
                 info["주소"],
@@ -110,7 +110,7 @@ def build_invoice_rows(store_type: str, orders: Mapping[str, dict]) -> list[dict
             ))
         elif store_type == "11st":
             rows.append(_invoice_row(
-                order_number,
+                info.get("원주문번호", order_number),
                 info["수취인명"],
                 info.get("우편번호", ""),
                 info["주소"],
