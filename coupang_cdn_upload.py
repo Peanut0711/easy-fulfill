@@ -370,6 +370,9 @@ def _has_active_upload_session(page):
         if status == "login_required":
             print(f"[로그인 확인] 프로그램 전용 WING 세션에 로그인이 필요합니다: {detail}")
             return False
+        if status == "auth_check_needed":
+            print(f"[로그인 확인] 인증 화면에서 숨김 권한 확인이 거부되었습니다. 화면에서 다시 확인합니다: {detail}")
+            return False
         reasons = {
             "blocked": "접근 차단 또는 요청 제한으로 권한을 확인하지 못했습니다. 로그인 만료로 판단하지 않습니다",
             "server_error": "쿠팡 서버 오류로 권한을 확인하지 못했습니다. 잠시 후 다시 시도하세요",
@@ -381,15 +384,19 @@ def _has_active_upload_session(page):
 
 
 def _upload_session_status(response):
+    parsed = urlparse(response.url)
+    login_url = (parsed.hostname == "xauth.coupang.com" or
+                 (parsed.hostname == "wing.coupang.com" and parsed.path.startswith("/sso/")))
+    # 업로드 주소 자체의 403은 차단이다. 인증 리다이렉트 뒤의 403은 숨김
+    # 요청만으로 로그인 여부를 알 수 없으므로 화면에서 WING 접속을 다시 확인한다.
+    if response.status == 403 and login_url:
+        return "auth_check_needed"
     if response.status in (403, 429):
         return "blocked"
     if response.status >= 500:
         return "server_error"
     if _is_active_upload_response(response):
         return "active"
-    parsed = urlparse(response.url)
-    login_url = (parsed.hostname == "xauth.coupang.com" or
-                 (parsed.hostname == "wing.coupang.com" and parsed.path.startswith("/sso/")))
     if response.status == 401 or (200 <= response.status < 400 and login_url):
         return "login_required"
     return "unknown"

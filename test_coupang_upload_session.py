@@ -25,7 +25,8 @@ class SessionTests(unittest.TestCase):
             (500, cdn.UPLOAD_URL, "application/json", "server_error"),
             (503, "https://xauth.coupang.com/login", "text/html", "server_error"),
             (403, cdn.UPLOAD_URL, "application/json", "blocked"),
-            (403, "https://xauth.coupang.com/login", "text/html", "blocked"),
+            (403, "https://xauth.coupang.com/auth/realms/seller/protocol/openid-connect/auth", "text/html", "auth_check_needed"),
+            (403, "https://wing.coupang.com/sso/login", "text/html", "auth_check_needed"),
             (429, cdn.UPLOAD_URL, "text/html", "blocked"),
             (401, cdn.UPLOAD_URL, "application/json", "login_required"),
             (200, "https://xauth.coupang.com/login", "text/html", "login_required"),
@@ -39,13 +40,32 @@ class SessionTests(unittest.TestCase):
 
     def test_blocked_request_does_not_prompt_or_navigate(self):
         page = Mock()
-        result = response(403, "https://xauth.coupang.com/login?state=private-value", "text/html")
+        result = response(403, cdn.UPLOAD_URL + "?state=private-value", "text/html")
         page.context.request.get.return_value = result
         with self.assertRaisesRegex(RuntimeError, "접근 차단") as raised:
             cdn._has_active_upload_session(page)
         self.assertNotIn("private-value", str(raised.exception))
         page.goto.assert_not_called()
         result.dispose.assert_called_once()
+
+    def test_auth_redirect_403_opens_visible_login_check(self):
+        hidden, visible = Mock(), Mock()
+        hidden.pages, visible.pages = [Mock()], [Mock()]
+        auth_url = "https://xauth.coupang.com/auth/realms/seller/protocol/openid-connect/auth?state=private-value"
+        hidden.pages[0].context.request.get.return_value = response(403, auth_url, "text/html")
+        with patch.object(cdn, "launch_coupang_context", side_effect=[hidden, visible]) as launch, \
+             patch.object(cdn, "restore_coupang_session"), \
+             patch.object(cdn, "wait_for_login") as wait, \
+             patch.object(cdn, "save_coupang_session") as save, \
+             patch("builtins.print") as log:
+            context, page = cdn.launch_coupang_upload_context(Mock())
+        self.assertIs(context, visible)
+        self.assertIs(page, visible.pages[0])
+        self.assertEqual(launch.call_count, 2)
+        hidden.close.assert_called_once()
+        wait.assert_called_once_with(page)
+        save.assert_called_once_with(context, page)
+        self.assertNotIn("private-value", str(log.call_args_list))
 
     def test_network_error_does_not_prompt(self):
         page = Mock()
