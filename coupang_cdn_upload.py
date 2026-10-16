@@ -19,7 +19,7 @@ from ctypes import wintypes
 from pathlib import Path
 from urllib.parse import urlparse
 
-from PIL import Image
+from PIL import Image, ImageOps
 from playwright.sync_api import sync_playwright
 from detail_image_layout import upgrade_legacy_image_groups
 
@@ -249,6 +249,37 @@ def prepare_image_for_upload(image_path: Path, upload_dir: Path, index: int):
         background.convert("RGB").resize(target, Image.Resampling.LANCZOS).save(target_path, "JPEG", quality=95, optimize=True)
         print(f"이미지 {index} 보정: {width}x{height} → {target[0]}x{target[1]}")
         return target_path
+
+
+def upload_local_image(image_path: Path):
+    """편집 중 추가한 사진만 업로드한다. 기존 상품 HTML/보고서는 건드리지 않는다."""
+    with tempfile.TemporaryDirectory(prefix="easy-fulfill-photo-") as directory:
+        output_dir = Path(directory)
+        image_dir = output_dir / "images"
+        image_dir.mkdir()
+        # 파일 확장자와 관계없이 업로드 MIME과 일치하는 JPEG로 변환한다.
+        # 휴대폰 사진의 회전 정보를 반영하고 투명한 부분은 흰색으로 합성한다.
+        with Image.open(image_path) as opened:
+            image = ImageOps.exif_transpose(opened).convert("RGBA")
+            background = Image.new("RGBA", image.size, "white")
+            background.alpha_composite(image)
+            background.convert("RGB").save(image_dir / "photo.jpg", "JPEG", quality=95)
+            width, height = image.size
+        # 크기 오류도 브라우저/로그인 연결 전에 확인한다.
+        photo_path = image_dir / "photo.jpg"
+        prepared = prepare_image_for_upload(photo_path, output_dir / "upload-images", 1)
+        if prepared != photo_path:
+            photo_path.write_bytes(prepared.read_bytes())
+            with Image.open(photo_path) as resized:
+                width, height = resized.size
+        report = {"images": [{"index": 1, "file": "photo.jpg", "source": "editor-upload",
+                               "width": width, "height": height}]}
+        with sync_playwright() as playwright:
+            context, _page = launch_coupang_upload_context(playwright)
+            try:
+                return upload_images(context, output_dir, report)[0]
+            finally:
+                context.close()
 
 
 def write_cdn_html(output_dir: Path, mapping: list[dict]):
@@ -505,9 +536,17 @@ def main():
     parser.add_argument("--upload", action="store_true", help="쿠팡 CDN에 실제 업로드합니다.")
     parser.add_argument("--render", action="store_true", help="기존 CDN 주소로 붙여넣기 HTML만 생성합니다.")
     parser.add_argument("--self-test", action="store_true")
+    parser.add_argument("--local-image", type=Path, help="편집창에서 선택한 PC 사진 한 장만 업로드합니다.")
+    parser.add_argument("--result-json", type=Path, help="PC 사진 업로드 결과를 기록할 파일")
     args = parser.parse_args()
     if args.self_test:
         self_test()
+        return
+    if args.local_image is not None:
+        if not args.upload or args.result_json is None or args.product_no or args.render:
+            parser.error("PC 사진 업로드에는 --upload --local-image 경로 --result-json 경로가 필요합니다.")
+        result = upload_local_image(args.local_image)
+        args.result_json.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
         return
     if not args.product_no or not args.product_no.isdigit():
         parser.error("숫자형 네이버 상품번호가 필요합니다.")

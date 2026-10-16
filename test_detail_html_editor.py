@@ -20,12 +20,13 @@ from PySide6.QtCore import Qt, QUrl, QEvent, QCoreApplication
 from PySide6.QtGui import QAction, QColor, QFont, QFontDatabase, QKeySequence, QTextCursor, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QDialog, QFrame, QHBoxLayout, QLabel, QMessageBox,
-    QPlainTextEdit, QPushButton, QSpinBox, QSplitter, QTextEdit, QVBoxLayout, QWidget, QDoubleSpinBox, QColorDialog,
+    QPlainTextEdit, QPushButton, QSpinBox, QSplitter, QTextEdit, QVBoxLayout, QWidget, QDoubleSpinBox, QColorDialog, QFileDialog,
 )
 from PySide6.QtWebEngineCore import QWebEngineSettings
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from shiboken6 import isValid
 from detail_preview_server import DetailPreviewServer
+from detail_image_upload import upload_image_for_editor, validated_cdn_url
 
 
 # MainWindow의 주문·설정 초기화를 실행하지 않고 실제 편집창 클래스 전체를 사용한다.
@@ -131,6 +132,99 @@ class DetailEditorTests(unittest.TestCase):
             time.sleep(.01)
         self.assertFalse(self.dialog._alignment_pending)
         self.wait_font_state()
+
+    def add_photo(self, filename='추가 사진.png', url='https://image.coupangcdn.com/image/test/photo.jpg'):
+        with patch.object(QFileDialog, 'getOpenFileName', return_value=(filename, '')), \
+                patch(__name__ + '.upload_image_for_editor', return_value=url) as upload:
+            self.dialog.add_photo.click()
+        return upload
+
+    def test_photo_above_and_below_preserve_edits_and_undo(self):
+        for above in (True, False):
+            with self.subTest(above=above):
+                edited = SOURCE.replace('뒤 본문', '직접 편집한 본문 😀')
+                self.dialog.editor.setPlainText(edited)
+                self.select(3)
+                position = self.dialog._block_ranges[3][0 if above else 1]
+                self.dialog.photo_position.setCurrentIndex(0 if above else 1)
+                upload = self.add_photo('사진 & "예시".png')
+                upload.assert_called_once_with(self.dialog, Path('사진 & "예시".png'))
+                result = self.dialog.editor.toPlainText()
+                self.assertEqual(result[:position], edited[:position])
+                self.assertTrue(result.endswith(edited[position:]))
+                self.assertIn('alt="사진 &amp; &quot;예시&quot;"', result)
+                self.assertIn('https://image.coupangcdn.com/image/test/photo.jpg', result)
+                self.assertEqual(self.path.read_text(encoding='utf-8'), SOURCE)
+                self.assertEqual(len(self.dialog._selected_blocks), 1)
+                self.dialog._undo_editor()
+                self.assertEqual(self.dialog.editor.toPlainText(), edited)
+                self.assertEqual(self.dialog._selected_blocks, {3})
+
+    def test_photo_range_inserts_once_after_last_item(self):
+        self.select(1, 2, 3)
+        position = self.dialog._block_ranges[3][1]
+        self.add_photo()
+        result = self.dialog.editor.toPlainText()
+        self.assertEqual(result[:position], SOURCE[:position])
+        self.assertEqual(result.count('https://image.coupangcdn.com/image/test/photo.jpg'), 1)
+        self.dialog._undo_editor()
+        self.assertEqual(self.dialog._selected_blocks, {1, 2, 3})
+
+    def test_photo_requires_contiguous_selection_and_cancel_does_nothing(self):
+        for selected in ((), (0, 2)):
+            self.select(*selected)
+            self.assertFalse(self.dialog.add_photo.isEnabled())
+        self.select(3)
+        self.assertTrue(self.dialog.add_photo.isEnabled())
+        with patch.object(QFileDialog, 'getOpenFileName', return_value=('', '')), \
+                patch(__name__ + '.upload_image_for_editor') as upload:
+            self.dialog.add_photo.click()
+        upload.assert_not_called()
+        self.assertEqual(self.dialog.editor.toPlainText(), SOURCE)
+
+    def test_photo_upload_failure_or_invalid_url_keeps_source(self):
+        for error, url in ((RuntimeError('로그인 실패'), None), (None, 'https://other.example/photo.jpg')):
+            with self.subTest(error=error):
+                self.select(3)
+                with patch.object(QFileDialog, 'getOpenFileName', return_value=('사진.png', '')), \
+                        patch(__name__ + '.upload_image_for_editor', side_effect=error, return_value=url), \
+                        patch.object(QMessageBox, 'warning') as warning:
+                    self.dialog.add_photo.click()
+                warning.assert_called_once()
+                self.assertEqual(self.dialog.editor.toPlainText(), SOURCE)
+                self.assertEqual(self.dialog._selected_blocks, {3})
+
+    def test_photo_does_not_overwrite_concurrent_source_change(self):
+        self.select(3)
+        changed = SOURCE.replace('뒤 본문', '업로드 중 변경된 내용')
+        def upload(*_args):
+            self.dialog.editor.setPlainText(changed)
+            return 'https://image.coupangcdn.com/image/test/photo.jpg'
+        with patch.object(QFileDialog, 'getOpenFileName', return_value=('사진.png', '')), \
+                patch(__name__ + '.upload_image_for_editor', side_effect=upload), \
+                patch.object(QMessageBox, 'warning') as warning:
+            self.dialog.add_photo.click()
+        warning.assert_called_once()
+        self.assertEqual(self.dialog.editor.toPlainText(), changed)
+
+    def test_photo_inside_list_is_valid_and_save_copy_match(self):
+        self.dialog.preview.settings().setAttribute(QWebEngineSettings.AutoLoadImages, False)
+        self.dialog.editor.setPlainText('<div><ul><li>항목 A</li><li>항목 B</li></ul></div>')
+        self.select(0)
+        self.add_photo()
+        self.dialog.show()
+        self.wait_preview(0)
+        self.assertEqual(self.javascript("[...document.querySelector('ul').children].map(e=>e.tagName)"), ['LI', 'LI', 'LI'])
+        self.assertEqual(self.javascript("document.querySelector('ul > li:nth-child(2) > img').getAttribute('src')"),
+                         'https://image.coupangcdn.com/image/test/photo.jpg')
+        with patch.object(QMessageBox, 'information'):
+            self.dialog._save()
+        saved = self.path.read_text(encoding='utf-8')
+        copy = next(button for button in self.dialog.findChildren(QPushButton) if button.text() == 'HTML 복사')
+        copy.click()
+        self.assertEqual(QApplication.clipboard().text(), saved)
+        self.assertNotIn('data-ef-block', saved)
+        self.assertNotIn('127.0.0.1', saved)
 
     def test_bold_toggle_normalizes_nested_bold_and_preserves_links(self):
         self.dialog.show()

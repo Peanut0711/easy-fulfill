@@ -57,6 +57,7 @@ from PySide6.QtWebEngineCore import QWebEngineSettings
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from shiboken6 import isValid
 from detail_preview_server import DetailPreviewServer
+from detail_image_upload import upload_image_for_editor, validated_cdn_url
 import requests
 from io import BytesIO
 import warnings
@@ -1628,6 +1629,20 @@ class DetailHtmlEditorDialog(QDialog):
         splitter.setSizes([640, 640])
         layout.addWidget(splitter, 1)
 
+        photos = QHBoxLayout()
+        photos.addWidget(QLabel("사진"))
+        self.photo_position = QComboBox()
+        self.photo_position.addItems(["선택 영역 위", "선택 영역 아래"])
+        self.photo_position.setCurrentIndex(1)
+        photos.addWidget(self.photo_position)
+        self.add_photo = QPushButton("사진 추가…")
+        self.add_photo.setToolTip("PC 사진을 쿠팡 CDN에 업로드한 뒤 선택 영역 위·아래에 추가합니다.")
+        self.add_photo.clicked.connect(self._add_photo)
+        photos.addWidget(self.add_photo)
+        photos.addWidget(QLabel("항목을 선택한 뒤 PC 사진을 추가하세요"))
+        photos.addStretch(1)
+        layout.addLayout(photos)
+
         spacing = QHBoxLayout()
         spacing.addWidget(QLabel("여백"))
         self.spacing_position = QComboBox()
@@ -2274,6 +2289,8 @@ class DetailHtmlEditorDialog(QDialog):
         self.delete_blocks.setEnabled(bool(self._selected_blocks))
         self.undo_delete.setEnabled(self.editor.document().isUndoAvailable())
         selected = sorted(self._selected_blocks)
+        contiguous = bool(selected) and selected == list(range(selected[0], selected[-1] + 1))
+        self.add_photo.setEnabled(contiguous)
         self.add_spacing.setEnabled(bool(selected) and selected == list(range(selected[0], selected[-1] + 1)))
         self.move_up.setEnabled(self._movement_scope(-1) is not None)
         self.move_down.setEnabled(self._movement_scope(1) is not None)
@@ -2574,6 +2591,52 @@ class DetailHtmlEditorDialog(QDialog):
         list_style = "display:block;list-style:none;" if tag == "li" else ""
         return (f'<{tag} data-ef-spacer="{height}" style="{list_style}height:{height}px;min-height:{height}px;'
                 f'margin:0;padding:0;border:0;font-size:0;line-height:0;overflow:hidden" aria-hidden="true">&nbsp;</{tag}>')
+
+    def _add_photo(self):
+        selected = sorted(self._selected_blocks)
+        if not selected or selected != list(range(selected[0], selected[-1] + 1)):
+            return
+        source = self.editor.toPlainText()
+        selected_range = self._selection_range
+        above = self.photo_position.currentIndex() == 0
+        item = self._block_details[selected[0] if above else selected[-1]]
+        position = item["range"][0 if above else 1]
+        ancestors = item["node"]["ancestors"]
+        # 목록의 직계 자식에는 li를 사용해 HTML 구조를 유지한다.
+        in_list = ancestors and ancestors[-1]["tag"] in {"ul", "ol"}
+        filename, _ = QFileDialog.getOpenFileName(
+            self, "추가할 사진 선택", "", "사진 (*.jpg *.jpeg *.png *.webp *.bmp *.gif);;모든 파일 (*)")
+        if not filename:
+            return
+        try:
+            url = validated_cdn_url(upload_image_for_editor(self, Path(filename)))
+        except Exception as error:
+            QMessageBox.warning(self, "사진 추가", f"사진을 추가하지 못했습니다.\n{error}\n\n기존 편집 내용은 유지됩니다.")
+            return
+        if self.editor.toPlainText() != source:
+            QMessageBox.warning(self, "사진 추가", "업로드 중 HTML이 변경되어 사진을 삽입하지 않았습니다. 다시 선택해 주세요.")
+            return
+        replacement = (f'<img src="{html.escape(url, quote=True)}" '
+                       f'alt="{html.escape(Path(filename).stem, quote=True)}" '
+                       'style="display:block;max-width:100%;height:auto;margin:0 auto 24px">')
+        if in_list:
+            replacement = '<li style="display:block;list-style:none">' + replacement + '</li>'
+        cursor = QTextCursor(self.editor.document())
+        self.editor.blockSignals(True)
+        try:
+            cursor.beginEditBlock()
+            cursor.setPosition(self._qt_text_position(source, position))
+            cursor.insertText(replacement)
+            cursor.endEditBlock()
+        finally:
+            self.editor.blockSignals(False)
+        updated = self.editor.toPlainText()
+        self._pending_restored_selection = {
+            index for index, detail in enumerate(self._html_block_details(updated))
+            if detail["range"][0] == position}
+        self._refresh()
+        self._block_edit_history.append({"before": source, "after": updated,
+                                         "selection": set(selected), "range": selected_range})
 
     def _add_spacing(self):
         selected = sorted(self._selected_blocks)
