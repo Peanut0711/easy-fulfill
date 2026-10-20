@@ -30,6 +30,9 @@ class LocalImageTests(unittest.TestCase):
             context = Mock()
             response = context.request.post.return_value
             response.ok = True
+            response.status = 200
+            response.url = cdn.UPLOAD_URL
+            response.headers = {'content-type': 'application/json'}
             response.text.return_value = json.dumps({'success': True, 'message': 'test/photo.jpg'})
             with patch.object(cdn, 'sync_playwright'), \
                     patch.object(cdn, 'launch_coupang_upload_context', return_value=(context, Mock())), \

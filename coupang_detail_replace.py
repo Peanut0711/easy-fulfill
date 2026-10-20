@@ -6,14 +6,94 @@
 from __future__ import annotations
 
 import argparse
+import json
 import queue
+import re
 import sys
 import threading
+from collections import deque
+from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlparse
 
 ROOT = Path(__file__).resolve().parent
 DETAIL_URL = "https://wing.coupang.com/tenants/seller-web/vendor-inventory/modify?vendorInventoryId={vendor_inventory_id}"
 WING_CLOSED_MARKER = "[WING 창 닫힘 감지]"
+
+
+def diagnostic_url(url):
+    parsed = urlparse(url)
+    return parsed._replace(query="", fragment="").geturl()
+
+
+def diagnostic_text(value):
+    value = re.sub(r'https?://[^\s<>"\']+', lambda match: diagnostic_url(match.group()), str(value))
+    return re.sub(r'(?i)(authorization|cookie|token|password|session)(["\']?\s*[:=]\s*["\']?)([^"\'\s;&<]+)',
+                  r'\1\2[REDACTED]', value)[:4000]
+
+
+def start_detail_diagnostics(page):
+    """상품 수정 화면의 최근 오류만 보관한다. 요청 본문·헤더는 수집하지 않는다."""
+    events = deque(maxlen=40)
+
+    def response_error(response):
+        if response.status >= 400 and response.request.resource_type in {"document", "xhr", "fetch", "script"}:
+            events.append({"kind": "http", "status": response.status, "url": diagnostic_url(response.url)})
+
+    page.on("response", response_error)
+    page.on("requestfailed", lambda request: events.append({
+        "kind": "requestfailed", "url": diagnostic_url(request.url), "error": diagnostic_text(request.failure),
+    }))
+    page.on("pageerror", lambda error: events.append({"kind": "pageerror", "error": diagnostic_text(error)}))
+    page.on("console", lambda message: events.append({"kind": "console", "error": diagnostic_text(message.text)})
+            if message.type == "error" else None)
+    return events
+
+
+def save_detail_diagnostics(page, vendor_inventory_id, stage, events):
+    """진단 저장에 실패해도 원래 탭 조작 오류를 가리지 않는다."""
+    record = {"time": datetime.now().isoformat(), "vendorInventoryId": vendor_inventory_id,
+              "stage": stage, "events": list(events or []), "captureErrors": []}
+    try:
+        record["url"] = diagnostic_url(page.url)
+        record["dom"] = page.evaluate("""() => ({
+            title: document.title, readyState: document.readyState,
+            text: (document.body?.innerText || '').slice(0, 4000),
+            tabs: Array.from(document.querySelectorAll('label[for^="tab-content"], [role="tab"]')).slice(0, 60).map(el => ({
+                for: el.getAttribute('for'), text: (el.innerText || '').slice(0, 100),
+                visible: !!el.getClientRects().length && getComputedStyle(el).visibility !== 'hidden',
+                checked: document.getElementById(el.htmlFor)?.checked ?? null,
+                disabled: document.getElementById(el.htmlFor)?.disabled ?? null
+            })),
+            dialogs: Array.from(document.querySelectorAll('[role="dialog"], .sweet-alert, .modal'))
+                .filter(el => el.getClientRects().length).slice(0, 10).map(el => (el.innerText || '').slice(0, 500))
+        })""")
+        record["dom"]["title"] = diagnostic_text(record["dom"]["title"])
+        record["dom"]["text"] = diagnostic_text(record["dom"]["text"])
+        record["dom"]["dialogs"] = [diagnostic_text(text) for text in record["dom"]["dialogs"]]
+        for tab in record["dom"]["tabs"]:
+            tab["text"] = diagnostic_text(tab["text"])
+        record["frames"] = [diagnostic_url(frame.url) for frame in page.frames]
+    except Exception as error:
+        record["captureErrors"].append(diagnostic_text(error))
+    print(f"[WING 화면 진단] 단계={stage} · 등록상품 ID={vendor_inventory_id} · URL={record.get('url', '(확인 불가)')}", flush=True)
+    try:
+        directory = ROOT / "output" / "wing-diagnostics"
+        directory.mkdir(parents=True, exist_ok=True)
+        prefix = directory / f"detail-{datetime.now():%Y%m%d-%H%M%S-%f}"
+        try:
+            screenshot = prefix.with_suffix(".png")
+            page.screenshot(path=str(screenshot), full_page=True, timeout=5_000)
+            record["screenshot"] = str(screenshot)
+        except Exception as error:
+            record["captureErrors"].append(diagnostic_text(error))
+        path = prefix.with_suffix(".json")
+        path.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"[WING 진단 파일] {path}", flush=True)
+        return path
+    except Exception as error:
+        print(f"[WING 진단 저장 실패] {diagnostic_text(error)}", flush=True)
+        return None
 
 
 def load_coupang_modules():
@@ -68,12 +148,25 @@ def detail_level_missing_message(vendor_inventory_id: str):
     )
 
 
-def select_basic_detail_level(page, vendor_inventory_id: str, playwright_error):
+def select_basic_detail_level(page, vendor_inventory_id: str, playwright_error, events=None):
     try:
         page.locator('label[for="tab-content-level-0"]').click(timeout=15_000)
     except playwright_error as error:
+        save_detail_diagnostics(page, vendor_inventory_id, "기본 상세 선택", events)
         message = detail_level_missing_message(vendor_inventory_id)
         print(f"[오류] {message}")
+        raise RuntimeError(message) from error
+
+
+def select_html_detail_tab(page, vendor_inventory_id, playwright_error, events=None):
+    try:
+        page.locator('label[for="tab-content-2"]').click(timeout=15_000)
+    except playwright_error as error:
+        path = save_detail_diagnostics(page, vendor_inventory_id, "HTML 작성 탭 선택", events)
+        message = (f"쿠팡 등록상품 ID {vendor_inventory_id}의 HTML 작성 탭을 선택하지 못했습니다. "
+                   "화면 로딩·팝업·보안 안내·탭 구성 여부를 진단 파일에서 확인하세요. "
+                   f"진단 파일: {path if path else '저장 실패 (작업 로그 확인)'}")
+        print(f"[오류] {message}", flush=True)
         raise RuntimeError(message) from error
 
 
@@ -180,11 +273,12 @@ def main():
         try:
             coupang_cdn_upload.wait_for_login(page)
             coupang_cdn_upload.save_coupang_session(context, page)
+            events = start_detail_diagnostics(page)
             page.goto(DETAIL_URL.format(vendor_inventory_id=args.vendor_inventory_id))
-            select_basic_detail_level(page, args.vendor_inventory_id, playwright_error)
+            select_basic_detail_level(page, args.vendor_inventory_id, playwright_error, events)
             confirm_detail_level_change(page)
             page.wait_for_timeout(1_000)
-            page.locator('label[for="tab-content-2"]').click(timeout=15_000)
+            select_html_detail_tab(page, args.vendor_inventory_id, playwright_error, events)
             confirm_detail_level_change(page)
             page.wait_for_timeout(1_000)
             textarea = editor_textarea(page)

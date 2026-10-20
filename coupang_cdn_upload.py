@@ -16,6 +16,7 @@ import sys
 import tempfile
 import time
 from ctypes import wintypes
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -32,6 +33,74 @@ UPLOAD_URL = "https://wing.coupang.com/tenants/seller-web/file/resize/uploadV2"
 WING_HOME = "https://wing.coupang.com/"
 CDN_BASE = "https://image.coupangcdn.com/image/"
 UPLOAD_RESPONSE_LOG_MAX_CHARS = 1_000
+UPLOAD_RETRY_DELAYS = (3, 8)
+UPLOAD_RETRY_STATUSES = {500, 502, 503, 504}
+
+
+class UploadRequestError(RuntimeError):
+    """통신 예외와 구분해 보안 확인·서버 응답 안내를 유지한다."""
+
+
+def _response_url_without_query(url):
+    parsed = urlparse(url)
+    return parsed._replace(query="", fragment="").geturl()
+
+
+def _is_security_response(response):
+    body = response.text().lower()
+    if "html" not in response.headers.get("content-type", "").lower() and not body.lstrip().startswith("<"):
+        return False
+    return any(marker in body for marker in (
+        "sec-overlay", "sec-container", "captcha", "cf-chl-",
+        "verify you are human", "보안 확인", "자동입력 방지",
+    ))
+
+
+def _upload_retry_delay(response, default):
+    value = response.headers.get("retry-after", "").strip()
+    delay = default
+    if value:
+        try:
+            requested = int(value) if value.isdigit() else parsedate_to_datetime(value).timestamp() - time.time()
+            delay = max(default, requested)
+        except (TypeError, ValueError, OverflowError):
+            pass
+    if delay > 60:
+        raise UploadRequestError(
+            f"쿠팡 서버가 {delay:.0f}초 뒤 재시도를 요청했습니다. 자동 재시도를 중단합니다. 잠시 후 다시 실행하세요."
+        )
+    return delay
+
+
+def _request_upload_with_retry(send_request, *, label, **kwargs):
+    """보안 확인 응답은 중단하고, 명시적인 일시 서버 오류만 재시도한다."""
+    attempts = len(UPLOAD_RETRY_DELAYS) + 1
+    for attempt in range(attempts):
+        response = send_request(UPLOAD_URL, **kwargs)
+        keep_response = False
+        try:
+            detail = f"HTTP {response.status}; URL={_response_url_without_query(response.url)}"
+            if _is_security_response(response):
+                raise UploadRequestError(
+                    f"[보안 확인 필요] {label}: 보안 확인 화면으로 의심되는 응답입니다. {detail}. "
+                    "자동 재시도하지 않습니다. 프로그램의 '쿠팡 로그인 연결/갱신'에서 "
+                    "열리는 WING 브라우저의 보안 안내를 확인한 뒤 작업을 다시 실행하세요."
+                )
+            if response.status not in UPLOAD_RETRY_STATUSES:
+                keep_response = True
+                return response
+            if attempt == attempts - 1:
+                raise UploadRequestError(
+                    f"[{label}] 쿠팡 서버 일시 오류가 총 {attempts}회 계속되어 중단했습니다: "
+                    f"{detail}. 잠시 후 다시 실행하세요."
+                )
+            delay = _upload_retry_delay(response, UPLOAD_RETRY_DELAYS[attempt])
+            print(f"[자동 재시도] {label}: HTTP {response.status} · {delay:g}초 후 재시도 "
+                  f"({attempt + 1}/{attempts - 1})", flush=True)
+        finally:
+            if not keep_response:
+                response.dispose()
+        time.sleep(delay)
 
 
 class _DataBlob(ctypes.Structure):
@@ -156,6 +225,15 @@ def _read_upload_response(response):
     """JSON이 아닌 WING 오류 응답도 상태와 함께 운영자 로그에 남긴다."""
     content_type = response.headers.get("content-type", "(없음)")
     body = response.text()
+    parsed = urlparse(response.url)
+    login_url = parsed.hostname == "xauth.coupang.com" or (parsed.hostname == "wing.coupang.com" and parsed.path.startswith("/sso/"))
+    if response.status == 401 or login_url:
+        raise RuntimeError("[로그인 확인 필요] 쿠팡 업로드 로그인을 다시 확인하세요. 프로그램의 '쿠팡 로그인 연결/갱신' 후 다시 실행하세요.")
+    if response.status in (403, 429):
+        raise RuntimeError(
+            f"[접근 제한] 쿠팡 업로드가 차단되었거나 요청이 제한되었습니다: HTTP {response.status}. "
+            "자동 재시도하지 않습니다. WING 화면의 안내를 확인하고 잠시 후 다시 실행하세요."
+        )
     try:
         payload = json.loads(body)
     except json.JSONDecodeError as error:
@@ -163,7 +241,7 @@ def _read_upload_response(response):
         raise RuntimeError(
             "쿠팡 이미지 업로드 응답이 JSON이 아닙니다: "
             f"HTTP {response.status} {response.status_text}; "
-            f"Content-Type={content_type}; URL={response.url}; 본문={preview}"
+            f"Content-Type={content_type}; URL={_response_url_without_query(response.url)}; 본문={preview}"
         ) from error
     if not isinstance(payload, dict):
         raise RuntimeError(
@@ -201,8 +279,9 @@ def upload_images(context, output_dir: Path, report: dict):
             raise RuntimeError("새 이미지 업로드에 필요한 쿠팡 연결이 없습니다.")
         image_path = output_dir / "images" / item["file"]
         upload_path = prepare_image_for_upload(image_path, output_dir / "upload-images", item["index"])
-        response = context.request.post(
-            UPLOAD_URL,
+        response = _request_upload_with_retry(
+            context.request.post,
+            label=f"이미지 {item['index']} 업로드",
             headers={"Origin": "https://wing.coupang.com", "Referer": WING_HOME},
             multipart={
                 "multipartFile": {
@@ -213,14 +292,17 @@ def upload_images(context, output_dir: Path, report: dict):
             },
             timeout=60_000,
         )
-        payload = _read_upload_response(response)
-        if not response.ok or not payload.get("success") or not payload.get("message"):
-            raise RuntimeError(
-                f"이미지 {item['index']} 업로드 실패: "
-                f"HTTP {response.status} {response.status_text}; "
-                f"Content-Type={response.headers.get('content-type', '(없음)')}; "
-                f"응답={_redact_upload_response_text(json.dumps(payload, ensure_ascii=False))}"
-            )
+        try:
+            payload = _read_upload_response(response)
+            if not response.ok or not payload.get("success") or not payload.get("message"):
+                raise RuntimeError(
+                    f"이미지 {item['index']} 업로드 실패: "
+                    f"HTTP {response.status} {response.status_text}; "
+                    f"Content-Type={response.headers.get('content-type', '(없음)')}; "
+                    f"응답={_redact_upload_response_text(json.dumps(payload, ensure_ascii=False))}"
+                )
+        finally:
+            response.dispose()
         mapping.append({
             **item,
             "cdnPath": payload["message"],
@@ -388,7 +470,9 @@ def _has_active_upload_session(page):
         # 이 URL은 파일 없이 GET하면 WING이 파일 오류 JSON을 돌려준다. 탭 이동으로
         # 확인하면 그 JSON이 사용자에게 노출되므로, 동일한 BrowserContext의 요청 API로
         # 최종 리다이렉트 URL만 확인한다. BrowserContext.request는 쿠키를 공유한다.
-        response = page.context.request.get(UPLOAD_URL, timeout=30_000)
+        response = _request_upload_with_retry(page.context.request.get, label="로그인 확인", timeout=30_000)
+    except UploadRequestError:
+        raise
     except Exception as error:
         raise RuntimeError("[로그인 확인] 통신 오류로 업로드 권한을 확인하지 못했습니다. 네트워크 상태를 확인한 뒤 다시 시도하세요.") from error
     try:

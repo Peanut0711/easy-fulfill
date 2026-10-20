@@ -14,7 +14,8 @@ import naver_to_coupang_html as batch
 
 
 def response(status=400, url=cdn.UPLOAD_URL, content_type="application/json"):
-    return SimpleNamespace(status=status, url=url, headers={"content-type": content_type}, dispose=Mock())
+    return SimpleNamespace(status=status, url=url, headers={"content-type": content_type},
+                           text=Mock(return_value="{}"), dispose=Mock())
 
 
 class SessionTests(unittest.TestCase):
@@ -298,7 +299,8 @@ class CacheTests(unittest.TestCase):
         upload_file = self.root / "new.jpg"
         upload_file.write_bytes(b"mock-image")
         context = Mock()
-        context.request.post.return_value = SimpleNamespace(ok=True)
+        context.request.post.return_value = response(200)
+        context.request.post.return_value.ok = True
         self.assertTrue(cdn.needs_image_upload(self.root / number, report))
         with patch.object(cdn, "prepare_image_for_upload", return_value=upload_file), \
              patch.object(cdn, "_read_upload_response", return_value={"success": True, "message": "new.jpg"}):

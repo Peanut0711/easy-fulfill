@@ -8,6 +8,7 @@ import html
 import io
 import json
 import re
+import time
 from urllib.parse import parse_qs, urlparse
 from collections import Counter
 from html.parser import HTMLParser
@@ -28,6 +29,7 @@ OUTPUT_ROOT = Path(__file__).resolve().parent / "output" / "detail-preview"
 VOID_TAGS = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"}
 # ZWJ/ZWNJ는 이모지 조합과 문자 모양에 필요하므로 제거하지 않는다.
 ZERO_WIDTH = re.compile("[\u200b\ufeff]")
+IMAGE_DOWNLOAD_RETRY_DELAYS = (3, 8)
 
 
 class Node:
@@ -280,12 +282,29 @@ def fetch_product(product_no):
 
 
 def download_image(url, path):
-    response = requests.get(url, timeout=30)
-    response.raise_for_status()
-    image = Image.open(io.BytesIO(response.content))
-    image.load()
-    path.write_bytes(response.content)
-    return {"width": image.width, "height": image.height, "format": image.format, "bytes": len(response.content)}
+    attempts = len(IMAGE_DOWNLOAD_RETRY_DELAYS) + 1
+    for attempt in range(attempts):
+        response = requests.get(url, timeout=30)
+        try:
+            if response.status_code == 404:
+                if attempt == attempts - 1:
+                    raise RuntimeError(
+                        f"이미지 다운로드 실패: HTTP 404가 총 {attempts}회 계속되었습니다. "
+                        f"상품 원문의 이미지 주소를 확인하세요: {url}"
+                    )
+                delay = IMAGE_DOWNLOAD_RETRY_DELAYS[attempt]
+                print(f"[이미지 다운로드 재시도] {path.name}: HTTP 404 · {delay}초 후 재시도 "
+                      f"({attempt + 1}/{attempts - 1})", flush=True)
+            else:
+                response.raise_for_status()
+                with Image.open(io.BytesIO(response.content)) as image:
+                    image.load()
+                    metadata = {"width": image.width, "height": image.height, "format": image.format, "bytes": len(response.content)}
+                path.write_bytes(response.content)
+                return metadata
+        finally:
+            response.close()
+        time.sleep(delay)
 
 
 def image_rows(component):
