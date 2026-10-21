@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import ctypes
+import io
 import json
 import os
 import re
@@ -32,6 +33,13 @@ AUTH_STATE_PATH = PROFILE_DIR / "easy-fulfill-auth-state.bin"
 UPLOAD_URL = "https://wing.coupang.com/tenants/seller-web/file/resize/uploadV2"
 WING_HOME = "https://wing.coupang.com/"
 CDN_BASE = "https://image.coupangcdn.com/image/"
+UPLOAD_IMAGE_FORMATS = {
+    "JPEG": ("jpg", "image/jpeg"),
+    "PNG": ("png", "image/png"),
+    "WEBP": ("webp", "image/webp"),
+    "BMP": ("bmp", "image/bmp"),
+    "GIF": ("gif", "image/gif"),
+}
 UPLOAD_RESPONSE_LOG_MAX_CHARS = 1_000
 UPLOAD_RETRY_DELAYS = (3, 8)
 UPLOAD_RETRY_STATUSES = {500, 502, 503, 504}
@@ -278,16 +286,32 @@ def upload_images(context, output_dir: Path, report: dict):
         if context is None:
             raise RuntimeError("새 이미지 업로드에 필요한 쿠팡 연결이 없습니다.")
         image_path = output_dir / "images" / item["file"]
-        upload_path = prepare_image_for_upload(image_path, output_dir / "upload-images", item["index"])
+        try:
+            upload_path = prepare_image_for_upload(image_path, output_dir / "upload-images", item["index"])
+            upload_bytes = upload_path.read_bytes()
+            # 다운로드 파일은 실제 형식과 관계없이 .jpg로 저장되어 있을 수 있다.
+            # 전송할 바이트를 읽어 확장자와 MIME을 실제 형식에 맞춘다.
+            with Image.open(io.BytesIO(upload_bytes)) as prepared:
+                upload_format, upload_mode = prepared.format, prepared.mode
+                upload_width, upload_height = prepared.size
+        except (OSError, ValueError, Image.DecompressionBombError) as error:
+            raise RuntimeError(f"이미지 {item['index']} 파일을 읽거나 변환하지 못했습니다: {image_path.name}. {error}") from error
+        if upload_format not in UPLOAD_IMAGE_FORMATS:
+            raise RuntimeError(f"이미지 {item['index']} 전송 형식이 지원되지 않습니다: {upload_format}")
+        extension, mime_type = UPLOAD_IMAGE_FORMATS[upload_format]
+        upload_name = f"{image_path.stem}.{extension}"
+        file_detail = (f"파일={upload_name}; 실제 형식={upload_format}/{upload_mode}; MIME={mime_type}; "
+                       f"크기={upload_width}x{upload_height}; 바이트={len(upload_bytes)}")
+        print(f"[업로드 파일 확인] 이미지 {item['index']}: {file_detail}", flush=True)
         response = _request_upload_with_retry(
             context.request.post,
             label=f"이미지 {item['index']} 업로드",
             headers={"Origin": "https://wing.coupang.com", "Referer": WING_HOME},
             multipart={
                 "multipartFile": {
-                    "name": image_path.name,
-                    "mimeType": "image/jpeg",
-                    "buffer": upload_path.read_bytes(),
+                    "name": upload_name,
+                    "mimeType": mime_type,
+                    "buffer": upload_bytes,
                 }
             },
             timeout=60_000,
@@ -299,6 +323,7 @@ def upload_images(context, output_dir: Path, report: dict):
                     f"이미지 {item['index']} 업로드 실패: "
                     f"HTTP {response.status} {response.status_text}; "
                     f"Content-Type={response.headers.get('content-type', '(없음)')}; "
+                    f"{file_detail}; "
                     f"응답={_redact_upload_response_text(json.dumps(payload, ensure_ascii=False))}"
                 )
         finally:
@@ -315,21 +340,29 @@ def upload_images(context, output_dir: Path, report: dict):
 
 def prepare_image_for_upload(image_path: Path, upload_dir: Path, index: int):
     with Image.open(image_path) as opened:
+        source_format, source_mode = opened.format, opened.mode
+        opened.load()
+        orientation = opened.getexif().get(274, 1)
         width, height = opened.size
-        if 300 <= width <= 3_000 and height <= 30_000:
+        # 지원 형식은 재인코딩하지 않아 투명도·애니메이션과 화질을 보존한다.
+        compatible = (source_format in UPLOAD_IMAGE_FORMATS
+                      and not (source_format == "JPEG" and source_mode not in {"RGB", "L"})
+                      and orientation == 1)
+        if compatible and 300 <= width <= 3_000 and height <= 30_000:
             return image_path
+        image = ImageOps.exif_transpose(opened).convert("RGBA")
+        width, height = image.size
         scale = max(1, 300 / width)
         scale = min(scale, 3_000 / width, 30_000 / height)
         target = (round(width * scale), round(height * scale))
         if target[0] < 300 or target[1] > 30_000:
             raise RuntimeError(f"이미지 {index}의 비율은 쿠팡 허용 크기로 보정할 수 없습니다: {width}x{height}")
-        image = opened.convert("RGBA")
         background = Image.new("RGBA", image.size, "white")
         background.alpha_composite(image)
         upload_dir.mkdir(parents=True, exist_ok=True)
         target_path = upload_dir / f"image-{index:02d}.jpg"
         background.convert("RGB").resize(target, Image.Resampling.LANCZOS).save(target_path, "JPEG", quality=95, optimize=True)
-        print(f"이미지 {index} 보정: {width}x{height} → {target[0]}x{target[1]}")
+        print(f"이미지 {index} 변환: {source_format}/{source_mode} {width}x{height} → JPEG/RGB {target[0]}x{target[1]}", flush=True)
         return target_path
 
 

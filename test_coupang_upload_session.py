@@ -8,6 +8,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+from PIL import Image
+
 import coupang_cdn_upload as cdn
 import coupang_session
 import naver_to_coupang_html as batch
@@ -297,7 +299,7 @@ class CacheTests(unittest.TestCase):
         second = {"index": 2, "file": "new.jpg", "source": "https://source.example/new.jpg"}
         report["images"].append(second)
         upload_file = self.root / "new.jpg"
-        upload_file.write_bytes(b"mock-image")
+        Image.new("RGB", (400, 300)).save(upload_file)
         context = Mock()
         context.request.post.return_value = response(200)
         context.request.post.return_value.ok = True
