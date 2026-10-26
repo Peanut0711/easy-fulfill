@@ -454,8 +454,6 @@ class QuotationStatementWidget(QWidget):
         self.payment_method.setToolTip("" if quote else "결제 방법은 견적서에만 기재됩니다.")
         self.delivery_label.setVisible(quote)
         self.delivery_edit.setVisible(quote)
-        self.input_mode_label.setVisible(not quote)
-        self.input_mode_widget.setVisible(not quote)
         self._apply_input_mode_visibility()
         self.free_shipping_check.setVisible(not self._is_order_import())
         self.refresh_summary()
@@ -464,7 +462,7 @@ class QuotationStatementWidget(QWidget):
         return self._is_order_import()
 
     def _is_order_import(self):
-        return self.document_type.currentText() == "거래명세서" and bool(self._order_import_source)
+        return bool(self._order_import_source)
 
     def _selected_input_mode(self):
         if self.naver_order_radio.isChecked():
@@ -507,10 +505,7 @@ class QuotationStatementWidget(QWidget):
         return label
 
     def _apply_discount_controls_visibility(self):
-        direct_pricing = (
-            self.document_type.currentText() == "견적서"
-            or self._selected_input_mode() == "manual"
-        ) and not self._is_order_import()
+        direct_pricing = self._selected_input_mode() == "manual" and not self._is_order_import()
         self.discount_controls.setVisible(direct_pricing)
         self.discount_rate_spin.setVisible(direct_pricing and self._discount_mode() == "manual")
 
@@ -519,11 +514,10 @@ class QuotationStatementWidget(QWidget):
         self.refresh_summary()
 
     def _apply_input_mode_visibility(self):
-        statement = self.document_type.currentText() == "거래명세서"
         mode = self._selected_input_mode()
-        self.product_search_widget.setVisible(not statement or mode == "manual")
-        self.naver_order_group.setVisible(statement and mode == "naver")
-        self.coupang_order_group.setVisible(statement and mode == "coupang")
+        self.product_search_widget.setVisible(mode == "manual")
+        self.naver_order_group.setVisible(mode == "naver")
+        self.coupang_order_group.setVisible(mode == "coupang")
         self._apply_discount_controls_visibility()
 
     def _on_input_mode_changed(self, _button):
