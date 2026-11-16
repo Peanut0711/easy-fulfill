@@ -528,6 +528,38 @@
             </widget>
            </item>
            <item>
+            <widget class="QGroupBox" name="groupBox_app_version">
+             <property name="title">
+              <string>프로그램 버전</string>
+             </property>
+             <layout class="QVBoxLayout" name="verticalLayout_app_version">
+              <item>
+               <widget class="QLabel" name="label_app_version">
+                <property name="text">
+                 <string>현재 버전 확인 중…</string>
+                </property>
+                <property name="wordWrap">
+                 <bool>true</bool>
+                </property>
+               </widget>
+              </item>
+              <item>
+               <widget class="QCheckBox" name="checkBox_ignore_version_update">
+                <property name="text">
+                 <string>새 버전 안내 무시</string>
+                </property>
+                <property name="toolTip">
+                 <string>이 PC에서 「새 버전 안내」 창을 띄우지 않습니다. 공유 시트가 요구하는 최소 버전보다 낮아 시트 쓰기가 멈춘 경우의 안내는 계속 표시됩니다.</string>
+                </property>
+                <property name="checked">
+                 <bool>false</bool>
+                </property>
+               </widget>
+              </item>
+             </layout>
+            </widget>
+           </item>
+           <item>
             <spacer name="verticalSpacer_settings">
              <property name="orientation">
               <enum>Qt::Orientation::Vertical</enum>

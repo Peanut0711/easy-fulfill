@@ -181,18 +181,127 @@ class StartupCheckTests(unittest.TestCase):
         self.assertEqual((config.writes, pcs.writes), (0, 0))
 
 
+    def test_reports_newer_version_used_by_other_pc(self):
+        config = FakeConfigSheet({})
+        pcs = FakePcSheet(self.gate.PC_VERSION_HEADERS)
+        pcs.rows += [["직원@PC2", "2026.11.20.1", "2026-11-20 09:00:00"],
+                     ["직원@PC3", "2026.11.18.2", "2026-11-18 09:00:00"],
+                     ["직원@PC4", "엉뚱한값", ""]]
+        with patch.object(self.gate, "APP_VERSION", "2026.11.17.1"), \
+                patch.object(self.gate, "MIN_COMPATIBLE_VERSION", "2026.11.17.1"):
+            result = self.run_check(config, pcs, datetime(2026, 11, 21))
+            self.assertEqual(result["latest"], "2026.11.20.1")
+            pcs.rows[1][1] = "2026.11.10.1"  # 다른 PC가 모두 더 낮거나 같으면 안내 없음
+            pcs.rows[2][1] = "2026.11.17.1"
+            self.assertEqual(self.run_check(config, pcs, datetime(2026, 11, 21))["latest"], "")
+
+    def test_own_older_row_is_not_reported_as_newer(self):
+        pcs = FakePcSheet(self.gate.PC_VERSION_HEADERS)
+        pcs.rows.append(["직원@PC1", "2999.1.1.1", ""])  # 이 PC의 예전 기록(다른 폴더에서 실행 등)
+        result = self.run_check(FakeConfigSheet({}), pcs, datetime(2026, 11, 21))
+        self.assertEqual(result["latest"], "")
+
+    def test_update_notice_due(self):
+        due = self.gate.update_notice_due
+        self.assertTrue(due("2026.11.20.1", ignored=False, snoozed_day="", today="2026-11-21"))
+        self.assertFalse(due("", ignored=False, snoozed_day="", today="2026-11-21"))
+        self.assertFalse(due("2026.11.20.1", ignored=True, snoozed_day="", today="2026-11-21"))
+        self.assertFalse(due("2026.11.20.1", ignored=False, snoozed_day="2026-11-21", today="2026-11-21"))
+        self.assertTrue(due("2026.11.20.1", ignored=False, snoozed_day="2026-11-20", today="2026-11-21"))
+
+
+class FakeLabel:
+    def __init__(self):
+        self.text = ""
+
+    def setText(self, text):
+        self.text = text
+
+
 class StartupNoticeTests(unittest.TestCase):
-    def test_outdated_result_shows_update_notice(self):
+    @classmethod
+    def setUpClass(cls):
         from tests.test_order_load_sheets import load_app_module
-        app = load_app_module()
+        cls.app = load_app_module()
+
+    def window(self, settings=None, answer="close"):
+        methods = ("_on_app_version_checked", "_update_app_version_label", "_maybe_show_update_notice",
+                   "_on_ignore_version_update_toggled")
+        cls = type("FakeWindow", (), {name: getattr(self.app.MainWindow, name) for name in methods})
+        window = cls()
+        window.settings = dict(settings or {})
+        window.get_app_setting = lambda key, default=None: window.settings.get(key, default)
+        window.set_app_setting = lambda key, value: window.settings.__setitem__(key, value)
+        window.asked = []
+        window._ask_update_notice = lambda latest: window.asked.append(latest) or answer
+        window.ui = type("Ui", (), {})()
+        window.ui.label_app_version = FakeLabel()
+        return window
+
+    def newer(self):
+        return {"ok": True, "blocked": False, "minimum": "2026.11.17.1", "version": "2026.11.17.1",
+                "latest": "2026.11.20.1"}
+
+    def today(self, text):
+        return patch("sheets.version_gate.today_text", lambda: text)
+
+    def test_newer_version_notice_once_per_session_when_closed(self):
+        window = self.window(answer="close")
+        with self.today("2026-11-21"):
+            window._on_app_version_checked(self.newer())
+            window._on_app_version_checked(self.newer())  # 1시간 뒤 다시 확인
+        self.assertEqual(window.asked, ["2026.11.20.1"])
+        self.assertIn("2026.11.20.1", window.ui.label_app_version.text)
+        with self.today("2026-11-21"):
+            restarted = self.window(window.settings)
+            restarted._on_app_version_checked(self.newer())  # 다시 실행하면 다시 안내
+        self.assertEqual(restarted.asked, ["2026.11.20.1"])
+
+    def test_snooze_today_survives_restart_until_tomorrow(self):
+        window = self.window(answer="snooze")
+        with self.today("2026-11-21"):
+            window._on_app_version_checked(self.newer())
+            restarted = self.window(window.settings)
+            restarted._on_app_version_checked(self.newer())
+        self.assertEqual(window.asked, ["2026.11.20.1"])
+        self.assertEqual(restarted.asked, [])  # 오늘은 다시 묻지 않음
+        with self.today("2026-11-22"):
+            tomorrow = self.window(window.settings)
+            tomorrow._on_app_version_checked(self.newer())
+        self.assertEqual(tomorrow.asked, ["2026.11.20.1"])
+
+    def test_ignore_option_suppresses_notice(self):
+        window = self.window()
+        window._on_ignore_version_update_toggled(True)
+        with self.today("2026-11-21"):
+            window._on_app_version_checked(self.newer())
+        self.assertEqual(window.asked, [])
+        self.assertIn("2026.11.20.1", window.ui.label_app_version.text)  # 버전 표시는 그대로
+        window._on_ignore_version_update_toggled(False)
+        with self.today("2026-11-21"):
+            window._on_app_version_checked(self.newer())
+        self.assertEqual(window.asked, ["2026.11.20.1"])
+
+    def test_blocked_warning_shows_once_even_when_ignoring(self):
+        window = self.window({"ignore_version_update_notice": True})
         shown = []
-        with patch.object(app.QMessageBox, "warning", lambda parent, title, text: shown.append((title, text))):
-            app.MainWindow._on_app_version_checked(None, {"ok": True, "blocked": True, "minimum": "2999.1.1.1"})
-            app.MainWindow._on_app_version_checked(None, {"ok": True, "blocked": False, "minimum": "1",
-                                                          "version": "2"})
+        blocked = {"ok": True, "blocked": True, "minimum": "2999.1.1.1", "version": "2026.11.17.1"}
+        with patch.object(self.app.QMessageBox, "warning", lambda parent, title, text: shown.append((title, text))):
+            window._on_app_version_checked(blocked)
+            window._on_app_version_checked(blocked)
         self.assertEqual(len(shown), 1)
         self.assertEqual(shown[0][0], "프로그램 업데이트 필요")
         self.assertIn("2999.1.1.1", shown[0][1])
+
+    def test_settings_tab_has_ignore_checkbox_off_by_default(self):
+        import xml.etree.ElementTree as ET
+        from pathlib import Path
+        tree = ET.parse(Path(__file__).resolve().parents[1] / "ui" / "main_window.ui")
+        box = tree.find(".//widget[@class='QCheckBox'][@name='checkBox_ignore_version_update']")
+        self.assertIsNotNone(box)
+        checked = box.find("./property[@name='checked']/bool")
+        self.assertTrue(checked is None or checked.text == "false")
+        self.assertIsNotNone(tree.find(".//widget[@name='tab_2']//widget[@name='checkBox_ignore_version_update']"))
 
 
 if __name__ == "__main__":

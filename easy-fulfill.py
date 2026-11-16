@@ -4492,26 +4492,95 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(APP_VERSION_CHECK_DELAY_MS, self._kickoff_app_version_check)
 
     def _kickoff_app_version_check(self):
+        running = getattr(self, "_app_version_check_thread", None)
+        if running is not None and isValid(running) and running.isRunning():
+            return
         thread = AppVersionCheckThread(self)
         thread.result_ready.connect(self._on_app_version_checked)
         thread.finished.connect(thread.deleteLater)
         self._app_version_check_thread = thread
         thread.start()
+        if getattr(self, "_app_version_timer", None) is None:
+            # 실행 중에도 1시간마다 다른 PC의 새 버전과 공유 최소 버전을 다시 확인한다.
+            from sheets.version_gate import VERSION_RECHECK_INTERVAL_MS
+            self._app_version_timer = QTimer(self)
+            self._app_version_timer.setInterval(VERSION_RECHECK_INTERVAL_MS)
+            self._app_version_timer.timeout.connect(self._kickoff_app_version_check)
+            self._app_version_timer.start()
 
     def _on_app_version_checked(self, result):
         if not result.get("ok"):
             print(f"! 앱 버전 확인 실패: {result.get('error')}")
             return
+        self._update_app_version_label(result)
         if result.get("blocked"):
-            from sheets.version_gate import blocked_message
-            QMessageBox.warning(self, "프로그램 업데이트 필요", blocked_message(result.get("minimum", "")))
+            # 시트 쓰기가 멈춘 상태라 「새 버전 안내 무시」와 관계없이 실행마다 한 번 알린다.
+            if not getattr(self, "_version_blocked_notice_shown", False):
+                self._version_blocked_notice_shown = True
+                from sheets.version_gate import blocked_message
+                QMessageBox.warning(self, "프로그램 업데이트 필요", blocked_message(result.get("minimum", "")))
             return
         print(f"앱 버전 {result.get('version')} (공유 최소 버전 {result.get('minimum') or '없음'})")
+        if result.get("latest"):
+            self._maybe_show_update_notice(result["latest"])
+
+    def _update_app_version_label(self, result):
+        label = getattr(self.ui, "label_app_version", None)
+        if label is None:
+            return
+        from sheets.version_gate import APP_VERSION
+        text = f"현재 버전 {result.get('version') or APP_VERSION}"
+        if result.get("blocked"):
+            text += f" · 공유 최소 버전 {result.get('minimum')}보다 낮아 시트 쓰기가 멈췄습니다. 소스트리에서 Pull 하세요."
+        elif result.get("latest"):
+            text += f" · 새 버전 {result['latest']} 있음 (소스트리에서 Pull 후 다시 실행)"
+        else:
+            text += " · 최신"
+        label.setText(text)
+
+    def _maybe_show_update_notice(self, latest):
+        """다른 PC가 쓰는 새 버전을 알린다. 닫으면 이번 실행 동안, 「오늘 더 이상 묻지 않음」이면 오늘 묻지 않는다."""
+        from sheets.version_gate import (
+            SETTING_IGNORE_UPDATE_NOTICE, SETTING_UPDATE_NOTICE_SNOOZED_DAY, today_text, update_notice_due)
+        dismissed = getattr(self, "_version_notice_dismissed", None)
+        if dismissed is None:
+            dismissed = self._version_notice_dismissed = set()
+        if latest in dismissed:
+            return
+        today = today_text()
+        if not update_notice_due(latest,
+                                 ignored=bool(self.get_app_setting(SETTING_IGNORE_UPDATE_NOTICE, False)),
+                                 snoozed_day=str(self.get_app_setting(SETTING_UPDATE_NOTICE_SNOOZED_DAY, "") or ""),
+                                 today=today):
+            return
+        dismissed.add(latest)
+        if self._ask_update_notice(latest) == "snooze":
+            self.set_app_setting(SETTING_UPDATE_NOTICE_SNOOZED_DAY, today)
+
+    def _ask_update_notice(self, latest):
+        """새 버전 안내 창. 반환: 'snooze'(오늘 더 이상 묻지 않음) 또는 'close'."""
+        from sheets.version_gate import APP_VERSION
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Information)
+        box.setWindowTitle("새 버전 안내")
+        box.setText(f"다른 PC에서 새 버전({latest})을 쓰고 있습니다. 이 PC는 {APP_VERSION}입니다.")
+        box.setInformativeText(
+            "소스트리에서 Pull 한 뒤 프로그램을 다시 실행하면 업데이트됩니다.\n"
+            "지금은 그대로 계속 쓸 수 있습니다. 「환경설정」→「프로그램 버전」에서 이 안내를 끌 수 있습니다.")
+        snooze = box.addButton("오늘 더 이상 묻지 않음", QMessageBox.ActionRole)
+        close = box.addButton("닫기", QMessageBox.RejectRole)
+        box.setDefaultButton(close)
+        box.exec()
+        return "snooze" if box.clickedButton() is snooze else "close"
+
+    def _on_ignore_version_update_toggled(self, checked):
+        from sheets.version_gate import SETTING_IGNORE_UPDATE_NOTICE
+        self.set_app_setting(SETTING_IGNORE_UPDATE_NOTICE, bool(checked))
 
     # ── 종료: 대기 중인 공유 시트 반영을 마친 뒤 닫는다 ─────────────────────
     _BACKGROUND_TIMER_NAMES = (
         "_index_sheet_poll_timer", "_tracking_list_timer", "_tracking_auto_refresh_timer",
-        "_naver_inquiry_timer",
+        "_naver_inquiry_timer", "_app_version_timer",
     )
 
     def _stop_background_timers(self):
@@ -5519,6 +5588,14 @@ class MainWindow(QMainWindow):
 
         # 환경설정 탭 버튼 연결
         self.ui.pushButton_gift_event_settings.clicked.connect(self._open_gift_event_settings)
+        # 프로그램 버전: 현재 버전 표시와 「새 버전 안내 무시」(이 PC 설정, 기본 꺼짐)
+        if hasattr(self.ui, "checkBox_ignore_version_update"):
+            from sheets.version_gate import APP_VERSION, SETTING_IGNORE_UPDATE_NOTICE
+            box = self.ui.checkBox_ignore_version_update
+            box.setChecked(bool(self.get_app_setting(SETTING_IGNORE_UPDATE_NOTICE, False)))
+            box.toggled.connect(self._on_ignore_version_update_toggled)
+            if hasattr(self.ui, "label_app_version"):
+                self.ui.label_app_version.setText(f"현재 버전 {APP_VERSION}")
         # 신규 DB 반영 UI·로직 제거(2026-04). (pushButton_database_* / load·apply_database_* 삭제)
         if hasattr(self.ui, 'pushButton_quick_excel_gen'):
             self.ui.pushButton_quick_excel_gen.clicked.connect(self.generate_quick_excel)
