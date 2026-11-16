@@ -19,6 +19,7 @@ naver_rows = build_invoice_rows("naver", {
 })
 assert len(naver_rows) == 1
 assert tuple(naver_rows[0]) == INVOICE_COLUMNS
+assert naver_rows[0]["주문번호"] == "N1"
 assert naver_rows[0]["우편번호"] == "00123"
 assert naver_rows[0]["배송메세지"] == ""
 assert naver_rows[0]["상품명"] == "상품A (옵션: 빨강) - 2개"

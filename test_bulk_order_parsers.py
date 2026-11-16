@@ -106,7 +106,7 @@ assert list(naver_split_orders) == ["N123456789012", "N123456789012|배송지2"]
 assert naver_split_orders["N123456789012"]["주문번호목록"] == ["N123456789012-A", "N123456789012-C"]
 assert naver_split_orders["N123456789012|배송지2"]["주문번호목록"] == ["N123456789012-B"]
 assert [(row["주문번호"], row["수취인 주소"]) for row in build_invoice_rows("naver", naver_split_orders)] == [
-    ("N123456789012", "서울"), ("N123456789012", "부산"),
+    ("N123456789012-A", "서울"), ("N123456789012-B", "부산"),
 ]
 
 gmarket_columns = {
