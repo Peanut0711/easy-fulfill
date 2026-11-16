@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Mapping, Sequence
 
+from sheets.worksheet_cache import open_cached
 from shared.lazy_import import deferred_module
 
 pd = deferred_module("pandas")  # 첫 화면 이후 처음 쓸 때 불러온다.
@@ -16,7 +17,15 @@ TRACKING_DETAIL_READ_BATCH_SIZE = 100
 def open_tracking_worksheet(
     gc, spreadsheet_id: str, sheet_title: str, headers: Sequence[str],
 ):
-    """배송추적 시트를 제목으로 열고 없으면 현재 스키마로 생성한다."""
+    """배송추적 시트를 제목으로 열고 없으면 현재 스키마로 생성한다.
+
+    처음 연 뒤에는 탭 속성을 기억해 메타데이터·헤더 확인 요청 없이 연다(sheets.worksheet_cache).
+    """
+    return open_cached(gc, spreadsheet_id, sheet_title,
+                       lambda: _open_tracking_worksheet(gc, spreadsheet_id, sheet_title, headers))
+
+
+def _open_tracking_worksheet(gc, spreadsheet_id, sheet_title, headers):
     spreadsheet = gc.open_by_key(spreadsheet_id)
     for worksheet in spreadsheet.worksheets():
         if worksheet.title == sheet_title:
@@ -35,7 +44,12 @@ def open_tracking_worksheet(
 def open_config_worksheet(
     gc, spreadsheet_id: str, sheet_title: str, headers: Sequence[str],
 ):
-    """공유 설정 시트를 제목으로 열고 없으면 현재 스키마로 생성한다."""
+    """공유 설정 시트를 제목으로 열고 없으면 현재 스키마로 생성한다(탭 속성은 잠시 기억한다)."""
+    return open_cached(gc, spreadsheet_id, sheet_title,
+                       lambda: _open_config_worksheet(gc, spreadsheet_id, sheet_title, headers))
+
+
+def _open_config_worksheet(gc, spreadsheet_id, sheet_title, headers):
     spreadsheet = gc.open_by_key(spreadsheet_id)
     for worksheet in spreadsheet.worksheets():
         if worksheet.title == sheet_title:

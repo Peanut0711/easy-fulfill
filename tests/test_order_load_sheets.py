@@ -19,6 +19,7 @@ from PySide6.QtCore import QCoreApplication
 from PySide6.QtWidgets import QApplication
 
 import sheets.google_sheets_oauth as oauth
+from sheets import worksheet_cache
 from sheets.batch_read import batch_get_all_values, fetch_sheet_properties, worksheet_from_properties
 
 
@@ -133,6 +134,8 @@ class OrderLoadSheetsTests(unittest.TestCase):
         oauth.get_authorized_gspread_client = cls.original_client
 
     def run_worker(self, http, *, legacy, store):
+        # 탭 속성 캐시는 프로세스 전체에서 공유되므로 매 실행을 캐시 없이 시작한다(요청 수 비교 기준).
+        worksheet_cache.clear()
         oauth.get_authorized_gspread_client = lambda: FakeClient(http)
         with contextlib.redirect_stdout(io.StringIO()):
             if legacy:

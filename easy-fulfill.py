@@ -668,7 +668,15 @@ def run_order_index_undo_worker():
 
 
 def _standalone_open_inquiry_ws(gc):
-    """공유 「문의알림」 탭을 제목으로 찾고, 없으면 맨 끝에 생성하고 헤더를 기록합니다."""
+    """공유 「문의알림」 탭을 제목으로 찾고, 없으면 맨 끝에 생성하고 헤더를 기록합니다.
+
+    처음 연 뒤에는 탭 속성을 기억해 메타데이터 요청 없이 연다(5분마다 도는 문의 폴링).
+    """
+    from sheets.worksheet_cache import open_cached
+    return open_cached(gc, SPREADSHEET_ID, INQUIRY_SHEET_TITLE, lambda: _open_inquiry_ws_uncached(gc))
+
+
+def _open_inquiry_ws_uncached(gc):
     spreadsheet = gc.open_by_key(SPREADSHEET_ID)
     for ws in spreadsheet.worksheets():
         if ws.title == INQUIRY_SHEET_TITLE:
