@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-import pandas as pd
+from shared.lazy_import import deferred_module
 
 from orders.bulk import consolidate_11st_orders, consolidate_gmarket_orders, work_order_amount
 from orders.gift_event import DEFAULT_GIFT_EVENT, GiftEvent
+
+pd = deferred_module("pandas")  # 첫 화면 이후 처음 쓸 때 불러온다.
 
 
 INVOICE_COLUMNS = (

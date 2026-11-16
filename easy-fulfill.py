@@ -9,8 +9,6 @@ import math
 import time
 from datetime import datetime, date, timedelta
 from pathlib import Path
-import pandas as pd
-import numpy as np
 import subprocess
 import tempfile
 import msoffcrypto
@@ -57,6 +55,7 @@ from PySide6.QtWebEngineCore import QWebEngineSettings
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from shiboken6 import isValid
 from shared.paths import APP_ROOT
+from shared.lazy_import import deferred_module, preload_modules_in_background
 from product_detail.detail_preview_server import DetailPreviewServer
 from product_detail.detail_image_upload import upload_image_for_editor, validated_cdn_url
 import requests
@@ -122,6 +121,10 @@ try:
     import gspread
 except ImportError:  # gspread는 스프레드시트 매핑에만 필요
     gspread = None
+# pandas(+NumPy)는 import에 수백 ms가 걸리지만 첫 화면에는 필요 없다.
+# 처음 쓸 때 불러오고, 창이 뜬 뒤 백그라운드에서 미리 불러온다(MainWindow.showEvent).
+pd = deferred_module("pandas")
+DATA_MODULE_PRELOAD_DELAY_MS = 300
 # 구글 스프레드시트(로컬 DB 대체) 설정
 SPREADSHEET_ID = "1F0l6FMjXvKXAR9WyDvxEWcRvji-TaJbBim_G12TJ2Pw"
 # 네이버 마크다운 상품 링크 (주문 처리 전용 고정 스토어)
@@ -4288,6 +4291,11 @@ class MainWindow(QMainWindow):
         if not self._startup_order_index_sync_started:
             self._startup_order_index_sync_started = True
             QTimer.singleShot(0, self._kickoff_startup_order_index_sync)
+            # 첫 화면을 그린 뒤 엑셀 처리용 pandas를 미리 불러와 첫 주문 엑셀 작업의 대기를 줄인다.
+            QTimer.singleShot(
+                DATA_MODULE_PRELOAD_DELAY_MS,
+                lambda: preload_modules_in_background("pandas"),
+            )
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

@@ -9,10 +9,12 @@ import re
 from datetime import datetime
 
 import gspread
-import pandas as pd
 from pathlib import Path
 
+from shared.lazy_import import deferred_module
 from shared.paths import APP_ROOT
+
+pd = deferred_module("pandas")  # 앱 시작 시 경로 표시만 할 때는 불러오지 않는다.
 
 from .google_sheets_oauth import get_authorized_gspread_client
 
