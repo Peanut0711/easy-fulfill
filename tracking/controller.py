@@ -76,6 +76,7 @@ from .workers import (
 
 
 TRACKING_SHEET_PUSH_DEBOUNCE_MS = 1200
+TRACKING_TABLE_REFRESH_DEBOUNCE_MS = 250  # 검색 입력·기준 변경 후 표를 다시 그리기까지 대기
 CONFIG_KEY_AUTO_REFRESH_MIN = "tracking_auto_refresh_min"
 TRACKING_AUTO_REFRESH_DEFAULT_MIN = 60
 COURIER_RECEIPT_PREFIX = "하이제니스"
@@ -175,8 +176,9 @@ class TrackingController(QObject):
                 self._on_tracking_filter_changed
             )
         if hasattr(self.ui, "lineEdit_tracking_recipient_search"):
+            # 글자마다 표 전체를 다시 그리지 않고 입력이 멈춘 뒤 한 번 그린다.
             self.ui.lineEdit_tracking_recipient_search.textChanged.connect(
-                self._populate_tracking_table
+                self._schedule_tracking_table_refresh
             )
 
     def show_help(self):
@@ -349,6 +351,16 @@ class TrackingController(QObject):
             overlay.show()
         else:
             overlay.hide()
+
+    def _schedule_tracking_table_refresh(self, *_args):
+        """검색어·정체 기준이 빠르게 바뀌는 동안은 기다렸다가 마지막 변경 뒤 한 번만 표를 그린다."""
+        timer = getattr(self.host, "_tracking_table_refresh_timer", None)
+        if timer is None:
+            timer = self._new_timer(single_shot=True)
+            timer.setInterval(TRACKING_TABLE_REFRESH_DEBOUNCE_MS)
+            timer.timeout.connect(self._populate_tracking_table)
+            self._tracking_table_refresh_timer = timer
+        timer.start()
 
     def _populate_tracking_table(self, *_args):
         table = getattr(self.ui, "tableWidget_tracking", None)
@@ -1062,7 +1074,7 @@ class TrackingController(QObject):
     def _push_tracking_config(self, key, value):
         """설정 1건을 로컬 저장 + 표 갱신 + 공유 「설정」 탭에 반영."""
         self.set_app_setting(key, value)
-        self._populate_tracking_table()
+        self._schedule_tracking_table_refresh()
         self.queue_tracking_config_write({key: value})
 
     def _on_stale_threshold_changed(self, category, value):
