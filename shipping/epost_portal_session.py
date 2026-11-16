@@ -159,12 +159,37 @@ def login_with_config_credentials(page, timeout_seconds: int) -> str:
     )
 
 
+LOGIN_FORM_STABLE_SECONDS = 1.5
+
+
+def _login_form_visible(page) -> bool:
+    try:
+        return page.locator(LOGIN_MEMBER_ID_SELECTOR).is_visible()
+    except Exception:
+        return False
+
+
 def ensure_portal_login(page, timeout_seconds: int) -> str:
     """유효한 세션을 우선 쓰고, 없으면 설정 탭 자격증명으로 로그인한다."""
     # 계약고객전용시스템은 초기 HTML 로드 뒤 화면을 비동기로 구성한다. 즉시 판정하면
-    # 이미 유효한 세션도 로그인 화면으로 오인할 수 있으므로, 먼저 짧게 기다린다.
-    if wait_for_logged_in_state(page, min(timeout_seconds, 12)):
-        return "saved_session"
+    # 이미 유효한 세션도 로그인 화면으로 오인할 수 있으므로 최대 12초 동안 로그인 표식을 기다리되,
+    # 로그인 입력칸이 LOGIN_FORM_STABLE_SECONDS 동안 계속 보이고 로그인 표식이 없으면 세션 만료로 보고
+    # 바로 로그인한다(만료된 세션에서 12초를 다 기다리지 않는다).
+    deadline = time.monotonic() + min(timeout_seconds, 12)
+    form_since = None
+    while time.monotonic() < deadline:
+        if page_has_logged_in_state(page):
+            return "saved_session"
+        if _login_form_visible(page):
+            form_since = form_since or time.monotonic()
+            if time.monotonic() - form_since >= LOGIN_FORM_STABLE_SECONDS:
+                break
+        else:
+            form_since = None
+        time.sleep(0.25)
+    else:
+        if page_has_logged_in_state(page):
+            return "saved_session"
     return login_with_config_credentials(page, timeout_seconds)
 
 
