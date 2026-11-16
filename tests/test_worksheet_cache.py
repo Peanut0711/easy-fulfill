@@ -13,11 +13,47 @@ TRACKING = "송장추적"
 CONFIG = "설정"
 
 
+class FakeResponse:
+    def __init__(self, code, message, status):
+        self.status_code = code
+        self._body = {"error": {"code": code, "message": message, "status": status}}
+        self.text = str(self._body)
+
+    def json(self):
+        return self._body
+
+
 class CacheHTTP(FakeSheetsHTTP):
-    """Worksheet.get()(row_values 등)이 요구하는 majorDimension을 응답에 넣는다."""
+    """Worksheet.get()(row_values 등)이 요구하는 majorDimension을 응답에 넣고, 실제 API처럼
+    없는 탭 이름은 400 「Unable to parse range」로 거절하며, 탭 추가·헤더 쓰기를 지원한다."""
+
+    forbidden_titles = ()
 
     def values_get(self, id, range, params=None):
+        from gspread.exceptions import APIError
+        from tests.test_order_load_sheets import _title
+        title, _ = _title(range)
+        if title in self.forbidden_titles:
+            raise APIError(FakeResponse(403, "The caller does not have permission", "PERMISSION_DENIED"))
+        if not any(tab["title"] == title for tab in self.tabs):
+            raise APIError(FakeResponse(400, f"Unable to parse range: {range}", "INVALID_ARGUMENT"))
         return {"majorDimension": "ROWS", **super().values_get(id, range, params)}
+
+    def batch_update(self, id, body):
+        request = body["requests"][0]["addSheet"]["properties"]
+        sheet_id = 90 + len(self.tabs)
+        self.calls.append(f"addSheet:{request['title']}")
+        self.tabs.append({"title": request["title"], "values": [], "sheetId": sheet_id})
+        properties = {"title": request["title"], "sheetId": sheet_id, "index": len(self.tabs) - 1,
+                      "gridProperties": request.get("gridProperties", {"rowCount": 100, "columnCount": 2})}
+        return {"replies": [{"addSheet": {"properties": properties}}]}
+
+    def values_update(self, id, range, params=None, body=None):
+        from tests.test_order_load_sheets import _title
+        title, _ = _title(range)
+        self.calls.append(f"update:{title}")
+        self._tab(title)["values"][:1] = [list(body["values"][0])]
+        return {}
 
 
 def worksheet_cache():
@@ -78,6 +114,31 @@ class WorksheetCacheTests(unittest.TestCase):
         self.http.calls.clear()
         open_config_worksheet(self.gc, "sid", CONFIG, ["키", "값"])
         self.assertEqual(self.http.calls.count("meta"), 2)
+
+    def test_renamed_tab_recovers_on_the_failing_call(self):
+        config = open_config_worksheet(self.gc, "sid", CONFIG, ["키", "값"])
+        config = open_config_worksheet(self.gc, "sid", CONFIG, ["키", "값"])  # 캐시로 연 탭
+        next(tab for tab in self.http.tabs if tab["title"] == CONFIG)["title"] = "설정(예전)"  # 누가 탭 이름을 바꿈
+        self.http.calls.clear()
+        # 캐시 없이 열던 때처럼 「설정」 탭을 다시 찾고(없으면 만들고) 같은 호출을 다시 실행한다.
+        self.assertEqual(config.get_all_values(), [["키", "값"]])
+        self.assertIn("meta", self.http.calls)
+        self.assertIn(f"addSheet:{CONFIG}", self.http.calls)
+        new_id = next(tab for tab in self.http.tabs if tab["title"] == CONFIG)["sheetId"]
+        self.http.calls.clear()
+        reopened = open_config_worksheet(self.gc, "sid", CONFIG, ["키", "값"])
+        self.assertEqual(reopened.id, new_id)  # 캐시가 새 탭으로 바뀜
+        self.assertEqual(self.http.calls, [])
+
+    def test_other_errors_are_raised_without_reopening(self):
+        from gspread.exceptions import APIError
+        open_config_worksheet(self.gc, "sid", CONFIG, ["키", "값"])
+        config = open_config_worksheet(self.gc, "sid", CONFIG, ["키", "값"])
+        self.http.forbidden_titles = (CONFIG,)
+        self.http.calls.clear()
+        with self.assertRaises(APIError):
+            config.get_all_values()
+        self.assertNotIn("meta", self.http.calls)
 
     def test_objects_without_gspread_properties_are_not_cached(self):
         # 테스트용 가짜 워크시트처럼 속성 정보가 없는 객체는 캐시하지 않고 매번 연다.
