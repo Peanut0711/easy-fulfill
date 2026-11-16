@@ -283,7 +283,8 @@ def fetch_product(product_no):
     return response.json()
 
 
-def download_image(url, path):
+def download_image(url, path, label=None):
+    """이미지를 받아 path에 저장하고 메타데이터를 반환한다. label은 재시도 로그에 쓸 이름(기본: 파일 이름)."""
     attempts = len(IMAGE_DOWNLOAD_RETRY_DELAYS) + 1
     for attempt in range(attempts):
         response = requests.get(url, timeout=30)
@@ -295,7 +296,7 @@ def download_image(url, path):
                         f"상품 원문의 이미지 주소를 확인하세요: {url}"
                     )
                 delay = IMAGE_DOWNLOAD_RETRY_DELAYS[attempt]
-                print(f"[이미지 다운로드 재시도] {path.name}: HTTP 404 · {delay}초 후 재시도 "
+                print(f"[이미지 다운로드 재시도] {label or path.name}: HTTP 404 · {delay}초 후 재시도 "
                       f"({attempt + 1}/{attempts - 1})", flush=True)
             else:
                 response.raise_for_status()
@@ -312,35 +313,54 @@ def download_image(url, path):
 IMAGE_PREFETCH_WORKERS = 4
 
 
-def prefetch_images(components, image_dir):
-    """상세 이미지들을 미리 병렬로 받아 둔다. 반환: 주소 → (임시 파일, 메타데이터 또는 예외).
+# build_preview가 이미지 행이 아닌 다른 형태로 그리는 구성요소(제목·구분선·인용·글·표)
+NON_IMAGE_COMPONENT_CLASSES = ("se-sectionTitle", "se-horizontalLine", "se-quotation", "se-text", "se-table")
 
-    본문 구성 순서·건너뛰는 구성요소 규칙은 build_preview가 그대로 결정하고, 여기서는
-    이미지가 들어 있을 수 있는 모든 구성요소의 주소를 미리 받기만 한다(쓰지 않은 파일은 지운다).
+
+def is_video_component(component):
+    return bool(classes(component) & {"se-oembed", "se-video"}) or any(node.tag == "iframe" for node in walk(component))
+
+
+def renders_as_images(component):
+    """build_preview가 이 구성요소를 이미지 행(image-NN.jpg)으로 그리는지."""
+    if is_video_component(component) and extract_youtube_videos(component):
+        return False
+    component_classes = classes(component)
+    return not any(name in component_classes for name in NON_IMAGE_COMPONENT_CLASSES)
+
+
+def prefetch_images(components, image_dir):
+    """본문에 쓰일 상세 이미지들을 미리 병렬로 받아 둔다. 반환: 주소 → (임시 파일, 메타데이터 또는 예외).
+
+    build_preview와 같은 규칙(renders_as_images)으로 이미지 행이 되는 구성요소만 받고, 같은 주소는
+    한 번만 받는다. 재시도 로그에는 그 이미지가 저장될 최종 파일 이름(image-NN.jpg)을 쓴다.
     """
     from concurrent.futures import ThreadPoolExecutor
 
-    urls = []
+    planned = []
+    seen = set()
+    image_index = 0
     for component in components:
-        try:
-            rows = image_rows(component)
-        except Exception:
+        if not renders_as_images(component):
             continue
-        for image_nodes, _columns in rows:
+        for image_nodes, _columns in image_rows(component):
             for node in image_nodes:
-                src = node.attrs.get("src")
-                if src and src not in urls:
-                    urls.append(src)
+                image_index += 1
+                src = node.attrs["src"]
+                if src not in seen:
+                    seen.add(src)
+                    planned.append((src, f"image-{image_index:02d}.jpg"))
 
-    def fetch(url):
+    def fetch(item):
+        url, final_name = item
         cache_path = image_dir / f".prefetch-{hashlib.sha1(url.encode('utf-8')).hexdigest()}.img"
         try:
-            return url, cache_path, download_image(url, cache_path)
+            return url, cache_path, download_image(url, cache_path, label=final_name)
         except Exception as error:  # 순차 다운로드에서 그 이미지 차례에 같은 오류를 낸다.
             return url, cache_path, error
 
     with ThreadPoolExecutor(max_workers=IMAGE_PREFETCH_WORKERS) as pool:
-        return {url: (cache_path, outcome) for url, cache_path, outcome in pool.map(fetch, urls)}
+        return {url: (cache_path, outcome) for url, cache_path, outcome in pool.map(fetch, planned)}
 
 
 def take_prefetched_image(prefetched, url, path):
@@ -422,8 +442,7 @@ def build_preview(product_no, product):
 
     try:
         for component_index, component in enumerate(components, 1):
-            component_classes = classes(component)
-            if component_classes & {"se-oembed", "se-video"} or any(node.tag == "iframe" for node in walk(component)):
+            if is_video_component(component):
                 videos = extract_youtube_videos(component)
                 if videos:
                     for video in videos:

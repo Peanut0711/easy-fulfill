@@ -1,5 +1,6 @@
 """네이버 상세 이미지를 병렬로 미리 받아도 순서·파일·오류가 순차 다운로드와 같은지 검증한다."""
 
+import contextlib
 import io
 import tempfile
 import threading
@@ -23,8 +24,19 @@ def png(width):
 
 
 class Handler(BaseHTTPRequestHandler):
+    requested = []
+    flaky_seen = set()
+
     def do_GET(self):
+        Handler.requested.append(self.path)
         time.sleep(DELAY)
+        if self.path.startswith("/flaky") and self.path not in Handler.flaky_seen:
+            Handler.flaky_seen.add(self.path)  # 처음 한 번만 404
+            self.send_response(404)
+            self.end_headers()
+            return
+        if self.path.startswith("/flaky"):
+            self.path = "/" + self.path.split("-", 1)[1]
         if self.path.startswith("/broken"):
             self.send_response(500)
             self.end_headers()
@@ -73,6 +85,26 @@ class PrefetchTests(unittest.TestCase):
         self.assertEqual(sorted(p.name for p in image_dir.iterdir()),
                          [f"image-{index:02d}.jpg" for index in range(1, 13)])  # 미리 받기 임시 파일 없음
         self.assertEqual(report["imageCount"] if "imageCount" in report else len(widths), len(widths))
+
+    def test_retry_log_names_final_image_file(self):
+        urls = [f"{self.base}/20.png", f"{self.base}/flaky-21.png"]
+        output = io.StringIO()
+        with patch.object(detail, "IMAGE_DOWNLOAD_RETRY_DELAYS", (0, 0)), contextlib.redirect_stdout(output):
+            self.build(urls)
+        log = output.getvalue()
+        self.assertIn("[이미지 다운로드 재시도] image-02.jpg", log)
+        self.assertNotIn(".prefetch", log)
+
+    def test_images_outside_rendered_image_components_are_not_downloaded(self):
+        Handler.requested.clear()
+        source = ('<div class="se-component se-table"><table><tr><td><img src="' + self.base
+                  + '/99.png"></td></tr></table></div>'
+                  '<div class="se-component se-image"><img src="' + self.base + '/22.png"></div>')
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        with patch.object(detail, "OUTPUT_ROOT", Path(directory.name)):
+            detail.build_preview("p2", {"originProduct": {"name": "상품", "detailContent": source}})
+        self.assertEqual(Handler.requested, ["/22.png"])  # 표 안 이미지는 본문 이미지로 쓰지 않아 받지 않음
 
     def test_failed_image_raises_like_sequential_download(self):
         with self.assertRaises(Exception) as raised:
