@@ -1,6 +1,7 @@
 """같은 브라우저 프로필(쿠팡·우체국)을 쓰는 작업이 동시에 실행되지 않는지 검증한다."""
 
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -22,14 +23,30 @@ time.sleep(float(sys.argv[3]))
 """
 
 
+def remove_tree_when_released(path, timeout=10.0):
+    """임시 폴더를 지운다. 강제 종료한 자식 프로세스의 잠금 파일 핸들을 Windows가 늦게 풀면
+    WinError 32(다른 프로세스가 사용 중)가 나므로, 풀릴 때까지 잠시 다시 시도한다.
+    제한 시간 안에 풀리지 않으면 검증 결과를 가리지 않도록 OS 임시 폴더에 남겨 둔다.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            shutil.rmtree(path)
+            return
+        except FileNotFoundError:
+            return
+        except PermissionError:
+            if time.monotonic() >= deadline:
+                return
+            time.sleep(0.1)
+
+
 class ProfileLockTests(unittest.TestCase):
     def setUp(self):
         from shared.profile_lock import release_profile_lock
-        # 강제 종료한 자식 프로세스의 잠금 파일 핸들을 Windows가 늦게 풀면 폴더 삭제가 실패할 수 있어,
-        # 정리 단계 오류가 검증 결과를 가리지 않도록 무시한다.
-        self.directory = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
-        self.addCleanup(self.directory.cleanup)
-        self.profile = Path(self.directory.name) / "coupang-browser-profile"
+        directory = Path(tempfile.mkdtemp())
+        self.addCleanup(remove_tree_when_released, directory)
+        self.profile = directory / "coupang-browser-profile"
         self.profile.mkdir()
         self.addCleanup(release_profile_lock, self.profile)
 
