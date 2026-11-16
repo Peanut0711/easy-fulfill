@@ -12,10 +12,9 @@ import sys
 from datetime import date, datetime
 from pathlib import Path
 
-try:
-    import gspread
-except ImportError:
-    gspread = None
+from shared.lazy_import import optional_deferred_module
+
+gspread = optional_deferred_module("gspread")  # 설치 여부만 확인하고 처음 쓸 때 불러온다.
 
 from PySide6.QtCore import QObject, Qt, QUrl
 from PySide6.QtGui import QColor, QDesktopServices

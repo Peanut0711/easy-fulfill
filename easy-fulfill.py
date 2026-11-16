@@ -12,7 +12,6 @@ from datetime import datetime, date, timedelta
 from pathlib import Path
 import subprocess
 import tempfile
-import msoffcrypto
 import shutil
 from PySide6.QtWidgets import (QApplication, QMainWindow, QFileDialog, QMessageBox, 
                               QInputDialog, QLineEdit, QTableWidgetItem, QLabel, 
@@ -56,11 +55,12 @@ from PySide6.QtWebEngineCore import QWebEngineSettings
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from shiboken6 import isValid
 from shared.paths import APP_ROOT
-from shared.lazy_import import deferred_module, preload_modules_in_background
+from shared.lazy_import import deferred_module, optional_deferred_module, preload_modules_in_background
 from shared.qt_background import run_in_background
-from product_detail.detail_preview_server import DetailPreviewServer
 from product_detail.detail_image_upload import upload_image_for_editor, validated_cdn_url
-import requests
+# 첫 화면에 필요 없는 네트워크·복호화 모듈은 처음 쓸 때 불러온다(시작 시간 단축).
+requests = deferred_module("requests")
+msoffcrypto = deferred_module("msoffcrypto")
 from io import BytesIO
 import warnings
 import logging
@@ -126,10 +126,16 @@ from shipping.post_parcel import (
 )
 from shipping.post_parcel_receipt_store import ParcelReceiptStore, ReceiptStoreError
 
-try:
-    import gspread
-except ImportError:  # gspread는 스프레드시트 매핑에만 필요
-    gspread = None
+# gspread는 스프레드시트 작업에만 필요하다. 설치 여부만 확인하고 처음 쓸 때 불러온다(약 0.2초).
+gspread = optional_deferred_module("gspread")
+
+
+def DetailPreviewServer(*args, **kwargs):
+    """상세 미리보기 서버(http.server 포함)는 미리보기를 열 때 불러온다."""
+    from product_detail.detail_preview_server import DetailPreviewServer as server_class
+    return server_class(*args, **kwargs)
+
+
 # pandas(+NumPy)는 import에 수백 ms가 걸리지만 첫 화면에는 필요 없다.
 # 처음 쓸 때 불러오고, 창이 뜬 뒤 백그라운드에서 미리 불러온다(MainWindow.showEvent).
 pd = deferred_module("pandas")

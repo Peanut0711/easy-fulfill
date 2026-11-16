@@ -32,6 +32,19 @@ class DeferredModule:
     def __getattr__(self, attr: str):
         return getattr(self._load(), attr)
 
+    def __setattr__(self, attr: str, value) -> None:
+        # 대리 객체 자신의 상태 외에는 실제 모듈에 쓴다(테스트의 patch.object 등).
+        if attr in DeferredModule.__slots__:
+            object.__setattr__(self, attr, value)
+        else:
+            setattr(self._load(), attr, value)
+
+    def __delattr__(self, attr: str) -> None:
+        if attr in DeferredModule.__slots__:
+            object.__delattr__(self, attr)
+        else:
+            delattr(self._load(), attr)
+
     def __dir__(self):
         return dir(self._load())
 
@@ -43,6 +56,19 @@ class DeferredModule:
 def deferred_module(name: str) -> DeferredModule:
     """처음 사용할 때 import되는 모듈 대리 객체를 만든다."""
     return DeferredModule(name)
+
+
+def optional_deferred_module(name: str) -> DeferredModule | None:
+    """설치돼 있으면 처음 쓸 때 import되는 대리 객체, 설치돼 있지 않으면 None.
+
+    'import x / except ImportError: x = None' 패턴을 import 비용 없이 대신한다.
+    """
+    import importlib.util
+    try:
+        found = importlib.util.find_spec(name) is not None
+    except (ImportError, ValueError):
+        found = False
+    return DeferredModule(name) if found else None
 
 
 def preload_modules_in_background(*names: str) -> threading.Thread:

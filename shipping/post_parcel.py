@@ -15,8 +15,11 @@ import secrets
 from typing import Mapping, Sequence
 import xml.etree.ElementTree as ET
 
-import requests
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
+from shared.lazy_import import deferred_module
+
+requests = deferred_module("requests")  # 앱 시작 시에는 불러오지 않고 첫 요청 때 불러온다.
 
 
 API_BASE_URL = "http://ship.epost.go.kr/api.{}.jparcel"

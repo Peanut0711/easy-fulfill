@@ -8,15 +8,19 @@ easy-fulfill UI·database-sync CLI 모두 이 모듈을 사용합니다.
 import re
 from datetime import datetime
 
-import gspread
 from pathlib import Path
 
 from shared.lazy_import import deferred_module
 from shared.paths import APP_ROOT
 
-pd = deferred_module("pandas")  # 앱 시작 시 경로 표시만 할 때는 불러오지 않는다.
+# 앱 시작 시 경로 표시만 할 때는 pandas·gspread·Google 인증 모듈을 불러오지 않는다.
+pd = deferred_module("pandas")
+gspread = deferred_module("gspread")
 
-from .google_sheets_oauth import get_authorized_gspread_client
+
+def get_authorized_gspread_client(*args, **kwargs):
+    from .google_sheets_oauth import get_authorized_gspread_client as authorize
+    return authorize(*args, **kwargs)
 
 # 기본 스프레드시트 ID (앱·CLI에서 동일 값 사용)
 DEFAULT_SPREADSHEET_ID = "1F0l6FMjXvKXAR9WyDvxEWcRvji-TaJbBim_G12TJ2Pw"

@@ -27,7 +27,8 @@ class LoginPolicyTests(unittest.TestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
         self.flow = MagicMock()
-        patcher = patch.object(oauth.InstalledAppFlow, "from_client_secrets_file", return_value=self.flow)
+        from google_auth_oauthlib.flow import InstalledAppFlow  # 모듈은 로그인할 때 이 클래스를 불러온다
+        patcher = patch.object(InstalledAppFlow, "from_client_secrets_file", return_value=self.flow)
         patcher.start()
         self.addCleanup(patcher.stop)
         self.addCleanup(self.directory.cleanup)

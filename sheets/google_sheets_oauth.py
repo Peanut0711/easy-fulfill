@@ -10,12 +10,12 @@ from __future__ import annotations
 
 import threading
 
-import gspread
-from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
 
 from shared.paths import APP_ROOT
+
+# gspread·google_auth_oauthlib(요청·로컬 웹서버 포함)은 무거워(약 0.3초) 실제 로그인·연결할 때 불러온다.
+# 앱 시작 시에는 연동 상태 표시(get_oauth_status_description)만 쓰므로 Credentials만 미리 불러온다.
 
 GOOGLE_AUTH_DIR = APP_ROOT / "google-oauth"
 OAUTH_CREDENTIAL_PATH = GOOGLE_AUTH_DIR / "credentials.json"
@@ -64,6 +64,10 @@ def get_authorized_gspread_client(interactive: bool | None = None,
     저장된 토큰을 쓸 수 없으면 interactive일 때만 브라우저 로그인을 열고(최대 timeout_seconds,
     동시에 하나만), 아니면 GoogleLoginRequiredError를 냅니다.
     """
+    import gspread
+    from google.auth.transport.requests import Request
+    from google_auth_oauthlib.flow import InstalledAppFlow
+
     if interactive is None:
         interactive = _interactive_login_default
     GOOGLE_AUTH_DIR.mkdir(parents=True, exist_ok=True)

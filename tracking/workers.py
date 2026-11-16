@@ -43,10 +43,9 @@ from .service import (
     tracking_management_state as _tracking_management_state,
 )
 
-try:
-    import gspread
-except ImportError:
-    gspread = None
+from shared.lazy_import import optional_deferred_module
+
+gspread = optional_deferred_module("gspread")  # 설치 여부만 확인하고 처음 쓸 때 불러온다.
 
 SPREADSHEET_ID = "1F0l6FMjXvKXAR9WyDvxEWcRvji-TaJbBim_G12TJ2Pw"
 TRACKING_SHEET_TITLE = "송장추적"
