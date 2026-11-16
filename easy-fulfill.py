@@ -3074,6 +3074,7 @@ class MainWindow(QMainWindow):
         self.orders = {}  # orders 변수를 인스턴스 변수로 초기화
         self._order_gift_event = DEFAULT_GIFT_EVENT
         self.is_order_file_valid = False  # 주문서 파일 유효성 플래그
+        self._pending_loaded_order_path = None  # 처리 성공 시 '오늘 불러온 파일'로 기록할 경로
         self.is_invoice_file_valid = False  # 송장 파일 유효성 플래그
         
         # 스프레드시트 매핑 캐시 (네이버/쿠팡)
@@ -4722,7 +4723,7 @@ class MainWindow(QMainWindow):
                         "경고",
                         f"스프레드시트 매핑을 불러오지 못했습니다.\n\n{err}",
                     )
-                self.is_order_file_valid = False
+                self._finish_order_processing(False)
                 return
 
             st = payload["store_type"]
@@ -4731,16 +4732,17 @@ class MainWindow(QMainWindow):
                 self._coupang_option_to_vp_product_no = payload.get("coupang_vp") or {}
 
             try:
+                ok = False
                 if st == "naver":
                     if getattr(self, "_naver_order_source", "file") == "api":
-                        self.process_naver_api_orders()
+                        ok = self.process_naver_api_orders()
                     else:
-                        self.process_naver_excel_file()
+                        ok = self.process_naver_excel_file()
                 elif st == "coupang":
-                    self.process_coupang_excel_file()
-                self.is_order_file_valid = True
+                    ok = self.process_coupang_excel_file()
+                self._finish_order_processing(ok is True)
             except Exception as e:
-                self.is_order_file_valid = False
+                self._finish_order_processing(False)
                 print(f"❌ 파일 처리 중 오류 발생: {str(e)}")
                 if _is_likely_google_sheets_oauth_error(e):
                     QMessageBox.critical(
@@ -6934,8 +6936,9 @@ class MainWindow(QMainWindow):
             print(f"\n[파일 선택됨] 경로: {file_path}")
             filename = os.path.basename(file_path)
             
-            is_valid, self.store_type = self.is_valid_filename(filename)
-            
+            # 스토어 종류는 확인 질문을 통과한 뒤에 바꾼다(취소하면 기존 주문 상태 유지).
+            is_valid, store_type = self.is_valid_filename(filename)
+
             if is_valid:
                 # 중복 로드 차단: 오늘 이미 불러온 동일 파일이면 확인(기본 취소).
                 # 실수로 같은 주문을 또 불러와 인덱스가 중복으로 올라가는 것을 방지.
@@ -6948,7 +6951,9 @@ class MainWindow(QMainWindow):
                         self.statusBar().showMessage("중복 파일 — 불러오기 취소")
                         print("⏭ 중복 파일로 불러오기를 취소했습니다.")
                         return
-                self._record_loaded_order(file_path)
+                self.store_type = store_type
+                # '오늘 불러온 파일' 기록은 처리에 성공한 뒤 남긴다(_finish_order_processing).
+                self._pending_loaded_order_path = file_path
                 self._naver_order_source = "file"
                 self._naver_dispatch_api_rows = None  # 엑셀 주문서로 바꾸면 API 주문 행은 쓰지 않는다.
                 self.selected_file_path = file_path
@@ -6969,7 +6974,7 @@ class MainWindow(QMainWindow):
                     defer_if_busy=True,
                 )
             else:
-                self.is_order_file_valid = False
+                # 잘못 고른 파일은 거절만 하고, 이미 불러온 주문 상태는 그대로 둔다.
                 QMessageBox.warning(
                     self,
                     "잘못된 파일명",
@@ -6977,17 +6982,28 @@ class MainWindow(QMainWindow):
                     "네이버 스토어: 스마트스토어_전체주문발주발송관리_YYYYMMDD_HHMM.xlsx\n"
                     "쿠팡 스토어: DeliveryList(YYYY-MM-DD)_(0).xlsx"
                 )
-                self.selected_file_path = None
-                self._set_status_label(self.ui.filePathLabel, "주문 정보가 없습니다.")
-                self.statusBar().showMessage("잘못된 파일명")
+                self.statusBar().showMessage("잘못된 파일명 — 기존 주문 정보를 유지합니다.")
                 print("❌ 파일 선택이 취소되었습니다.")
         else:
-            self.is_order_file_valid = False
+            # 파일 선택 창을 취소해도 이미 불러온 주문 상태는 그대로 둔다.
             print("\n[알림] 파일 선택이 취소되었습니다.")
+
+    def _finish_order_processing(self, ok):
+        """주문 처리 결과를 반영한다. 성공한 경우에만 유효로 표시하고 '오늘 불러온 파일'로 기록한다."""
+        self.is_order_file_valid = bool(ok)
+        path = getattr(self, "_pending_loaded_order_path", None)
+        self._pending_loaded_order_path = None
+        if ok and path:
+            self._record_loaded_order(path)
+        if not ok:
+            self.orders = {}  # 실패한 파일로 이전 주문을 내보내지 않도록 비운다.
 
     def _continue_order_file_processing_after_index(self):
         """백그라운드 인덱스 동기화 완료 후 로고 표시 + 파일 처리로 이어갑니다."""
         order_processing_async = False
+        # 새 주문을 처리하기 전에 이전 주문을 비운다(실패해도 이전 주문이 남지 않게).
+        self.orders = {}
+        self.is_order_file_valid = False
         try:
             # 스토어 이름을 텍스트로 표시(이미지 대신)
             self._set_store_label(self.store_type)
@@ -7004,14 +7020,12 @@ class MainWindow(QMainWindow):
                     self._run_order_file_processing_with_async_mapping("coupang")
                 elif self.store_type == "gmarket":
                     print("✓ 지마켓 스토어 파일 처리 시작")
-                    self.process_gmarket_excel_file()
-                    self.is_order_file_valid = True
+                    self._finish_order_processing(self.process_gmarket_excel_file() is True)
                 elif self.store_type == "11st":
                     print("✓ 11번가 스토어 파일 처리 시작")
-                    self.process_11st_excel_file()
-                    self.is_order_file_valid = True
+                    self._finish_order_processing(self.process_11st_excel_file() is True)
             except Exception as e:
-                self.is_order_file_valid = False
+                self._finish_order_processing(False)
                 print(f"❌ 파일 처리 중 오류 발생: {str(e)}")
                 QMessageBox.warning(
                     self, "오류", f"파일 처리 중 오류가 발생했습니다: {str(e)}"
@@ -7164,8 +7178,9 @@ class MainWindow(QMainWindow):
                     
                     raise Exception(error_msg)
             
-            self._build_naver_orders_from_df(df, product_mapping)
+            return self._build_naver_orders_from_df(df, product_mapping)
             
+            return True  # 처리 성공(실패·누락 열 반환은 None)
         except Exception as e:
             error_msg = str(e)
             print(f"❌ 엑셀 파일 처리 중 오류 발생: {error_msg}")
@@ -7299,6 +7314,7 @@ class MainWindow(QMainWindow):
             clipboard = QApplication.clipboard()
             clipboard.setText(markdown_text)
             self.statusBar().showMessage("주문 정보가 클립보드에 복사되었습니다.", 2000)
+            return True  # 처리 성공(실패·누락 열 반환은 None)
         except Exception as e:
             error_msg = str(e)
             print(f"❌ 네이버 주문 처리 중 오류 발생: {error_msg}")
@@ -7323,11 +7339,13 @@ class MainWindow(QMainWindow):
             self._naver_dispatch_api_rows = None
             product_mapping = self._load_product_code_map_from_spreadsheet("naver")
             df = pd.DataFrame(rows)
-            self._build_naver_orders_from_df(df, product_mapping)
+            if self._build_naver_orders_from_df(df, product_mapping) is not True:
+                return False  # 실패한 주문은 '오늘 불러옴'으로 기록하지 않아 다시 불러올 수 있다.
             # 일괄발송 파일 생성은 주문 엑셀 대신 이 API 주문 행으로 한다.
             self._naver_dispatch_api_rows = [dict(row) for row in rows]
             self._record_loaded_naver_order_ids(
                 [r.get("_상품주문번호") for r in rows])
+            return True
         finally:
             self._naver_order_source = "file"
 
@@ -7377,6 +7395,7 @@ class MainWindow(QMainWindow):
             return
         self._api_order_rows = rows
         self._naver_order_source = "api"
+        self._pending_loaded_order_path = None  # API 주문은 처리 성공 시 주문번호로 기록한다.
         self.store_type = "naver"
         # 엑셀 경로와 동일하게: 인덱스 동기화 후 처리로 이어감(오버레이 유지)
         self._begin_order_index_read(
@@ -7611,6 +7630,7 @@ class MainWindow(QMainWindow):
             clipboard.setText(markdown_text)
             self.statusBar().showMessage("주문 정보가 클립보드에 복사되었습니다.", 2000)
             
+            return True  # 처리 성공(실패·누락 열 반환은 None)
         except Exception as e:
             error_msg = str(e)
             print(f"❌ 엑셀 파일 처리 중 오류 발생: {error_msg}")
@@ -7804,6 +7824,7 @@ class MainWindow(QMainWindow):
             clipboard.setText(markdown_text)
             self.statusBar().showMessage("주문 정보가 클립보드에 복사되었습니다.", 2000)
             
+            return True  # 처리 성공(실패·누락 열 반환은 None)
         except Exception as e:
             error_msg = str(e)
             print(f"❌ 엑셀 파일 처리 중 오류 발생: {error_msg}")
@@ -7938,6 +7959,7 @@ class MainWindow(QMainWindow):
             clipboard.setText(markdown_text)
             self.statusBar().showMessage("주문 정보가 클립보드에 복사되었습니다.", 2000)
 
+            return True  # 처리 성공(실패·누락 열 반환은 None)
         except Exception as e:
             error_msg = str(e)
             print(f"❌ 엑셀 파일 처리 중 오류 발생: {error_msg}")
