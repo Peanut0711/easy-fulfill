@@ -219,6 +219,8 @@ NAVER_INQUIRY_REMIND_MIN = 60  # 미답변 리마인더 재알림 주기(분)
 # 문의 조회 주기 선점: 다른 PC가 이 시간 안에 조회를 시작했으면 이번 주기는 건너뛴다(중복 발송 방지).
 CONFIG_KEY_INQUIRY_POLL_CLAIM = "inquiry_poll_claim"
 INQUIRY_POLL_CLAIM_SECONDS = 240
+# 선점을 쓴 뒤 다시 읽기까지 기다리는 시간. 동시에 선점한 다른 PC의 쓰기가 끝나도록 둔다.
+INQUIRY_POLL_CLAIM_VERIFY_DELAY_SEC = 2.0
 # 미답변 알림 허용 시간대(근무시간) 기본값: 평일 10:00~19:00. 그 외에는 알림을 보내지 않고
 # 「최근알림시각」도 건드리지 않는다 → 근무 시작 시각에 밀린 미답변이 한 번에 환기된다.
 # 설정 팝업에서 사용자가 시작/종료 시각을 바꿀 수 있고, 공유 「설정」 탭으로 전원 적용된다.
@@ -777,11 +779,17 @@ def run_naver_inquiry_poll_worker():
         if (claim_dt is not None and claim_actor != actor
                 and timedelta(0) <= now_dt - claim_dt < timedelta(seconds=INQUIRY_POLL_CLAIM_SECONDS)):
             return {"ok": True, "skipped_other_pc": True}
+        my_claim = f"{now_dt:%Y-%m-%d %H:%M:%S}|{actor}"
         try:
             _write_config_values_checked(
-                cfg_ws, {CONFIG_KEY_INQUIRY_POLL_CLAIM: f"{now_dt:%Y-%m-%d %H:%M:%S}|{actor}"},
+                cfg_ws, {CONFIG_KEY_INQUIRY_POLL_CLAIM: my_claim},
                 expected={CONFIG_KEY_INQUIRY_POLL_CLAIM: claim_value})
         except ConfigValueChangedError:
+            return {"ok": True, "skipped_other_pc": True}
+        # 읽고 쓰는 사이(1초 미만)에 다른 PC도 선점을 쓸 수 있다. 서로의 쓰기가 끝날 만큼
+        # 기다린 뒤 다시 읽어, 마지막으로 남은 선점이 내 것일 때만 진행한다(마지막 쓰기가 이긴다).
+        time.sleep(INQUIRY_POLL_CLAIM_VERIFY_DELAY_SEC)
+        if _read_config_values_map(cfg_ws).get(CONFIG_KEY_INQUIRY_POLL_CLAIM, "") != my_claim:
             return {"ok": True, "skipped_other_pc": True}
         from_dt = now_dt - timedelta(days=NAVER_INQUIRY_LOOKBACK_DAYS)
         records = []

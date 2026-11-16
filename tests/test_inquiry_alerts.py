@@ -77,6 +77,7 @@ class InquiryAlertTests(unittest.TestCase):
                 {"questionId": 7, "createDate": "2026-11-16", "productName": "상품", "question": "재고 있나요?"}]),
             patch.object(naver_commerce, "fetch_customer_inquiries", lambda *a, **k: []),
             patch.object(slack_notify, "send_slack", self.fake_slack),
+            patch.object(self.app, "INQUIRY_POLL_CLAIM_VERIFY_DELAY_SEC", 0),
         ]
         for item in patches:
             item.start()
@@ -111,6 +112,26 @@ class InquiryAlertTests(unittest.TestCase):
         self.assertEqual(self.token_calls, [])
         self.assertEqual(self.slack_calls, [])
         self.assertEqual(len(self.inquiries.rows), 1)
+
+    def test_simultaneous_claim_lost_to_other_pc_skips_poll(self):
+        # 두 PC가 거의 동시에 선점: 내 쓰기 직후 다른 PC의 선점 값이 덮어쓴다(마지막 쓰기가 이긴다).
+        config = self.config
+        other = f"{datetime.now():%Y-%m-%d %H:%M:%S}|다른PC@HOST"
+        original_append, original_update = config.append_rows, config.batch_update
+
+        def overwrite_claim():
+            for row in config.rows[1:]:
+                if row[0] == "inquiry_poll_claim":
+                    row[1] = other
+
+        config.append_rows = lambda rows, **k: (original_append(rows, **k), overwrite_claim())
+        config.batch_update = lambda updates, **k: (original_update(updates, **k), overwrite_claim())
+        result = self.poll()
+        self.assertTrue(result["ok"], result)
+        self.assertTrue(result.get("skipped_other_pc"), result)
+        self.assertEqual(self.token_calls, [])
+        self.assertEqual(self.slack_calls, [])
+        self.assertEqual(config.value("inquiry_poll_claim"), other)  # 다른 PC의 선점을 건드리지 않음
 
     def test_poll_claims_the_slot(self):
         self.slack_ok[0] = True
