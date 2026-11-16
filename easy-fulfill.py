@@ -6968,6 +6968,7 @@ class MainWindow(QMainWindow):
                         return
                 self._record_loaded_order(file_path)
                 self._naver_order_source = "file"
+                self._naver_dispatch_api_rows = None  # 엑셀 주문서로 바꾸면 API 주문 행은 쓰지 않는다.
                 self.selected_file_path = file_path
                 self._set_status_label(self.ui.filePathLabel, filename, ok=True)
                 self.statusBar().showMessage(f"파일 선택됨: {filename}")
@@ -7337,9 +7338,12 @@ class MainWindow(QMainWindow):
         try:
             rows = getattr(self, "_api_order_rows", None) or []
             print(f"\n[네이버 API 주문 처리 시작] {len(rows)}건")
+            self._naver_dispatch_api_rows = None
             product_mapping = self._load_product_code_map_from_spreadsheet("naver")
             df = pd.DataFrame(rows)
             self._build_naver_orders_from_df(df, product_mapping)
+            # 일괄발송 파일 생성은 주문 엑셀 대신 이 API 주문 행으로 한다.
+            self._naver_dispatch_api_rows = [dict(row) for row in rows]
             self._record_loaded_naver_order_ids(
                 [r.get("_상품주문번호") for r in rows])
         finally:
@@ -7978,6 +7982,7 @@ class MainWindow(QMainWindow):
         
         # 파일 관련 정보 초기화
         self.selected_file_path = None
+        self._naver_dispatch_api_rows = None
         self.store_type = None
         
         # UI 요소 초기화
@@ -9371,10 +9376,16 @@ class MainWindow(QMainWindow):
             temp_dir = Path("temp")
             temp_dir.mkdir(exist_ok=True)
 
+            # 네이버 주문을 API로 불러왔으면 주문 엑셀 대신 그 주문 행으로 만든다
+            # (이전에 선택한 엑셀이 남아 있어도 쓰지 않는다).
+            api_rows = (getattr(self, "_naver_dispatch_api_rows", None)
+                        if self.store_type == "naver" else None)
+
             # 파일 복사
             temp_order_file = temp_dir / "temp_order.xlsx"
             temp_invoice_file = temp_dir / "temp_invoice.xlsx"
-            shutil.copy2(self.selected_file_path, temp_order_file)
+            if api_rows is None:
+                shutil.copy2(self.selected_file_path, temp_order_file)
             shutil.copy2(self.invoice_file_path, temp_invoice_file)
             # 미리보기에서 읽은 송장 데이터가 원본과 같으면 엑셀을 다시 읽지 않는다.
             invoice_df = self._cached_invoice_excel(self.invoice_file_path)
@@ -9383,7 +9394,9 @@ class MainWindow(QMainWindow):
 
             # 스토어 타입에 따른 처리 분기
             if self.store_type == "naver":
-                self._process_naver_invoice(temp_order_file, temp_invoice_file, invoice_df)
+                self._process_naver_invoice(
+                    temp_order_file if api_rows is None else None, temp_invoice_file, invoice_df,
+                    api_rows=api_rows)
             elif self.store_type == "coupang":
                 self._process_coupang_invoice(temp_order_file, temp_invoice_file, invoice_df)
             # 생성 결과를 송장 상태줄에 통합 표기(전용 라인 제거됨)
@@ -9392,7 +9405,7 @@ class MainWindow(QMainWindow):
                 self.ui.label_invoice, f"{_inv} · 발송 생성 완료 ✓", ok=True)
 
             # 임시 파일 정리
-            temp_order_file.unlink()
+            temp_order_file.unlink(missing_ok=True)
             temp_invoice_file.unlink()
             temp_dir.rmdir()
 
@@ -9407,33 +9420,51 @@ class MainWindow(QMainWindow):
                 f"일괄 발송 파일 생성 중 오류가 발생했습니다.\n\n{error_msg}"
             )
             
-    def _process_naver_invoice(self, temp_order_file, temp_invoice_file, invoice_df=None):
-        """네이버 스토어 일괄 발송 파일 처리"""
+    @staticmethod
+    def _naver_api_rows_to_order_frame(rows):
+        """API 주문 행(주문 엑셀과 같은 열 이름)을 발송 처리용 주문서 표로 바꾼다."""
+        frame = pd.DataFrame([dict(row) for row in rows])
+        frame = frame.rename(columns={"_상품주문번호": "상품주문번호"})
+        frame = frame.drop(columns=[column for column in frame.columns if str(column).startswith("_")])
+        for column in ("배송방법", "송장번호"):
+            if column not in frame.columns:
+                frame[column] = ""
+        if "상품주문번호" in frame.columns:
+            frame = frame[["상품주문번호"] + [c for c in frame.columns if c != "상품주문번호"]]
+        return frame.reset_index(drop=True)
+
+    def _process_naver_invoice(self, temp_order_file, temp_invoice_file, invoice_df=None, api_rows=None):
+        """네이버 스토어 일괄 발송 파일 처리(api_rows가 있으면 주문 엑셀 대신 API 주문 행 사용)"""
         print("\n[네이버 스토어 일괄 발송 파일 처리 시작]")
-        
+
+        decrypted_order_file = None
         try:
-            # 1. 주문서 파일 복호화
-            password = "1234"
-            decrypted_order_file = Path("temp") / "decrypted_order.xlsx"
-            
-            with open(temp_order_file, 'rb') as file:
-                office_file = msoffcrypto.OfficeFile(file)
-                office_file.load_key(password=password)
-                with open(decrypted_order_file, 'wb') as output_file:
-                    office_file.decrypt(output_file)
-            
-            # 2. 주문서 데이터프레임 생성
-            order_df = pd.read_excel(decrypted_order_file, sheet_name='발주발송관리', header=None)
-            order_df = order_df.drop(0).reset_index(drop=True)
-            
-            # 열 이름 설정
-            new_columns = []
-            for i in range(len(order_df.columns)):
-                col_name = str(order_df.iloc[0, i]).strip()
-                new_columns.append(col_name if col_name and not col_name.startswith('Unnamed') else f'Column_{i}')
-            
-            order_df.columns = new_columns
-            order_df = order_df.drop(0).reset_index(drop=True)
+            if api_rows is not None:
+                print(f"✓ API로 불러온 주문 {len(api_rows)}행으로 생성합니다.")
+                order_df = self._naver_api_rows_to_order_frame(api_rows)
+            else:
+                # 1. 주문서 파일 복호화
+                password = "1234"
+                decrypted_order_file = Path("temp") / "decrypted_order.xlsx"
+
+                with open(temp_order_file, 'rb') as file:
+                    office_file = msoffcrypto.OfficeFile(file)
+                    office_file.load_key(password=password)
+                    with open(decrypted_order_file, 'wb') as output_file:
+                        office_file.decrypt(output_file)
+
+                # 2. 주문서 데이터프레임 생성
+                order_df = pd.read_excel(decrypted_order_file, sheet_name='발주발송관리', header=None)
+                order_df = order_df.drop(0).reset_index(drop=True)
+
+                # 열 이름 설정
+                new_columns = []
+                for i in range(len(order_df.columns)):
+                    col_name = str(order_df.iloc[0, i]).strip()
+                    new_columns.append(col_name if col_name and not col_name.startswith('Unnamed') else f'Column_{i}')
+
+                order_df.columns = new_columns
+                order_df = order_df.drop(0).reset_index(drop=True)
             
             # 운송장번호 컬럼 추가 (B열)
             order_df['운송장번호'] = ''
@@ -9635,7 +9666,8 @@ class MainWindow(QMainWindow):
             self._enqueue_tracking_registration(naver_matched_records)
 
             # 8. 임시 파일 정리
-            decrypted_order_file.unlink()
+            if decrypted_order_file is not None:
+                decrypted_order_file.unlink()
             
         except Exception as e:
             error_msg = str(e)
