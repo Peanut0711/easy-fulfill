@@ -25,6 +25,7 @@ from PIL import Image, ImageOps
 from playwright.sync_api import sync_playwright
 
 from shared.paths import APP_ROOT
+from shared.profile_lock import hold_profile_lock
 
 from .detail_image_layout import upgrade_legacy_image_groups
 
@@ -577,6 +578,8 @@ def _is_wing_seller_url(url: str):
 
 
 def launch_coupang_context(playwright, headless=False):
+    # 같은 WING 프로필을 다른 작업(HTML 채우기·사진 업로드·세션 삭제)이 쓰는 중이면 바로 알린다.
+    hold_profile_lock(PROFILE_DIR, "쿠팡 WING")
     PROFILE_DIR.mkdir(parents=True, exist_ok=True)
     launch_options = {"headless": headless}
     if not headless:

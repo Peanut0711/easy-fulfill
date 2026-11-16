@@ -15,6 +15,7 @@ from typing import Mapping
 from urllib.parse import urlparse
 
 from shared.paths import APP_ROOT
+from shared.profile_lock import hold_profile_lock
 
 
 ROOT = APP_ROOT
@@ -225,7 +226,9 @@ def launch_epost_context(playwright):
 
     로그인 세션은 Chromium 프로필과 Windows DPAPI로 보호한 백업에만 보관한다.
     세션이 유효하지 않을 때만 기존 접근 제어된 설정 탭의 로그인 정보를 읽는다.
+    같은 프로필을 다른 우체국 단계가 쓰는 중이면 ProfileBusyError로 바로 알린다.
     """
+    hold_profile_lock(PROFILE_DIR, "우체국 포털")
     PROFILE_DIR.mkdir(parents=True, exist_ok=True)
     options = {
         "headless": False,

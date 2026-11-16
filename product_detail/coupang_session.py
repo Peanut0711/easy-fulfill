@@ -7,6 +7,9 @@ import json
 import shutil
 
 from shared.paths import APP_ROOT
+from shared.profile_lock import ProfileBusyError, hold_profile_lock
+
+COUPANG_PROFILE_DIR = APP_ROOT / "output" / "coupang-browser-profile"
 
 
 def seller_name(page):
@@ -27,7 +30,13 @@ def main():
     if args.login == args.clear:
         parser.error("--login 또는 --clear 중 하나를 지정하세요.")
     if args.clear:
-        profile_dir = APP_ROOT / "output" / "coupang-browser-profile"
+        profile_dir = COUPANG_PROFILE_DIR
+        try:
+            # WING 창이 열린 작업이 있으면 지우지 않는다(사용 중 파일 때문에 일부만 지워짐 방지).
+            hold_profile_lock(profile_dir, "쿠팡 WING")
+        except ProfileBusyError as error:
+            print(str(error), flush=True)
+            raise SystemExit(1) from None
         if profile_dir.exists():
             shutil.rmtree(profile_dir)
         print(json.dumps({"connected": False, "cleared": True}, ensure_ascii=False))
