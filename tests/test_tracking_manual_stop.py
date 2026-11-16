@@ -271,7 +271,7 @@ assert _config_read_render_calls(object()) == []
 # 목록이 이미 준비된 뒤 설정을 읽었다면 위험도 기준을 다시 반영한다.
 assert _config_read_render_calls(None) == ["populate"]
 
-file = QFile(str(Path(__file__).with_name("ui") / "main_window.ui"))
+file = QFile(str(Path(__file__).resolve().parents[1] / "ui" / "main_window.ui"))
 assert file.open(QIODevice.OpenModeFlag.ReadOnly)
 ui = QUiLoader().load(file)
 combo = ui.findChild(QComboBox, "comboBox_tracking_filter")

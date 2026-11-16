@@ -239,7 +239,7 @@ flowchart TB
 | `easy-fulfill.py` | 마지막 탭 장착, Google Sheets 설정 조회, 네이버 상품 조회 워커, 실패 진단 로그 |
 | `naver_commerce.py` | 네이버 토큰 발급과 판매 중 스마트스토어 상품 목록 조회 |
 | `templates/*.xlsx` | 출력 양식과 도장 포함 공급자 정보 |
-| `test_quotation_statement.py` | 계산 경계값, 행 확장, 템플릿 서식, PDF 오류 복구 테스트 |
+| `tests/test_quotation_statement.py` | 계산 경계값, 행 확장, 템플릿 서식, PDF 오류 복구 테스트 |
 
 ## 6. 스마트스토어 연동 및 실패 진단
 
@@ -361,7 +361,7 @@ GET  /api/documents/{id}/download
 ### 8.3 현재 데스크톱 회귀 명령
 
 ```powershell
-python -m unittest test_quotation_statement.py
+python -m unittest tests.test_quotation_statement
 python -m py_compile easy-fulfill.py quotation_statement.py quotation_statement_widget.py naver_commerce.py
 git diff --check
 ```

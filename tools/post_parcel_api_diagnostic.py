@@ -1,9 +1,9 @@
 """우체국 계약소포 OpenAPI 조회 결과를 비밀값 없이 콘솔에 표시합니다.
 
-사용 예:
-    python post_parcel_api_diagnostic.py cust
-    python post_parcel_api_diagnostic.py appr
-    python post_parcel_api_diagnostic.py office
+저장소 루트에서 실행:
+    python -m tools.post_parcel_api_diagnostic cust
+    python -m tools.post_parcel_api_diagnostic appr
+    python -m tools.post_parcel_api_diagnostic office
 
 `설정` 시트의 epost_parcel_* 값을 읽습니다. 소포 신청(InsertOrder),
 취소, 운송장 출력은 호출하지 않습니다.

@@ -75,9 +75,9 @@ product_category/
 2. 다음 기준 테스트를 실행하고 결과를 남긴다.
 
    ```powershell
-   python test_tracking_manual_stop.py
-   python test_quick_excel_parser.py
-   python -m unittest test_quotation_statement.py
+   python -m tests.test_tracking_manual_stop
+   python -m tests.test_quick_excel_parser
+   python -m unittest tests.test_quotation_statement
    python -m py_compile easy-fulfill.py
    git diff --check
    ```
@@ -175,7 +175,7 @@ product_category/
 
 ### 완료 기준
 
-`test_quick_excel_parser.py`가 새 모듈을 직접 검증하며, 자동 및 수동 생성 결과가 기존 양식과 일치한다.
+`tests/test_quick_excel_parser.py`가 새 모듈을 직접 검증하며, 자동 및 수동 생성 결과가 기존 양식과 일치한다.
 
 ## 5단계: 주문 Excel import 분리
 

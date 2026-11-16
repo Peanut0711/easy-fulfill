@@ -94,6 +94,19 @@ GUI의 **상세페이지** 탭에서도 같은 단건 작업을 할 수 있습�
 
 `입력 초기화`는 네이버 상품번호 두 항목과 쿠팡 등록상품 ID만 비웁니다. 작업 로그, 로그인 세션, 생성 결과 파일은 유지합니다. 작업 로그는 화면에서 지우거나 복사·파일 저장할 수 있습니다.
 
+## 테스트 및 수동 도구
+
+저장소 루트에서 전체 테스트를 실행합니다.
+
+```powershell
+python -m unittest discover
+```
+
+수동 도구도 저장소 루트에서 실행합니다.
+
+- `python -m tools.fix_images`는 `image/`의 PNG 원본을 RGBA로 다시 저장합니다.
+- `python -m tools.post_parcel_api_diagnostic --help`로 계약소포 조회 항목을 확인합니다. 실제 조회에는 공유 설정 시트의 우체국 API 설정이 필요합니다.
+
 ## 프로젝트 구조
 
 ```
@@ -103,6 +116,8 @@ easy-fulfill/
 ├── database-sync.py     # 스프레드시트 동기화 (동일 google-oauth)
 ├── requirements.txt     # 필요한 패키지 목록
 ├── README.md           # 프로젝트 설명
+├── tests/              # 자동 테스트
+├── tools/              # 수동 유지보수 및 진단 도구
 ├── google-oauth/       # Google OAuth (로컬 전용, .gitignore)
 │   ├── credentials.json  # GCP에서 받은 클라이언트 JSON (수동 배치)
 │   └── token.json        # 로그인 후 자동 생성

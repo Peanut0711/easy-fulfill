@@ -147,7 +147,8 @@ easy-fulfill/
 ├─ templates/
 │  ├─ quotation_template.xlsx
 │  └─ transaction_statement_template.xlsx
-├─ test_quotation_statement.py
+├─ tests/
+│  └─ test_quotation_statement.py
 ├─ ui/
 │  └─ main_window.ui
 └─ docs/
@@ -164,7 +165,7 @@ easy-fulfill/
 | `easy-fulfill.py` | 새 위젯 생성·장착, 기존 설정의 네이버 인증정보 전달, 상태 메시지 연결 |
 | `ui/main_window.ui` | 마지막 `문서 만들기` 탭과 빈 레이아웃만 추가 |
 | `templates/*.xlsx` | 개인정보를 제거하고 공급자 고정정보와 인쇄 서식만 남긴 원본 양식 |
-| `test_quotation_statement.py` | 금액 경계값과 엑셀 행 확장에 대한 최소 회귀 검사 |
+| `tests/test_quotation_statement.py` | 금액 경계값과 엑셀 행 확장에 대한 최소 회귀 검사 |
 
 한 구현만 존재하는 저장소 계층, 서비스 팩토리, 플러그인 프레임워크는 만들지 않는다.
 
@@ -339,8 +340,8 @@ Windows 파일명에 사용할 수 없는 문자는 제거한다. 같은 이름�
 ### 8.3 코드 및 기존 기능 검사
 
 ```powershell
-python test_quotation_statement.py
-python test_quick_excel_parser.py
+python -m unittest tests.test_quotation_statement
+python -m tests.test_quick_excel_parser
 python -m py_compile easy-fulfill.py quotation_statement.py quotation_statement_widget.py naver_commerce.py
 git diff --check
 git status --short

@@ -7,7 +7,7 @@ from pathlib import Path
 
 def fix_png_images():
     # image 폴더 경로
-    image_dir = Path("image")
+    image_dir = Path(__file__).resolve().parents[1] / "image"
     
     # 모든 PNG 파일 찾기
     png_files = list(image_dir.glob("*.png"))
@@ -49,4 +49,4 @@ def fix_png_images():
 
 if __name__ == "__main__":
     fix_png_images()
-    print("\n모든 이미지 처리 완료") 
+    print("\n모든 이미지 처리 완료")

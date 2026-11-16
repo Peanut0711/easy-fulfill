@@ -30,7 +30,7 @@ from detail_image_upload import upload_image_for_editor, validated_cdn_url
 
 
 # MainWindow의 주문·설정 초기화를 실행하지 않고 실제 편집창 클래스 전체를 사용한다.
-source_path = Path(__file__).with_name("easy-fulfill.py")
+source_path = Path(__file__).resolve().parents[1] / "easy-fulfill.py"
 tree = ast.parse(source_path.read_text(encoding="utf-8"))
 editor_class = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "DetailHtmlEditorDialog")
 exec(compile(ast.Module(body=[editor_class], type_ignores=[]), str(source_path), "exec"))
@@ -968,7 +968,7 @@ class DetailEditorTests(unittest.TestCase):
         self.assertIsNotNone(self.dialog._selected_spacer())
 
     def test_generated_nested_lists_preview_save_and_copy_use_same_html(self):
-        from test_detail_text_layout import SOURCE as nested_source, render
+        from tests.test_detail_text_layout import SOURCE as nested_source, render
         from coupang_cdn_upload import render_paste_html
 
         source = render_paste_html('<main><section class="text-block">' + render(nested_source) + '</section></main>')
