@@ -11,6 +11,7 @@ import queue
 import re
 import sys
 import threading
+import time
 from collections import deque
 from datetime import datetime
 from urllib.parse import urlparse
@@ -124,7 +125,7 @@ def editor_textarea(page):
     count = candidates.count()
     for index in range(count):
         candidate = candidates.nth(index)
-        if candidate.get_attribute("placeholder") not in {"의견을 적어주세요.", "현재 페이지에 대한 피드백을 적어주세요."}:
+        if candidate.get_attribute("placeholder") not in FEEDBACK_PLACEHOLDERS:
             return candidate
     debug_path = ROOT / "output" / "coupang-detail-replace-debug.html"
     debug_path.parent.mkdir(parents=True, exist_ok=True)
@@ -133,13 +134,61 @@ def editor_textarea(page):
     raise RuntimeError(f"쿠팡 HTML 입력칸을 찾지 못했습니다. 진단 파일: {debug_path}")
 
 
-def confirm_detail_level_change(page):
-    alert = page.locator(".sweet-alert.showSweetAlert.visible")
-    try:
-        alert.wait_for(state="visible", timeout=3_000)
-    except Exception:
-        return
-    alert.locator("button.confirm").click(timeout=10_000)
+DETAIL_STEP_TIMEOUT_MS = 15_000
+FEEDBACK_PLACEHOLDERS = ("의견을 적어주세요.", "현재 페이지에 대한 피드백을 적어주세요.")
+# 탭을 누른 뒤 화면 상태: 확인 팝업이 열렸으면 "alert", 다음 단계가 가능하면 "ready", 아니면 null.
+# 팝업은 SweetAlert가 여는 즉시 붙는 showSweetAlert 클래스로 감지해 늦게 보이는 팝업도 놓치지 않는다.
+DETAIL_STEP_STATE_SCRIPT = r"""
+([radioId, step, feedbackPlaceholders]) => {
+    const shown = el => !!el && el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden';
+    const alert = document.querySelector('.sweet-alert.showSweetAlert');
+    if (shown(alert) && !alert.classList.contains('hideSweetAlert')) return 'alert';
+    const radio = document.getElementById(radioId);
+    if (radio && !radio.checked) return null;
+    if (step === 'level') {
+        return shown(document.querySelector('label[for="tab-content-2"]')) ? 'ready' : null;
+    }
+    const editor = Array.from(document.querySelectorAll('textarea:not([disabled])'))
+        .find(el => !feedbackPlaceholders.includes(el.getAttribute('placeholder')));
+    return shown(editor) ? 'ready' : null;
+}
+"""
+DETAIL_STEPS = {
+    "level": ("tab-content-level-0", "기본 상세 전환"),
+    "editor": ("tab-content-2", "HTML 편집기 준비"),
+}
+
+
+def wait_for_detail_step(page, step, vendor_inventory_id, playwright_error, events=None,
+                         timeout=DETAIL_STEP_TIMEOUT_MS):
+    """탭 클릭 뒤 확인 팝업이 뜨면 확인하고, 탭 전환·다음 화면 준비가 확인되는 즉시 반환한다.
+
+    기존에는 팝업 대기 3초와 고정 대기 1초를 단계마다 기다렸다. 반환값은 확인한 팝업 수다.
+    """
+    radio_id, stage = DETAIL_STEPS[step]
+    deadline = time.monotonic() + timeout / 1000
+    confirmed = 0
+    while True:
+        remaining = max(1, int((deadline - time.monotonic()) * 1000))
+        try:
+            if time.monotonic() >= deadline:
+                raise playwright_error(f"{stage} 대기 시간 {timeout}ms 초과")
+            state = page.wait_for_function(
+                DETAIL_STEP_STATE_SCRIPT, arg=[radio_id, step, list(FEEDBACK_PLACEHOLDERS)],
+                timeout=remaining,
+            ).json_value()
+            if state == "ready":
+                return confirmed
+            alert = page.locator(".sweet-alert.showSweetAlert.visible")
+            alert.locator("button.confirm").click(timeout=remaining)
+            confirmed += 1
+        except playwright_error as error:
+            path = save_detail_diagnostics(page, vendor_inventory_id, stage, events)
+            message = (f"쿠팡 등록상품 ID {vendor_inventory_id}의 {stage} 상태를 {timeout / 1000:g}초 안에 확인하지 못했습니다. "
+                       "확인 팝업·탭 전환·HTML 입력칸 표시 여부를 진단 파일에서 확인하세요. "
+                       f"진단 파일: {path if path else '저장 실패 (작업 로그 확인)'}")
+            print(f"[오류] {message}", flush=True)
+            raise RuntimeError(message) from error
 
 
 def detail_level_missing_message(vendor_inventory_id: str):
@@ -169,6 +218,17 @@ def select_html_detail_tab(page, vendor_inventory_id, playwright_error, events=N
                    f"진단 파일: {path if path else '저장 실패 (작업 로그 확인)'}")
         print(f"[오류] {message}", flush=True)
         raise RuntimeError(message) from error
+
+
+def fill_detail_html(page, vendor_inventory_id, html, playwright_error, events=None):
+    """기본 상세 → HTML 작성 탭으로 전환하고 편집기에 HTML을 채운다(저장하지 않음)."""
+    select_basic_detail_level(page, vendor_inventory_id, playwright_error, events)
+    wait_for_detail_step(page, "level", vendor_inventory_id, playwright_error, events)
+    select_html_detail_tab(page, vendor_inventory_id, playwright_error, events)
+    wait_for_detail_step(page, "editor", vendor_inventory_id, playwright_error, events)
+    textarea = editor_textarea(page)
+    textarea.fill(html, timeout=30_000)
+    return textarea
 
 
 def close_context(context, playwright_error):
@@ -276,14 +336,7 @@ def main():
             coupang_cdn_upload.save_coupang_session(context, page)
             events = start_detail_diagnostics(page)
             page.goto(DETAIL_URL.format(vendor_inventory_id=args.vendor_inventory_id))
-            select_basic_detail_level(page, args.vendor_inventory_id, playwright_error, events)
-            confirm_detail_level_change(page)
-            page.wait_for_timeout(1_000)
-            select_html_detail_tab(page, args.vendor_inventory_id, playwright_error, events)
-            confirm_detail_level_change(page)
-            page.wait_for_timeout(1_000)
-            textarea = editor_textarea(page)
-            textarea.fill(html, timeout=30_000)
+            fill_detail_html(page, args.vendor_inventory_id, html, playwright_error, events)
             print(f"준비 완료: 쿠팡 상품 {args.vendor_inventory_id}에 {html_path.name}을 채웠습니다.")
             if not args.apply:
                 wait_for_wing_close_or_finish(page, context, playwright_error)
