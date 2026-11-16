@@ -25,7 +25,9 @@ time.sleep(float(sys.argv[3]))
 class ProfileLockTests(unittest.TestCase):
     def setUp(self):
         from shared.profile_lock import release_profile_lock
-        self.directory = tempfile.TemporaryDirectory()
+        # 강제 종료한 자식 프로세스의 잠금 파일 핸들을 Windows가 늦게 풀면 폴더 삭제가 실패할 수 있어,
+        # 정리 단계 오류가 검증 결과를 가리지 않도록 무시한다.
+        self.directory = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(self.directory.cleanup)
         self.profile = Path(self.directory.name) / "coupang-browser-profile"
         self.profile.mkdir()
