@@ -309,6 +309,55 @@ def download_image(url, path):
         time.sleep(delay)
 
 
+IMAGE_PREFETCH_WORKERS = 4
+
+
+def prefetch_images(components, image_dir):
+    """상세 이미지들을 미리 병렬로 받아 둔다. 반환: 주소 → (임시 파일, 메타데이터 또는 예외).
+
+    본문 구성 순서·건너뛰는 구성요소 규칙은 build_preview가 그대로 결정하고, 여기서는
+    이미지가 들어 있을 수 있는 모든 구성요소의 주소를 미리 받기만 한다(쓰지 않은 파일은 지운다).
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    urls = []
+    for component in components:
+        try:
+            rows = image_rows(component)
+        except Exception:
+            continue
+        for image_nodes, _columns in rows:
+            for node in image_nodes:
+                src = node.attrs.get("src")
+                if src and src not in urls:
+                    urls.append(src)
+
+    def fetch(url):
+        cache_path = image_dir / f".prefetch-{hashlib.sha1(url.encode('utf-8')).hexdigest()}.img"
+        try:
+            return url, cache_path, download_image(url, cache_path)
+        except Exception as error:  # 순차 다운로드에서 그 이미지 차례에 같은 오류를 낸다.
+            return url, cache_path, error
+
+    with ThreadPoolExecutor(max_workers=IMAGE_PREFETCH_WORKERS) as pool:
+        return {url: (cache_path, outcome) for url, cache_path, outcome in pool.map(fetch, urls)}
+
+
+def take_prefetched_image(prefetched, url, path):
+    """미리 받은 이미지를 최종 위치로 옮기고 메타데이터를 반환한다. 없으면 None(순차 다운로드)."""
+    entry = prefetched.pop(url, None) if prefetched else None
+    if entry is None:
+        return None
+    cache_path, outcome = entry
+    if isinstance(outcome, Exception):
+        cache_path.unlink(missing_ok=True)
+        raise outcome
+    if not cache_path.exists():
+        return None
+    cache_path.replace(path)
+    return outcome
+
+
 def image_rows(component):
     """SmartEditor의 이미지 행 경계와 열 개수를 보존한다."""
     row, row_owner, columns = [], None, 1
@@ -368,66 +417,76 @@ def build_preview(product_no, product):
     video_warnings = []
     skipped_video_count = 0
     image_index = 0
+    # 이미지를 하나씩 받지 않고 미리 병렬로 받아 둔다(같은 주소는 한 번).
+    prefetched = prefetch_images(components, image_dir)
 
-    for component_index, component in enumerate(components, 1):
-        component_classes = classes(component)
-        if component_classes & {"se-oembed", "se-video"} or any(node.tag == "iframe" for node in walk(component)):
-            videos = extract_youtube_videos(component)
-            if videos:
-                for video in videos:
-                    body.append(render_youtube_video(video))
-                    video_records.append({**video, "componentIndex": component_index})
+    try:
+        for component_index, component in enumerate(components, 1):
+            component_classes = classes(component)
+            if component_classes & {"se-oembed", "se-video"} or any(node.tag == "iframe" for node in walk(component)):
+                videos = extract_youtube_videos(component)
+                if videos:
+                    for video in videos:
+                        body.append(render_youtube_video(video))
+                        video_records.append({**video, "componentIndex": component_index})
+                    continue
+                skipped_video_count += 1
+                video_warnings.append(f"구성요소 {component_index}: 지원하는 유튜브 영상 주소를 찾지 못해 재생기를 생성하지 않았습니다.")
+
+            if "se-sectionTitle" in classes(component):
+                rendered = render_section_title(component)
+                if rendered:
+                    body.append(rendered)
                 continue
-            skipped_video_count += 1
-            video_warnings.append(f"구성요소 {component_index}: 지원하는 유튜브 영상 주소를 찾지 못해 재생기를 생성하지 않았습니다.")
 
-        if "se-sectionTitle" in classes(component):
-            rendered = render_section_title(component)
-            if rendered:
-                body.append(rendered)
-            continue
+            if "se-horizontalLine" in classes(component):
+                body.append('<hr class="divider">')
+                continue
 
-        if "se-horizontalLine" in classes(component):
-            body.append('<hr class="divider">')
-            continue
+            if "se-quotation" in classes(component):
+                rendered = render_text_component(component)
+                if rendered:
+                    body.append(f'<blockquote class="quote-block">{rendered}</blockquote>')
+                continue
 
-        if "se-quotation" in classes(component):
-            rendered = render_text_component(component)
-            if rendered:
-                body.append(f'<blockquote class="quote-block">{rendered}</blockquote>')
-            continue
+            if "se-text" in classes(component):
+                rendered = render_text_component(component)
+                if rendered:
+                    body.append(f'<section class="text-block">{rendered}</section>')
+                continue
 
-        if "se-text" in classes(component):
-            rendered = render_text_component(component)
-            if rendered:
-                body.append(f'<section class="text-block">{rendered}</section>')
-            continue
+            if "se-table" in classes(component):
+                rendered = render_table_component(component)
+                if rendered:
+                    body.append(rendered)
+                continue
 
-        if "se-table" in classes(component):
-            rendered = render_table_component(component)
-            if rendered:
-                body.append(rendered)
-            continue
-
-        for image_nodes, columns in image_rows(component):
-            images = []
-            for image_node in image_nodes:
-                image_index += 1
-                path = image_dir / f"image-{image_index:02d}.jpg"
-                metadata = dict(download_image(image_node.attrs["src"], path))
-                metadata.update({"index": image_index, "source": image_node.attrs["src"], "file": path.name})
-                image_records.append(metadata)
-                images.append({**metadata, "src": f"images/{path.name}",
-                               "alt": f"{origin.get('name', '상품 상세')} 이미지 {image_index}"})
-            if columns > 1:
-                widths = normalized_widths(images, [image_width_percent(node, component) for node in image_nodes])
-                body.append(render_image_group(images, widths))
-                image_groups.append({"componentIndex": component_index,
-                                     "imageIndices": [item["index"] for item in images], "widthPercentages": widths})
-            else:
-                image = images[0]
-                body.append(f'<section class="image-block grid-1"><img src="{image["src"]}" '
-                            f'alt="{html.escape(image["alt"], quote=True)}"></section>')
+            for image_nodes, columns in image_rows(component):
+                images = []
+                for image_node in image_nodes:
+                    image_index += 1
+                    path = image_dir / f"image-{image_index:02d}.jpg"
+                    metadata = take_prefetched_image(prefetched, image_node.attrs["src"], path)
+                    if metadata is None:
+                        metadata = download_image(image_node.attrs["src"], path)
+                    metadata = dict(metadata)
+                    metadata.update({"index": image_index, "source": image_node.attrs["src"], "file": path.name})
+                    image_records.append(metadata)
+                    images.append({**metadata, "src": f"images/{path.name}",
+                                   "alt": f"{origin.get('name', '상품 상세')} 이미지 {image_index}"})
+                if columns > 1:
+                    widths = normalized_widths(images, [image_width_percent(node, component) for node in image_nodes])
+                    body.append(render_image_group(images, widths))
+                    image_groups.append({"componentIndex": component_index,
+                                         "imageIndices": [item["index"] for item in images], "widthPercentages": widths})
+                else:
+                    image = images[0]
+                    body.append(f'<section class="image-block grid-1"><img src="{image["src"]}" '
+                                f'alt="{html.escape(image["alt"], quote=True)}"></section>')
+    finally:
+        # 본문에 쓰지 않은 미리 받은 파일과 오류로 남은 임시 파일을 지운다.
+        for cache_path, _outcome in prefetched.values():
+            cache_path.unlink(missing_ok=True)
 
     title = html.escape(origin.get("name") or f"네이버 상품 {product_no}")
     preview = f"""<!doctype html>
