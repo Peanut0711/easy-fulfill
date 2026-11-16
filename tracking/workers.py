@@ -17,6 +17,7 @@ from .repository import (
     open_config_worksheet,
     open_tracking_worksheet,
     read_config_values_map,
+    read_tracking_column,
     read_tracking_list_metadata,
     read_tracking_rows,
     read_tracking_values,
@@ -54,6 +55,7 @@ TRACKING_SHEET_HEADERS = [
     "택배사코드", "배송상태", "완료여부", "마지막위치", "최근조회시각", "비고",
     "최근이벤트시각", "관리상태", "최근조회오류",
 ]
+TRACKING_MANAGEMENT_COLUMN_LETTER = "M"  # 관리상태(TRACKING_MANAGEMENT_COL=12)
 # K열(비고)은 사용자가 표에서 직접 적는 메모다. 새로고침은 K열을 쓰지 않고,
 # 우체국 조회 오류 문구는 N열(최근조회오류)에 남긴다(성공하면 비운다).
 CONFIG_SHEET_TITLE = "설정"
@@ -82,6 +84,40 @@ def _tracking_error_updates(ridx, checked_at, error):
         {"range": f"J{ridx}", "values": [[checked_at]]},
         {"range": f"N{ridx}", "values": [[error]]},
     ]
+
+
+def _keep_concurrent_management_changes(ws, updates, snapshot):
+    """쓰기 직전 M열을 다시 읽어, 처음 읽은 뒤 바뀐 행은 관리상태(M)를 쓰지 않는다.
+
+    updates의 L:N 범위는 L·N만 남기고, M 단독 범위는 뺀다. 조회 결과(G:J·L·N)는 그대로 쓴다.
+    """
+    if not snapshot:
+        return updates
+    current_column = read_tracking_column(ws, TRACKING_MANAGEMENT_COLUMN_LETTER, max(snapshot))
+    changed = set()
+    for row_number, before in snapshot.items():
+        index = row_number - 2
+        cells = current_column[index] if 0 <= index < len(current_column) else []
+        now = (cells[0] if cells else "").strip()
+        if now != before:
+            changed.add(row_number)
+    if not changed:
+        return updates
+    kept = []
+    for update in updates:
+        first_cell = update["range"].split(":")[0]
+        row_number = int("".join(ch for ch in first_cell if ch.isdigit()))
+        if row_number not in changed:
+            kept.append(update)
+        elif update["range"] == f"M{row_number}":
+            continue
+        elif update["range"] == f"L{row_number}:N{row_number}":
+            event_time, _management, error = update["values"][0]
+            kept.append({"range": f"L{row_number}", "values": [[event_time]]})
+            kept.append({"range": f"N{row_number}", "values": [[error]]})
+        else:
+            kept.append(update)
+    return kept
 
 
 def _standalone_open_tracking_ws(gc):
@@ -281,6 +317,12 @@ def run_tracking_refresh_worker(regkey, progress_cb=None, auto=False, interval_m
                 now, s.get("time", ""), management))
             time.sleep(KPOST_TRACKING_REQUEST_DELAY_SEC)
         if batch_updates:
+            # 조회하는 동안(수 분) 다른 PC가 바꾼 관리상태(예: 추적 중지)는 되돌리지 않는다.
+            snapshot = {
+                ridx: (row[TRACKING_MANAGEMENT_COL] if len(row) > TRACKING_MANAGEMENT_COL else "").strip()
+                for ridx, _tno, row in active
+            }
+            batch_updates = _keep_concurrent_management_changes(ws, batch_updates, snapshot)
             batch_update_tracking(ws, batch_updates)
         return {
             "ok": True,

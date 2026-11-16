@@ -107,6 +107,13 @@ def write_config_values(worksheet, updates: Mapping[str, object], *, expected: M
         worksheet.batch_update(batch_updates, value_input_option="RAW")
 
 
+def read_tracking_column(worksheet, column: str, last_row: int) -> list[list[str]]:
+    """한 열의 2행~last_row 값을 읽는다(행마다 [값] 또는 빈 목록)."""
+    if last_row < 2:
+        return []
+    return list(worksheet.batch_get([f"{column}2:{column}{last_row}"])[0])
+
+
 def read_tracking_values(worksheet) -> list[list[str]]:
     """배송추적 시트 전체 값을 읽는다."""
     return worksheet.get_all_values()

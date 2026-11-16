@@ -32,6 +32,19 @@ class FakeTrackingSheet:
     def update(self, values, range_name=None, value_input_option=None):
         self._write(range_name, values)
 
+    def batch_get(self, ranges):
+        out = []
+        for range_name in ranges:
+            match = re.match(r"([A-Z])(\d+):([A-Z])(\d*)", range_name)
+            first, last = _col(match.group(1)), _col(match.group(3))
+            start = int(match.group(2)) - 1
+            end = int(match.group(4)) if match.group(4) else len(self.rows)
+            block = []
+            for line in self.rows[start:end]:
+                block.append([line[i] if i < len(line) else "" for i in range(first, last + 1)])
+            out.append(block)
+        return out
+
     def _write(self, range_name, values):
         match = re.match(r"([A-Z])(\d+)", range_name)
         col, row = _col(match.group(1)), int(match.group(2)) - 1
@@ -99,6 +112,24 @@ class TrackingRefreshMemoTests(unittest.TestCase):
             self.assertTrue(result["ok"], result)
             self.assertEqual(sheet.cell(row, "K"), memo, regino)
         self.assertEqual(sheet.cell(4, "N"), "일시 오류")
+
+    def test_refresh_keeps_manual_stop_set_during_refresh(self):
+        sheet = FakeTrackingSheet(tracking_rows())
+
+        def summarize(key, regino):
+            if regino == "6000000000000":
+                sheet._write("M3", [["수동 중지"]])  # 새로고침 도중 다른 PC가 3행 추적 중지
+            return RESULTS[regino]
+
+        with patch.object(oauth, "get_authorized_gspread_client", lambda: object()), \
+                patch.object(workers, "_standalone_open_tracking_ws", lambda gc: sheet), \
+                patch.object(kpost_tracker, "summarize_tracking", summarize), \
+                patch.object(workers, "KPOST_TRACKING_REQUEST_DELAY_SEC", 0):
+            result = workers.run_tracking_refresh_worker("KEY", scope="all")
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(sheet.cell(3, "M"), "수동 중지")
+        self.assertEqual(sheet.cell(3, "G"), "추적정보 없음")  # 조회 결과는 그대로 반영
+        self.assertEqual(sheet.cell(2, "M"), "추적중")
 
     def test_success_clears_previous_lookup_error(self):
         rows = tracking_rows()
