@@ -82,6 +82,8 @@ from tracking.repository import (
     open_config_worksheet,
     read_config_values_map as _read_config_values_map,
     write_config_values as _write_config_values,
+    write_config_values as _write_config_values_checked,
+    ConfigValueChangedError,
 )
 from tracking.controller import TrackingController
 from tracking.workers import TrackingConfigWriteThread, run_tracking_list_worker
@@ -206,6 +208,9 @@ INQUIRY_SHEET_HEADERS = [
 NAVER_INQUIRY_POLL_MS = 300_000  # 5분
 NAVER_INQUIRY_LOOKBACK_DAYS = 30  # 미답변은 오래 묵을 수 있어 넉넉히(페이지네이션 안전)
 NAVER_INQUIRY_REMIND_MIN = 60  # 미답변 리마인더 재알림 주기(분)
+# 문의 조회 주기 선점: 다른 PC가 이 시간 안에 조회를 시작했으면 이번 주기는 건너뛴다(중복 발송 방지).
+CONFIG_KEY_INQUIRY_POLL_CLAIM = "inquiry_poll_claim"
+INQUIRY_POLL_CLAIM_SECONDS = 240
 # 미답변 알림 허용 시간대(근무시간) 기본값: 평일 10:00~19:00. 그 외에는 알림을 보내지 않고
 # 「최근알림시각」도 건드리지 않는다 → 근무 시작 시각에 밀린 미답변이 한 번에 환기된다.
 # 설정 팝업에서 사용자가 시작/종료 시각을 바꿀 수 있고, 공유 「설정」 탭으로 전원 적용된다.
@@ -681,6 +686,16 @@ def _build_inquiry_slack_text(records):
     return "\n".join(lines)
 
 
+def _appended_first_row(response):
+    """append 응답의 updatedRange(예: '문의알림'!A120:I121)에서 첫 행 번호를 읽는다."""
+    try:
+        updated = (response or {}).get("updates", {}).get("updatedRange", "")
+        match = re.search(r"![A-Z]+(\d+)", updated)
+        return int(match.group(1)) if match else None
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+
 def run_naver_inquiry_poll_worker():
     """네이버 상품문의·고객문의(미답변)를 조회해 「문의알림」 시트에 누적하고, 처리될 때까지
     주기적으로 슬랙에 알립니다.
@@ -708,7 +723,8 @@ def run_naver_inquiry_poll_worker():
         return {"ok": False, "error": str(e)}
     try:
         gc = get_authorized_gspread_client()
-        cfg = _read_config_values_map(_standalone_open_config_ws(gc))
+        cfg_ws = _standalone_open_config_ws(gc)
+        cfg = _read_config_values_map(cfg_ws)
         client_id = cfg.get(CONFIG_KEY_NAVER_CLIENT_ID, "")
         client_secret = cfg.get(CONFIG_KEY_NAVER_CLIENT_SECRET, "")
         cp_vendor = cfg.get(CONFIG_KEY_COUPANG_VENDOR_ID, "")
@@ -721,6 +737,24 @@ def run_naver_inquiry_poll_worker():
             return {"ok": False,
                     "error": "네이버·쿠팡 키가 모두 미설정 — 설정 팝업의 「키 설정」에서 등록하세요."}
         now_dt = datetime.now()
+        # 여러 PC가 같은 주기에 조회·발송하지 않도록 공유 「설정」에 이번 주기를 선점한다.
+        # 다른 PC가 최근 INQUIRY_POLL_CLAIM_SECONDS 안에 선점했으면 이번 주기는 건너뛴다.
+        claim_value = cfg.get(CONFIG_KEY_INQUIRY_POLL_CLAIM, "")
+        actor = _current_actor()
+        claim_time, _, claim_actor = claim_value.partition("|")
+        try:
+            claim_dt = datetime.strptime(claim_time.strip(), "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            claim_dt = None
+        if (claim_dt is not None and claim_actor != actor
+                and timedelta(0) <= now_dt - claim_dt < timedelta(seconds=INQUIRY_POLL_CLAIM_SECONDS)):
+            return {"ok": True, "skipped_other_pc": True}
+        try:
+            _write_config_values_checked(
+                cfg_ws, {CONFIG_KEY_INQUIRY_POLL_CLAIM: f"{now_dt:%Y-%m-%d %H:%M:%S}|{actor}"},
+                expected={CONFIG_KEY_INQUIRY_POLL_CLAIM: claim_value})
+        except ConfigValueChangedError:
+            return {"ok": True, "skipped_other_pc": True}
         from_dt = now_dt - timedelta(days=NAVER_INQUIRY_LOOKBACK_DAYS)
         records = []
         errors = []
@@ -833,6 +867,7 @@ def run_naver_inquiry_poll_worker():
         new_rows = []        # 신규 미답변 → 시트 append
         ts_updates = []      # 기존 행 「최근알림시각」 갱신용 batch_update
         to_notify = []       # 이번에 슬랙으로 보낼 레코드
+        new_notify_positions = []  # new_rows 중 이번에 알리는 행의 위치
         seen_batch = set()
         for r in records:
             rid = r["id"]
@@ -840,13 +875,14 @@ def run_naver_inquiry_poll_worker():
                 continue
             seen_batch.add(rid)
             if rid not in index:
-                # 새 미답변: 행 추가. 근무시간이면 즉시 알림(최근알림시각=now),
-                # 아니면 최근알림시각을 비워 둬 다음 근무시간에 알리도록 한다.
+                # 새 미답변: 행 추가. 최근알림시각은 슬랙 발송에 성공한 뒤에만 채운다
+                # (발송 실패·근무시간 외면 비워 둬 다음 조회에서 다시 알린다).
                 notify_now = allowed
+                if notify_now:
+                    new_notify_positions.append(len(new_rows))
                 new_rows.append([
                     rid, r["type"], r["reg"], r["target"], r["writer"],
-                    (r["content"] or "")[:200], now,
-                    now if notify_now else "", "미답변",
+                    (r["content"] or "")[:200], now, "", "미답변",
                 ])
                 if notify_now:
                     r["_kind"] = "new"
@@ -866,13 +902,25 @@ def run_naver_inquiry_poll_worker():
                     r["_kind"] = "remind"
                     to_notify.append(r)
                     ts_updates.append({"range": f"H{row_no}", "values": [[now]]})
+        appended_start = None
         if new_rows:
-            ws.append_rows(new_rows, value_input_option="RAW")
+            response = ws.append_rows(new_rows, value_input_option="RAW")
+            appended_start = _appended_first_row(response)
         sent = 0
         if to_notify and webhook:
             res = slack_notify.send_slack(webhook, _build_inquiry_slack_text(to_notify))
             if res.get("ok"):
                 sent = len(to_notify)
+                if new_notify_positions:
+                    if appended_start is None:
+                        # 추가된 위치를 응답에서 알 수 없으면 문의ID로 행을 다시 찾는다.
+                        fresh = ws.get_all_values()
+                        rows_by_id = {(row[0] or "").strip(): i for i, row in enumerate(fresh[1:], start=2) if row}
+                        rows_for_new = [rows_by_id.get(new_rows[p][0]) for p in new_notify_positions]
+                    else:
+                        rows_for_new = [appended_start + p for p in new_notify_positions]
+                    ts_updates.extend({"range": f"H{row}", "values": [[now]]}
+                                      for row in rows_for_new if row)
                 if ts_updates:
                     ws.batch_update(ts_updates, value_input_option="RAW")
             else:
@@ -3660,6 +3708,9 @@ class MainWindow(QMainWindow):
             err = str(payload.get("error", ""))
             print(f"! 문의 조회 실패: {err}")
             self._set_naver_inquiry_status(f"실패: {err[:60]} · {t}")
+            return
+        if payload.get("skipped_other_pc"):
+            self._set_naver_inquiry_status(f"다른 PC가 방금 확인함 · {t}")
             return
         open_cnt = payload.get("open", 0)
         new = payload.get("new", 0)
