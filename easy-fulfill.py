@@ -103,7 +103,9 @@ from orders.bulk import (
     consolidate_gmarket_orders,
 )
 from orders.invoice import INVOICE_COLUMNS, build_invoice_rows
+from orders.gift_event import DEFAULT_GIFT_EVENT, read_gift_event
 from orders.matching import match_naver_invoice_rows
+from ui.gift_event_settings import GiftEventSettingsDialog
 from post_parcel import (
     ParcelApiError,
     ParcelValidationError,
@@ -352,7 +354,7 @@ def _standalone_write_order_indices_ws(ws, n, c, g, values=None):
         ws.append_row([today, n, c, g])
 
 
-def run_order_index_read_sync_worker():
+def run_order_index_read_sync_worker(*, include_gift_event=False):
     """
     UI 스레드가 아닌 곳에서 호출. Google API만 수행(읽기 + 필요 시 오늘 행 생성).
     앱 시작 동기화와 주기적 폴링이 공유합니다.
@@ -364,22 +366,29 @@ def run_order_index_read_sync_worker():
         from google_sheets_oauth import get_authorized_gspread_client
     except ImportError as e:
         return {"ok": False, "error": str(e)}
+    payload = {}
     try:
         gc = get_authorized_gspread_client()
+        if include_gift_event:
+            try:
+                payload["gift_event"], _ = read_gift_event(_standalone_open_config_ws(gc))
+            except Exception as e:
+                payload["gift_event_error"] = str(e)
         ws = _standalone_open_order_index_ws(gc)
         values = ws.get_all_values()  # 시트 전체 읽기는 시작 동기화에서 단 한 번만 수행
         values = _standalone_normalize_order_index_values(ws, values)
         row = _standalone_read_today_order_indices_from_values(values)
         if row is not None:
-            return {"ok": True, "kind": "data", "row": row}
+            return {**payload, "ok": True, "kind": "data", "row": row}
         _standalone_write_order_indices_ws(ws, 1, 1, 1, values=values)
         return {
+            **payload,
             "ok": True,
             "kind": "created",
             "row": {"naver": 1, "coupang": 1, "gmarket": 1},
         }
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return {**payload, "ok": False, "error": str(e)}
 
 
 def _current_actor():
@@ -1100,8 +1109,12 @@ class OrderIndexReadSyncThread(QThread):
 
     result_ready = Signal(dict)
 
+    def __init__(self, parent=None, *, include_gift_event=False):
+        super().__init__(parent)
+        self._include_gift_event = include_gift_event
+
     def run(self):
-        self.result_ready.emit(run_order_index_read_sync_worker())
+        self.result_ready.emit(run_order_index_read_sync_worker(include_gift_event=self._include_gift_event))
 
 
 class OrderIndexWriteThread(QThread):
@@ -2939,6 +2952,7 @@ class MainWindow(QMainWindow):
         self.selected_file_path = None
         self.store_type = None
         self.orders = {}  # orders 변수를 인스턴스 변수로 초기화
+        self._order_gift_event = DEFAULT_GIFT_EVENT
         self.is_order_file_valid = False  # 주문서 파일 유효성 플래그
         self.is_invoice_file_valid = False  # 송장 파일 유효성 플래그
         
@@ -3912,11 +3926,11 @@ class MainWindow(QMainWindow):
         - defer_if_busy: 다른 시트 작업이 진행 중일 때 True면 잠시 후 재시도, False면 건너뜀.
         """
         if gspread is None:
+            payload = {"ok": False, "error": "gspread 패키지가 필요합니다. (pip install gspread)"}
             if interactive:
-                self._apply_order_index_read_interactive(
-                    {"ok": False, "error": "gspread 패키지가 필요합니다. (pip install gspread)"}
-                )
+                self._apply_order_index_read_interactive(payload)
             if on_applied:
+                self._apply_order_gift_event(payload)
                 on_applied()
             return
 
@@ -3937,7 +3951,7 @@ class MainWindow(QMainWindow):
         self._index_sheet_push_timer.stop()
         self._index_sheet_read_interactive = interactive
         self._index_sheet_read_on_applied = on_applied
-        thread = OrderIndexReadSyncThread(self)
+        thread = OrderIndexReadSyncThread(self, include_gift_event=on_applied is not None)
         self._index_sheet_op_thread = thread
         thread.result_ready.connect(self._on_order_index_read_finished)
         thread.finished.connect(self._cleanup_index_sheet_op_thread)
@@ -4660,7 +4674,19 @@ class MainWindow(QMainWindow):
                     self._apply_order_index_sync_payload(payload, prompt_reauth=False)
         finally:
             if on_applied:
+                self._apply_order_gift_event(payload)
                 on_applied()
+
+    def _apply_order_gift_event(self, payload):
+        event = payload.get("gift_event")
+        self._order_gift_event = event if event is not None else DEFAULT_GIFT_EVENT
+        if event is None:
+            error = payload.get("gift_event_error") or payload.get("error", "")
+            QMessageBox.warning(
+                self, "사은품 행사 설정 확인",
+                "공유 행사 설정을 불러오지 못했습니다. 이번 주문 목록에는 사은품이 표시되지 않습니다.\n"
+                "포장하기 전에 행사 적용 여부를 확인해 주세요.\n\n" + error,
+            )
 
     def _on_first_show_splitter(self):
         self._apply_order_ship_splitter_sizes()
@@ -5049,7 +5075,7 @@ class MainWindow(QMainWindow):
         # 「생성」 버튼/체크박스 제거: 송장 로드 성공 시 자동 생성(상시).
 
         # 환경설정 탭 버튼 연결
-        # 사은품 UI(groupBox_2): main_window.ui에서 제거함. 복구 시 위젯·로직 재연결.
+        self.ui.pushButton_gift_event_settings.clicked.connect(self._open_gift_event_settings)
         # 신규 DB 반영 UI·로직 제거(2026-04). (pushButton_database_* / load·apply_database_* 삭제)
         if hasattr(self.ui, 'pushButton_quick_excel_gen'):
             self.ui.pushButton_quick_excel_gen.clicked.connect(self.generate_quick_excel)
@@ -5153,6 +5179,16 @@ class MainWindow(QMainWindow):
             self.ui.pushButton_db_sync_run.clicked.connect(self._on_db_sheet_sync_run_clicked)
 
         print("버튼과 메뉴 연결 완료")
+
+    def _open_gift_event_settings(self):
+        def open_worksheet():
+            from google_sheets_oauth import get_authorized_gspread_client
+            return _standalone_open_config_ws(get_authorized_gspread_client())
+
+        dialog = GiftEventSettingsDialog(open_worksheet, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.statusBar().showMessage("사은품 행사 공유 설정을 저장했습니다.", 5000)
+        dialog.deleteLater()
 
     def _mount_detail_page_tab(self):
         """단건 상세 전환만 제공한다. 비밀번호·일괄 저장은 의도적으로 제외한다."""
@@ -6950,13 +6986,14 @@ class MainWindow(QMainWindow):
                 # 예: 950 -> 0.1만, 61000 -> 6.1만, 63820 -> 6.4만
                 amount_rounded = math.ceil(total_amount / 1000) / 10 if total_amount > 0 else 0
                 formatted_amount = f"{amount_rounded}만"
+                gift = self._order_gift_event.markdown_suffix("naver", total_amount)
                 
                 # 배송 방법이 '택배,등기,소포'인 경우에만 기존 형식으로 표시
                 if info['배송방법'] == '택배,등기,소포':
-                    markdown_text += f"[ ] {self.current_idx_naver}.{info['수취인명']} - {formatted_amount}\n"
+                    markdown_text += f"[ ] {self.current_idx_naver}.{info['수취인명']} - {formatted_amount}{gift}\n"
                 else:
                     # 그 외의 경우 배송 방법을 함께 표시
-                    markdown_text += f"[ ] {self.current_idx_naver}.{info['수취인명']} - {formatted_amount} **({info['배송방법']})**\n"
+                    markdown_text += f"[ ] {self.current_idx_naver}.{info['수취인명']} - {formatted_amount}{gift} **({info['배송방법']})**\n"
                 
                 self.update_naver_index()
                 if hasattr(self.ui, 'lineEdit_idx_naver'):
@@ -7264,7 +7301,8 @@ class MainWindow(QMainWindow):
                 amount_rounded = math.ceil(total_amount / 1000) / 10 if total_amount > 0 else 0
                 formatted_amount = f"{amount_rounded}만"
                 
-                markdown_text += f"[ ] {self.current_idx_coupang}.{info['수취인이름']} - {formatted_amount}\n"
+                gift = self._order_gift_event.markdown_suffix("coupang", total_amount)
+                markdown_text += f"[ ] {self.current_idx_coupang}.{info['수취인이름']} - {formatted_amount}{gift}\n"
                 self.update_coupang_index()
                 if hasattr(self.ui, 'lineEdit_idx_coupang'):
                     self.ui.lineEdit_idx_coupang.setText(str(self.current_idx_coupang))
@@ -7454,7 +7492,8 @@ class MainWindow(QMainWindow):
                 amount_rounded = math.floor(amount_in_manwon * 10) / 10
                 formatted_amount = f"{amount_rounded}만"
                 
-                markdown_text += f"[ ] {self.current_idx_gmarket}.{customer_name} - {formatted_amount}\n"
+                gift = self._order_gift_event.markdown_suffix("gmarket", total_amount)
+                markdown_text += f"[ ] {self.current_idx_gmarket}.{customer_name} - {formatted_amount}{gift}\n"
                 self.update_gmarket_index()
                 if hasattr(self.ui, 'lineEdit_idx_gmarket'):
                     self.ui.lineEdit_idx_gmarket.setText(str(self.current_idx_gmarket))
@@ -7595,7 +7634,8 @@ class MainWindow(QMainWindow):
                 amount_rounded = math.floor(amount_in_manwon * 10) / 10
                 formatted_amount = f"{amount_rounded}만"
 
-                markdown_text += f"[ ] {self.current_idx_11st}.{customer_name} - {formatted_amount}\n"
+                gift = self._order_gift_event.markdown_suffix("11st", total_amount)
+                markdown_text += f"[ ] {self.current_idx_11st}.{customer_name} - {formatted_amount}{gift}\n"
                 self.update_11st_index()
                 if hasattr(self.ui, 'lineEdit_idx_11st'):
                     self.ui.lineEdit_idx_11st.setText(str(self.current_idx_11st))

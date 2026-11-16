@@ -66,13 +66,22 @@ def read_config_values_map(worksheet) -> dict[str, str]:
     return config
 
 
-def write_config_values(worksheet, updates: Mapping[str, object]) -> None:
+class ConfigValueChangedError(ValueError):
+    """설정을 읽은 이후 공유 시트 값이 변경되었다."""
+
+
+def write_config_values(worksheet, updates: Mapping[str, object], *, expected: Mapping[str, str] | None = None) -> None:
     """설정 시트의 키/값을 현재 행에 갱신하거나 새 행으로 추가한다."""
     key_to_row = {}
+    current = {}
     for row_index, row in enumerate(worksheet.get_all_values()[1:], start=2):
         key = (row[0] if row else "").strip()
-        if key and key not in key_to_row:
+        if key:
             key_to_row[key] = row_index
+            current[key] = (row[1] if len(row) > 1 else "").strip()
+    for key, value in (expected or {}).items():
+        if current.get(key, "") != value:
+            raise ConfigValueChangedError(key)
     pairs = [(key, str(value)) for key, value in (updates or {}).items() if value is not None]
     new_rows = []
     batch_updates = []
