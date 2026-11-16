@@ -10,7 +10,12 @@ pd = deferred_module("pandas")  # 첫 화면 이후 처음 쓸 때 불러온다.
 
 
 def _normalized_text(value) -> str:
-    return "" if pd.isna(value) else " ".join(str(value).split())
+    if pd.isna(value):
+        return ""
+    if isinstance(value, float) and value.is_integer():
+        # 빈 칸 때문에 실수형이 된 숫자 열(우편번호·전화번호)도 원래 숫자 문자열로 비교한다.
+        value = int(value)
+    return " ".join(str(value).split())
 
 
 def _phone_digits(value) -> str:
@@ -21,6 +26,8 @@ def normalize_coupang_text(value) -> str:
     """쿠팡 주문서·송장의 수취인명/전화번호 비교용 문자열(빈 값·'nan'은 빈 문자열)."""
     if pd.isna(value):
         return ""
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
     text = str(value).strip()
     if text.lower() == "nan":
         return ""

@@ -103,6 +103,7 @@ from orders.bulk import (
     consolidate_gmarket_orders,
     work_order_amount,
 )
+from orders.excel_values import excel_text
 from orders.invoice import INVOICE_COLUMNS, build_invoice_rows
 from orders.gift_event import DEFAULT_GIFT_EVENT, gift_event_from_config_rows, read_gift_event
 from orders.matching import CoupangOrderIndex, NaverOrderIndex, normalize_coupang_text
@@ -9063,8 +9064,8 @@ class MainWindow(QMainWindow):
 
                     # 주문 정보 추가 (인덱스 포함)
                     markdown_text += f"{idx}. {row[required_columns['수취인명']]}\n"
-                    markdown_text += f"  송장번호: {row[required_columns['등기번호']]}\n"
-                    markdown_text += f"  이동통신: {row[required_columns['수취인 이동통신']]}\n"
+                    markdown_text += f"  송장번호: {excel_text(row[required_columns['등기번호']])}\n"
+                    markdown_text += f"  이동통신: {excel_text(row[required_columns['수취인 이동통신']])}\n"
                     markdown_text += f"  주소: {row[required_columns['수취인상세주소']]}\n\n"
 
                 
@@ -9346,11 +9347,15 @@ class MainWindow(QMainWindow):
 
             for idx, invoice_row in invoice_df.iterrows():
                 invoice_name = _normalize_value(invoice_row[column_mapping['invoice']['수취인명']])
-                invoice_phone = _normalize_value(invoice_row[column_mapping['invoice']['수취인 이동통신']])
-                invoice_number = _normalize_value(invoice_row[column_mapping['invoice']['등기번호']])
+                invoice_phone = excel_text(invoice_row[column_mapping['invoice']['수취인 이동통신']])
+                # 등기번호 열에 빈 칸이 있으면 실수형으로 읽히므로 '6012345678901.0'이 되지 않게 바꾼다.
+                invoice_number = excel_text(invoice_row[column_mapping['invoice']['등기번호']])
+                if not invoice_number:
+                    continue  # 등기번호 없는 행(합계·빈 행)은 매칭하지 않는다(미리보기와 같은 기준).
                 invoice_order_number = ''
                 if column_mapping['invoice']['고객 주문번호']:
-                    invoice_order_number = _normalize_digits(invoice_row[column_mapping['invoice']['고객 주문번호']])[:13]
+                    invoice_order_number = _normalize_digits(
+                        excel_text(invoice_row[column_mapping['invoice']['고객 주문번호']]))[:13]
 
                 matched_labels = []
                 if naver_order_index is not None and invoice_order_number:
@@ -9433,10 +9438,11 @@ class MainWindow(QMainWindow):
             order_df = pd.read_excel(temp_order_file)
             
             # 묶음배송번호, 주문번호를 문자열로 변환하여 정확한 값 유지
+            # 빈 칸이 섞여 실수형이 된 열도 '30000000001.0'·'nan'이 아닌 번호 문자열로 바꾼다.
             if '묶음배송번호' in order_df.columns:
-                order_df['묶음배송번호'] = order_df['묶음배송번호'].astype(str)
+                order_df['묶음배송번호'] = order_df['묶음배송번호'].map(excel_text)
             if '주문번호' in order_df.columns:
-                order_df['주문번호'] = order_df['주문번호'].astype(str)
+                order_df['주문번호'] = order_df['주문번호'].map(excel_text)
             
             # 분리배송 열 추가 (모든 값을 'N'으로 설정)
             order_df['분리배송 Y/N'] = 'N'
@@ -9557,7 +9563,10 @@ class MainWindow(QMainWindow):
 
             # 각 송장 행에 대해 매칭 시도
             for idx, invoice_row in invoice_df.iterrows():
-                invoice_number = str(invoice_row[required_invoice_columns['등기번호']])
+                # 빈 칸 때문에 실수형이 된 등기번호도 번호 문자열로, 등기번호 없는 행은 건너뛴다.
+                invoice_number = excel_text(invoice_row[required_invoice_columns['등기번호']])
+                if not invoice_number:
+                    continue
                 invoice_name = _coupang_norm_str(invoice_row[required_invoice_columns['수취인명']])
                 invoice_phone = _coupang_norm_str(invoice_row[required_invoice_columns['수취인 전화번호']])
                 

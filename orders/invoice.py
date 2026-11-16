@@ -6,6 +6,7 @@ from collections.abc import Mapping
 
 from shared.lazy_import import deferred_module
 
+from orders.excel_values import excel_text
 from orders.bulk import consolidate_11st_orders, consolidate_gmarket_orders, work_order_amount
 from orders.gift_event import DEFAULT_GIFT_EVENT, GiftEvent
 
@@ -34,7 +35,10 @@ def _text(value) -> str:
 
 
 def _zipcode(value) -> str:
-    zipcode = _text(value).strip()
+    # 우편번호 열에 빈 칸이 있으면 6035.0처럼 실수로 읽히므로 정수 값은 소수점 없이 바꾼다.
+    zipcode = excel_text(value)
+    if zipcode.lower() == "nan":
+        zipcode = ""
     return zipcode.zfill(5) if zipcode.isdigit() else zipcode
 
 
