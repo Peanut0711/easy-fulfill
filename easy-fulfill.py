@@ -3003,6 +3003,8 @@ class MainWindow(QMainWindow):
         self._detail_process_title = ""
         self._detail_process_output = ""
         self._detail_created_product_no = None
+        self._document_widget = None
+        self._document_widget_mount_attempted = False
 
         self._tracking_controller = TrackingController(self)
         self._tracking_controller.initialize_runtime()
@@ -5083,8 +5085,6 @@ class MainWindow(QMainWindow):
             self.ui.pushButton_quick_excel_gen.clicked.connect(self.generate_quick_excel)
         # 퀵엑셀(수동 주문 추가) 그룹은 단건 송장 탭에 상시 인라인으로 노출한다.
         self._mount_quick_excel_inline()
-        # 견적서·거래명세서 기능은 마지막 「문서 만들기」 탭에 독립 위젯으로 장착한다.
-        self._mount_document_widget()
         if hasattr(self.ui, "pushButton_quick_excel_reset"):
             self.ui.pushButton_quick_excel_reset.clicked.connect(self._reset_quick_excel_fields)
         # 연동·API 키(관리자): 배송추적 팝업에서 환경설정 탭으로 이동. 기존 핸들러 재사용.
@@ -5604,8 +5604,10 @@ class MainWindow(QMainWindow):
             self._refresh_db_sheet_sync_path_labels()
         elif name == "tab_tracking":
             self._enter_tracking_tab()
-        elif name == "tab_documents" and getattr(self, "_document_widget", None) is not None:
-            self._document_widget.prefetch_products()
+        elif name == "tab_documents":
+            self._mount_document_widget()
+            if self._document_widget is not None:
+                self._document_widget.prefetch_products()
 
     def _on_db_sync_refresh_paths_clicked(self):
         self._refresh_db_sheet_sync_path_labels(reset_manual_overrides=True)
@@ -6094,10 +6096,13 @@ class MainWindow(QMainWindow):
         lay.insertWidget(max(lay.count() - 1, 0), gb, 0, Qt.AlignmentFlag.AlignLeft)
 
     def _mount_document_widget(self):
-        """문서 기능 오류가 다른 주문·배송 탭의 시작을 막지 않도록 격리해 장착한다."""
-        layout = getattr(self.ui, "verticalLayout_documents", None)
-        if layout is None or getattr(self, "_document_widget", None) is not None:
+        """문서 탭 첫 진입 때 위젯을 장착하고 실패하면 탭 안에 오류를 표시한다."""
+        if self._document_widget_mount_attempted:
             return
+        layout = getattr(self.ui, "verticalLayout_documents", None)
+        if layout is None:
+            return
+        self._document_widget_mount_attempted = True
         try:
             from documents.quotation_statement_widget import QuotationStatementWidget
 
