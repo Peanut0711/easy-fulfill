@@ -9242,19 +9242,22 @@ class MainWindow(QMainWindow):
             if delivery_method_col and delivery_request_col:
                 copy_count = 0
                 delete_count = 0
+                rows_to_copy = []  # E열에 '택배,등기,소포'를 복사할 행 인덱스
                 rows_to_delete = []  # 삭제할 행 인덱스 저장
-                
-                for idx, row in order_df.iterrows():
-                    requested_method = str(row[delivery_request_col]).strip()
-                    
+
+                # 행마다 DataFrame에 쓰지 않고 대상 행만 모은 뒤 한 번에 반영한다.
+                requested_values = order_df[delivery_request_col].tolist()
+                for idx, requested_value in zip(order_df.index, requested_values):
+                    requested_method = str(requested_value).strip()
+
                     # NaN 값 처리
-                    if pd.isna(row[delivery_request_col]) or requested_method == 'nan':
+                    if pd.isna(requested_value) or requested_method == 'nan':
                         requested_method = ''
-                                        
+
                     if requested_method:
                         # G열의 값이 '택배,등기,소포'인 경우 E열에 무조건 복사
-                        if requested_method == '택배,등기,소포':                            
-                            order_df.loc[idx, delivery_method_col] = requested_method
+                        if requested_method == '택배,등기,소포':
+                            rows_to_copy.append(idx)
                             copy_count += 1
                         else:
                             # G열의 값이 '택배,등기,소포'가 아닌 경우 해당 행 삭제
@@ -9262,10 +9265,13 @@ class MainWindow(QMainWindow):
                             print(f"  - 요청(G열): '{requested_method}' (택배,등기,소포 아님)")
                             rows_to_delete.append(idx)
                             delete_count += 1
-                
-                # 삭제할 행들을 역순으로 삭제 (인덱스가 변경되지 않도록)
-                for idx in reversed(rows_to_delete):
-                    order_df = order_df.drop(idx).reset_index(drop=True)
+
+                if rows_to_copy:
+                    order_df.loc[rows_to_copy, delivery_method_col] = '택배,등기,소포'
+                # 0부터 이어지는 인덱스에서 한 번에 지우고 다시 번호를 매긴다
+                # (역순으로 한 행씩 지우고 매번 번호를 다시 매기던 결과와 같다).
+                if rows_to_delete:
+                    order_df = order_df.drop(rows_to_delete).reset_index(drop=True)
                 
                 print(f"✓ 총 {copy_count}개의 배송방법이 복사되었습니다.")
                 print(f"✓ 총 {delete_count}개의 행이 삭제되었습니다.")
