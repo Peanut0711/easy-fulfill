@@ -8,6 +8,8 @@ database-sync는 시트 쓰기가 필요하므로 스코프는 spreadsheets(전�
 
 from __future__ import annotations
 
+import threading
+
 import gspread
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -20,6 +22,29 @@ OAUTH_CREDENTIAL_PATH = GOOGLE_AUTH_DIR / "credentials.json"
 TOKEN_PATH = GOOGLE_AUTH_DIR / "token.json"
 
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
+LOGIN_TIMEOUT_SECONDS = 300
+
+# 브라우저 로그인 허용 기본값. GUI는 시작할 때 False로 바꿔 백그라운드 작업이 로그인 창을
+# 열지 않게 하고(재인증 버튼만 interactive=True), CLI 스크립트(database-sync 등)는 그대로 연다.
+_interactive_login_default = True
+_login_lock = threading.Lock()  # 브라우저 로그인은 한 번에 하나만
+
+
+class GoogleLoginRequiredError(RuntimeError):
+    """저장된 토큰으로 로그인할 수 없어 사용자의 Google 재인증이 필요하다."""
+
+    def __init__(self, message: str | None = None):
+        super().__init__(message or (
+            "Google 로그인이 필요합니다. 저장된 로그인(token.json)이 없거나 만료되었습니다. "
+            "「환경설정」→「Google Sheets 연동」에서 「재인증」을 눌러 주세요."))
+
+
+def set_interactive_login_default(enabled: bool) -> bool:
+    """interactive 인자를 생략한 호출의 브라우저 로그인 허용 여부를 바꾸고 이전 값을 반환한다."""
+    global _interactive_login_default
+    previous = _interactive_login_default
+    _interactive_login_default = bool(enabled)
+    return previous
 
 
 def _is_invalid_grant_error(error: BaseException) -> bool:
@@ -32,8 +57,15 @@ def _is_invalid_grant_error(error: BaseException) -> bool:
     )
 
 
-def get_authorized_gspread_client():
-    """OAuth로 로그인한 gspread Client를 반환합니다. 브라우저 로그인이 필요할 수 있습니다."""
+def get_authorized_gspread_client(interactive: bool | None = None,
+                                  timeout_seconds: int = LOGIN_TIMEOUT_SECONDS):
+    """OAuth로 로그인한 gspread Client를 반환합니다.
+
+    저장된 토큰을 쓸 수 없으면 interactive일 때만 브라우저 로그인을 열고(최대 timeout_seconds,
+    동시에 하나만), 아니면 GoogleLoginRequiredError를 냅니다.
+    """
+    if interactive is None:
+        interactive = _interactive_login_default
     GOOGLE_AUTH_DIR.mkdir(parents=True, exist_ok=True)
 
     creds = None
@@ -56,10 +88,26 @@ def get_authorized_gspread_client():
                     "OAuth 클라이언트 파일이 없습니다.\n"
                     f"다음 경로에 credentials.json을 배치하세요:\n{OAUTH_CREDENTIAL_PATH}"
                 )
-            flow = InstalledAppFlow.from_client_secrets_file(
-                str(OAUTH_CREDENTIAL_PATH), SCOPES
-            )
-            creds = flow.run_local_server(port=0)
+            if not interactive:
+                raise GoogleLoginRequiredError()
+            if not _login_lock.acquire(blocking=False):
+                raise GoogleLoginRequiredError(
+                    "다른 Google 로그인이 진행 중입니다. 열린 브라우저에서 로그인을 마친 뒤 다시 시도해 주세요.")
+            try:
+                flow = InstalledAppFlow.from_client_secrets_file(
+                    str(OAUTH_CREDENTIAL_PATH), SCOPES
+                )
+                try:
+                    creds = flow.run_local_server(port=0, timeout_seconds=timeout_seconds)
+                except AttributeError as error:
+                    # 제한 시간 안에 브라우저 응답이 없으면 라이브러리가 None을 다루다 실패한다.
+                    raise GoogleLoginRequiredError(
+                        f"Google 로그인 대기 시간({timeout_seconds}초)이 지났습니다. 다시 재인증해 주세요.",
+                    ) from error
+            finally:
+                _login_lock.release()
+            if creds is None:
+                raise GoogleLoginRequiredError("Google 로그인이 완료되지 않았습니다. 다시 재인증해 주세요.")
 
         TOKEN_PATH.write_text(creds.to_json(), encoding="utf-8")
 

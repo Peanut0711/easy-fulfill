@@ -1235,6 +1235,20 @@ class NaverDispatchThread(QThread):
         self.result_ready.emit(run_naver_dispatch_worker(self._records))
 
 
+class GoogleReauthThread(QThread):
+    """재인증 버튼의 브라우저 로그인을 화면 스레드 밖에서 기다린다(제한 시간 포함)."""
+
+    result_ready = Signal(dict)
+
+    def run(self):
+        try:
+            from sheets.google_sheets_oauth import get_authorized_gspread_client
+            client = get_authorized_gspread_client(interactive=True)
+            self.result_ready.emit({"ok": True, "client": client})
+        except Exception as error:
+            self.result_ready.emit({"ok": False, "error": str(error)})
+
+
 class OrderIndexReadSyncThread(QThread):
     """스프레드시트 인덱스를 백그라운드에서 읽습니다(앱 시작·주기적 폴링 공용)."""
 
@@ -1625,6 +1639,7 @@ def _is_likely_google_sheets_oauth_error(exc: BaseException) -> bool:
         "unauthorized",
         "access denied",
         "refresh",
+        "google 로그인",  # sheets.google_sheets_oauth.GoogleLoginRequiredError 문구
     ):
         if needle in text:
             return True
@@ -6128,22 +6143,41 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "재인증", "google-auth-oauthlib 패키지가 필요합니다.")
             return False
 
+        if getattr(self, "_google_reauth_thread", None) is not None:
+            QMessageBox.information(self, "재인증", "Google 로그인이 이미 진행 중입니다. 열린 브라우저에서 마쳐 주세요.")
+            return True
         delete_oauth_token_file()
         self._invalidate_google_sheets_client_and_caches()
-        try:
-            self._gspread_client = get_authorized_gspread_client()
-        except Exception as e:
-            self._gspread_client = None
-            QMessageBox.critical(
-                self,
-                "재인증 실패",
-                f"Google 로그인에 실패했습니다.\n\n{e}",
-            )
-            self._refresh_google_auth_status_ui()
-            return False
-        self._refresh_google_auth_status_ui()
-        QMessageBox.information(self, "재인증", "Google Sheets 연동이 완료되었습니다.")
+        # 브라우저 로그인은 수 분 걸릴 수 있으므로 백그라운드에서 기다리고 화면은 계속 쓸 수 있게 둔다.
+        button = getattr(self.ui, "pushButton_google_reauth", None)
+        if button is not None:
+            button.setEnabled(False)
+        self.statusBar().showMessage("브라우저에서 Google 로그인·권한 승인을 마쳐 주세요. (최대 5분)")
+        thread = GoogleReauthThread(self)
+        self._google_reauth_thread = thread
+        thread.result_ready.connect(self._on_google_reauth_finished)
+        thread.finished.connect(self._cleanup_google_reauth_thread)
+        thread.finished.connect(thread.deleteLater)
+        thread.start()
         return True
+
+    def _on_google_reauth_finished(self, payload):
+        if payload.get("ok"):
+            self._gspread_client = payload.get("client")
+            self._refresh_google_auth_status_ui()
+            self.statusBar().showMessage("Google Sheets 연동이 완료되었습니다.", 5000)
+            QMessageBox.information(self, "재인증", "Google Sheets 연동이 완료되었습니다.")
+        else:
+            self._gspread_client = None
+            self._refresh_google_auth_status_ui()
+            self.statusBar().showMessage("Google 재인증 실패", 5000)
+            QMessageBox.critical(self, "재인증 실패", f"Google 로그인에 실패했습니다.\n\n{payload.get('error', '')}")
+
+    def _cleanup_google_reauth_thread(self):
+        self._google_reauth_thread = None
+        button = getattr(self.ui, "pushButton_google_reauth", None)
+        if button is not None:
+            button.setEnabled(True)
 
     def _on_google_open_oauth_folder_clicked(self):
         from sheets.google_sheets_oauth import GOOGLE_AUTH_DIR
@@ -10320,6 +10354,12 @@ def main():
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
     )
     app = QApplication(sys.argv)
+    # 앱의 백그라운드 작업은 Google 브라우저 로그인을 열지 않는다(재인증 버튼에서만 연다).
+    try:
+        from sheets.google_sheets_oauth import set_interactive_login_default
+        set_interactive_login_default(False)
+    except ImportError:
+        pass
     window = MainWindow()
     window.show()
     print("메인 윈도우 표시")
