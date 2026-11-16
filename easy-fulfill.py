@@ -4,6 +4,7 @@
 import sys
 import os
 import re
+import contextlib
 import html
 import math
 import time
@@ -4017,9 +4018,28 @@ class MainWindow(QMainWindow):
             f"쿠팡: {self.current_idx_coupang} | 11번가: {self.current_idx_11st})"
         )
 
+    @contextlib.contextmanager
+    def _batched_index_saves(self):
+        """주문 파일을 처리하는 동안 주문마다 인덱스 JSON을 다시 쓰지 않고 끝날 때 한 번만 저장한다."""
+        self._index_save_batch_depth = getattr(self, "_index_save_batch_depth", 0) + 1
+        try:
+            yield
+        finally:
+            self._index_save_batch_depth -= 1
+            pending = getattr(self, "_index_save_batched", None)
+            if self._index_save_batch_depth == 0 and pending is not None:
+                self._index_save_batched = None
+                self.save_index_values(push_sheet=pending[0], reason=pending[1])
+
     def save_index_values(self, push_sheet=True, reason="변경"):
         """현재 인덱스 값을 저장합니다. 로컬 JSON 후 스프레드시트 반영은 디바운스됩니다.
         reason 은 변경이력에 남길 사유(주문 로드/수동 변경 등)."""
+        if getattr(self, "_index_save_batch_depth", 0) > 0:
+            # 일괄 처리 중: 저장할 일과 시트 반영 여부만 기억했다가 끝날 때 한 번 저장한다.
+            previous = getattr(self, "_index_save_batched", None)
+            push = push_sheet or (previous is not None and previous[0])
+            self._index_save_batched = (push, reason if push_sheet else (previous[1] if previous else reason))
+            return
         if push_sheet:
             self._pending_index_reason = reason
         try:
@@ -4807,13 +4827,14 @@ class MainWindow(QMainWindow):
 
             try:
                 ok = False
-                if st == "naver":
-                    if getattr(self, "_naver_order_source", "file") == "api":
-                        ok = self.process_naver_api_orders()
-                    else:
-                        ok = self.process_naver_excel_file()
-                elif st == "coupang":
-                    ok = self.process_coupang_excel_file()
+                with self._batched_index_saves():
+                    if st == "naver":
+                        if getattr(self, "_naver_order_source", "file") == "api":
+                            ok = self.process_naver_api_orders()
+                        else:
+                            ok = self.process_naver_excel_file()
+                    elif st == "coupang":
+                        ok = self.process_coupang_excel_file()
                 self._finish_order_processing(ok is True)
             except Exception as e:
                 self._finish_order_processing(False)
@@ -7113,10 +7134,14 @@ class MainWindow(QMainWindow):
                     self._run_order_file_processing_with_async_mapping("coupang")
                 elif self.store_type == "gmarket":
                     print("✓ 지마켓 스토어 파일 처리 시작")
-                    self._finish_order_processing(self.process_gmarket_excel_file() is True)
+                    with self._batched_index_saves():
+                        ok = self.process_gmarket_excel_file()
+                    self._finish_order_processing(ok is True)
                 elif self.store_type == "11st":
                     print("✓ 11번가 스토어 파일 처리 시작")
-                    self._finish_order_processing(self.process_11st_excel_file() is True)
+                    with self._batched_index_saves():
+                        ok = self.process_11st_excel_file()
+                    self._finish_order_processing(ok is True)
             except Exception as e:
                 self._finish_order_processing(False)
                 print(f"❌ 파일 처리 중 오류 발생: {str(e)}")
