@@ -16,16 +16,18 @@ from pathlib import Path
 
 import requests
 from PIL import Image
-from detail_image_layout import normalized_widths, render_image_group
-from detail_text_style import portable_text_html, source_text_style, style_attribute
 
-import naver_commerce
-from google_sheets_oauth import get_authorized_gspread_client
+from integrations import naver_commerce
+from shared.paths import APP_ROOT
+from sheets.google_sheets_oauth import get_authorized_gspread_client
+
+from .detail_image_layout import normalized_widths, render_image_group
+from .detail_text_style import portable_text_html, source_text_style, style_attribute
 
 
 SPREADSHEET_ID = "1F0l6FMjXvKXAR9WyDvxEWcRvji-TaJbBim_G12TJ2Pw"
 CONFIG_SHEET_TITLE = "설정"
-OUTPUT_ROOT = Path(__file__).resolve().parent / "output" / "detail-preview"
+OUTPUT_ROOT = APP_ROOT / "output" / "detail-preview"
 VOID_TAGS = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"}
 # ZWJ/ZWNJ는 이모지 조합과 문자 모양에 필요하므로 제거하지 않는다.
 ZERO_WIDTH = re.compile("[\u200b\ufeff]")

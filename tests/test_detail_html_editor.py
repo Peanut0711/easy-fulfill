@@ -25,8 +25,8 @@ from PySide6.QtWidgets import (
 from PySide6.QtWebEngineCore import QWebEngineSettings
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from shiboken6 import isValid
-from detail_preview_server import DetailPreviewServer
-from detail_image_upload import upload_image_for_editor, validated_cdn_url
+from product_detail.detail_preview_server import DetailPreviewServer
+from product_detail.detail_image_upload import upload_image_for_editor, validated_cdn_url
 
 
 # MainWindow의 주문·설정 초기화를 실행하지 않고 실제 편집창 클래스 전체를 사용한다.
@@ -647,7 +647,7 @@ class DetailEditorTests(unittest.TestCase):
         self.assertTrue(self.dialog.isVisible())
 
     def test_youtube_iframes_survive_text_edit_copy_and_save(self):
-        from naver_detail_preview import render_youtube_video
+        from product_detail.naver_detail_preview import render_youtube_video
 
         videos = ''.join(render_youtube_video({
             'embedUrl': f'https://www.youtube.com/embed/{video_id}', 'title': '제품 시연',
@@ -670,7 +670,7 @@ class DetailEditorTests(unittest.TestCase):
             self.assertEqual(self.path.read_text(encoding='utf-8'), changed)
 
     def test_image_group_selection_spacing_movement_and_save(self):
-        from detail_image_layout import render_image_group
+        from product_detail.detail_image_layout import render_image_group
 
         pixel = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'
         group = render_image_group([{'src': pixel}, {'src': pixel}], [84, 16])
@@ -969,7 +969,7 @@ class DetailEditorTests(unittest.TestCase):
 
     def test_generated_nested_lists_preview_save_and_copy_use_same_html(self):
         from tests.test_detail_text_layout import SOURCE as nested_source, render
-        from coupang_cdn_upload import render_paste_html
+        from product_detail.coupang_cdn_upload import render_paste_html
 
         source = render_paste_html('<main><section class="text-block">' + render(nested_source) + '</section></main>')
         self.dialog.editor.setPlainText(source)

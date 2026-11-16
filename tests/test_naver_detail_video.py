@@ -7,8 +7,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import coupang_cdn_upload as cdn
-import naver_detail_preview as detail
+from product_detail import coupang_cdn_upload as cdn
+from product_detail import naver_detail_preview as detail
 
 
 FIRST = "5RydDnx4VE4"

@@ -131,14 +131,14 @@
 개념 예시:
 
 ```python
-from pathlib import Path
 import gspread
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 
+from shared.paths import APP_ROOT
+
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]  # database-sync 쓰기와 동일 토큰 공유 시
-APP_ROOT = Path(__file__).resolve().parent  # easy-fulfill.py 기준 저장소 루트
 GOOGLE_OAUTH_DIR = APP_ROOT / "google-oauth"
 CREDENTIALS_FILE = GOOGLE_OAUTH_DIR / "credentials.json"
 TOKEN_FILE = GOOGLE_OAUTH_DIR / "token.json"
@@ -186,7 +186,7 @@ def get_gspread_client():
 
 - [ ] `.gitignore`에 `google-oauth/` 등 인증 관련 경로 포함
 - [ ] 코드 내 인증 경로 하드코딩 제거
-- [ ] 스코프는 `google_sheets_oauth.py` 기준 (`spreadsheets` 전체; sync·GUI 공통 토큰)
+- [ ] 스코프는 `sheets/google_sheets_oauth.py` 기준 (`spreadsheets` 전체; sync·GUI 공통 토큰)
 - [ ] 사용자별 계정 접근권한 최소화
 - [ ] 키/토큰 유출 대응 절차 문서화
 

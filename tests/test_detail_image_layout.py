@@ -8,9 +8,9 @@ from unittest.mock import patch
 
 from playwright.sync_api import sync_playwright
 
-import coupang_cdn_upload as cdn
-import naver_detail_preview as detail
-from detail_image_layout import normalized_widths, render_image_group
+from product_detail import coupang_cdn_upload as cdn
+from product_detail import naver_detail_preview as detail
+from product_detail.detail_image_layout import normalized_widths, render_image_group
 
 
 def strip(widths, columns=2):

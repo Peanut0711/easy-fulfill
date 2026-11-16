@@ -2,11 +2,11 @@
 
 import unittest
 
-from epost_portal_oz_viewer import (
+from shipping.epost_portal_oz_viewer import (
     POPUP_PRINT_BUTTON_DIAGNOSTIC_PATH,
     preferred_popup_print_button_id,
 )
-from epost_portal_print_popup import preferred_outer_control_id
+from shipping.epost_portal_print_popup import preferred_outer_control_id
 
 
 class EpostPortalOzViewerTests(unittest.TestCase):

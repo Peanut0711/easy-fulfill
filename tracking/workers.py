@@ -84,7 +84,7 @@ def run_tracking_upsert_worker(records):
     if gspread is None:
         return {"ok": False, "error": "gspread 패키지가 필요합니다. (pip install gspread)"}
     try:
-        from google_sheets_oauth import get_authorized_gspread_client
+        from sheets.google_sheets_oauth import get_authorized_gspread_client
     except ImportError as error:
         return {"ok": False, "error": str(error)}
     try:
@@ -124,11 +124,11 @@ def run_tracking_refresh_worker(regkey, progress_cb=None, auto=False, interval_m
     if gspread is None:
         return {"ok": False, "error": "gspread 패키지가 필요합니다. (pip install gspread)"}
     try:
-        from google_sheets_oauth import get_authorized_gspread_client
+        from sheets.google_sheets_oauth import get_authorized_gspread_client
     except ImportError as e:
         return {"ok": False, "error": str(e)}
     try:
-        import kpost_tracker
+        from . import kpost_tracker
     except ImportError as e:
         return {"ok": False, "error": f"kpost_tracker 모듈을 불러올 수 없습니다: {e}"}
     try:
@@ -292,11 +292,11 @@ def run_tracking_refresh_one_worker(regkey, regino):
     if gspread is None:
         return {"ok": False, "error": "gspread 패키지가 필요합니다. (pip install gspread)"}
     try:
-        from google_sheets_oauth import get_authorized_gspread_client
+        from sheets.google_sheets_oauth import get_authorized_gspread_client
     except ImportError as e:
         return {"ok": False, "error": str(e)}
     try:
-        import kpost_tracker
+        from . import kpost_tracker
     except ImportError as e:
         return {"ok": False, "error": f"kpost_tracker 모듈을 불러올 수 없습니다: {e}"}
     regino = str(regino).strip()
@@ -364,7 +364,7 @@ def run_tracking_list_worker(mode="배송중"):
     if gspread is None:
         return {"ok": False, "error": "gspread 패키지가 필요합니다. (pip install gspread)"}
     try:
-        from google_sheets_oauth import get_authorized_gspread_client
+        from sheets.google_sheets_oauth import get_authorized_gspread_client
     except ImportError as e:
         return {"ok": False, "error": str(e)}
     try:
@@ -456,7 +456,7 @@ def run_tracking_management_update_worker(reginos, management):
     if not {_normalize_tracking_no(regino) for regino in reginos or []} - {""}:
         return {"ok": False, "error": "등기번호가 비어 있습니다."}
     try:
-        from google_sheets_oauth import get_authorized_gspread_client
+        from sheets.google_sheets_oauth import get_authorized_gspread_client
     except ImportError as error:
         return {"ok": False, "error": str(error)}
     try:
@@ -473,7 +473,7 @@ def run_tracking_notes_update_worker(notes):
     if not {_normalize_tracking_no(regino) for regino in (notes or {})} - {""}:
         return {"ok": True, "updated": 0}
     try:
-        from google_sheets_oauth import get_authorized_gspread_client
+        from sheets.google_sheets_oauth import get_authorized_gspread_client
     except ImportError as error:
         return {"ok": False, "error": str(error)}
     try:
@@ -490,7 +490,7 @@ def run_tracking_config_read_worker():
     if gspread is None:
         return {"ok": False, "error": "gspread 패키지가 필요합니다. (pip install gspread)"}
     try:
-        from google_sheets_oauth import get_authorized_gspread_client
+        from sheets.google_sheets_oauth import get_authorized_gspread_client
     except ImportError as e:
         return {"ok": False, "error": str(e)}
     try:
@@ -518,7 +518,7 @@ def run_tracking_config_write_worker(updates):
     if gspread is None:
         return {"ok": False, "error": "gspread 패키지가 필요합니다. (pip install gspread)"}
     try:
-        from google_sheets_oauth import get_authorized_gspread_client
+        from sheets.google_sheets_oauth import get_authorized_gspread_client
     except ImportError as e:
         return {"ok": False, "error": str(e)}
     try:
@@ -533,7 +533,7 @@ def run_tracking_config_write_worker(updates):
 def run_slack_send_worker(webhook_url, text):
     """슬랙 웹훅 전송을 UI 스레드 밖에서 수행한다."""
     try:
-        import slack_notify
+        from integrations import slack_notify
     except ImportError as error:
         return {"ok": False, "error": f"slack_notify 로드 실패: {error}"}
     return slack_notify.send_slack(webhook_url, text)
@@ -544,7 +544,7 @@ def run_digest_send_worker(webhook_url, text, today_str, sig):
     if gspread is None:
         return {"ok": False, "error": "gspread 패키지가 필요합니다.", "sent": False}
     try:
-        from google_sheets_oauth import get_authorized_gspread_client
+        from sheets.google_sheets_oauth import get_authorized_gspread_client
     except ImportError as error:
         return {"ok": False, "error": str(error), "sent": False}
     try:
@@ -591,7 +591,7 @@ def run_digest_send_worker(webhook_url, text, today_str, sig):
 def validate_tracking_key_worker(regkey):
     """우체국 regkey 유효성을 worker에서 검증한다."""
     try:
-        import kpost_tracker
+        from . import kpost_tracker
     except ImportError as error:
         return {
             "ok": False,

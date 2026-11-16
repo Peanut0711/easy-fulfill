@@ -35,7 +35,7 @@
 
 의존성: `requirements.txt`에 `google-auth-oauthlib` 추가.
 
-> 참고: 인증 로직은 `google_sheets_oauth.py`에 모았습니다. `easy-fulfill.py`와 `database-sync.py`가 같은 `google-oauth/token.json`을 씁니다. 예전에 **읽기 전용** 스코프로만 발급된 토큰이 있다면 `token.json`을 지운 뒤 다시 로그인하세요.
+> 참고: 인증 로직은 `sheets/google_sheets_oauth.py`에 모았습니다. `easy-fulfill.py`와 `database-sync.py`가 같은 `google-oauth/token.json`을 씁니다. 예전에 **읽기 전용** 스코프로만 발급된 토큰이 있다면 `token.json`을 지운 뒤 다시 로그인하세요.
 
 ---
 

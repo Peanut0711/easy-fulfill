@@ -12,8 +12,8 @@ from PySide6.QtCore import QDate
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QMessageBox
 
-from quotation_statement import generate_document
-from quotation_statement_widget import QuotationStatementWidget
+from documents.quotation_statement import generate_document
+from documents.quotation_statement_widget import QuotationStatementWidget
 
 
 class OrderImportWidgetTests(unittest.TestCase):
@@ -96,8 +96,8 @@ class OrderImportWidgetTests(unittest.TestCase):
                         kwargs["output_dir"] = directory
                         return generate_document(*args, **kwargs)
 
-                    with patch("quotation_statement_widget.QMessageBox") as message_box, \
-                            patch("quotation_statement_widget.generate_document", side_effect=export):
+                    with patch("documents.quotation_statement_widget.QMessageBox") as message_box, \
+                            patch("documents.quotation_statement_widget.generate_document", side_effect=export):
                         dialog = message_box.return_value
                         dialog.clickedButton.return_value = dialog.addButton.return_value
                         self.widget.create_document()

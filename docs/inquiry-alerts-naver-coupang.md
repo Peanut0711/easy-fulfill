@@ -62,11 +62,11 @@
 
 ## API 구현
 
-### 네이버 — `naver_commerce.py`
+### 네이버 — `integrations/naver_commerce.py`
 - 인증: OAuth 토큰(`POST /v1/oauth2/token`, bcrypt 전자서명).
 - 조회: 상품문의 `GET /v1/contents/qnas`, 고객문의 `GET /v1/pay-user/inquiries` (`answered=false`).
 
-### 쿠팡 — `coupang_commerce.py` (신규)
+### 쿠팡 — `integrations/coupang_commerce.py` (신규)
 - **인증이 네이버와 다름**: 토큰이 아니라 **요청마다 HMAC 서명**(CEA HmacSHA256). 표준
   `hmac`/`hashlib` 만 사용 → **새 의존성 없음**.
   - `signed_date` = GMT, 포맷 `yyMMdd'T'HHmmss'Z'`
@@ -97,8 +97,8 @@
 
 ## 구현 위치 (코드)
 
-- `coupang_commerce.py` — 쿠팡 HMAC·조회 순수함수(신규).
-- `naver_commerce.py` — 네이버 토큰·조회 순수함수(기존).
+- `integrations/coupang_commerce.py` — 쿠팡 HMAC·조회 순수함수(신규).
+- `integrations/naver_commerce.py` — 네이버 토큰·조회 순수함수(기존).
 - `easy-fulfill.py`:
   - `run_naver_inquiry_poll_worker()` — 네이버+쿠팡 통합 조회·리마인더·근무시간 게이트(이름은
     네이버지만 쿠팡도 처리. 향후 `monitoring.py`로 추출 예정 — TODO).

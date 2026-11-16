@@ -224,20 +224,20 @@ templates/transaction_statement_template.xlsx
 
 ```mermaid
 flowchart TB
-    UI[quotation_statement_widget.py\nPySide6 문서 만들기 화면] --> CALC[quotation_statement.py\n검증·계산·XLSX·PDF]
+    UI[documents/quotation_statement_widget.py\nPySide6 문서 만들기 화면] --> CALC[documents/quotation_statement.py\n검증·계산·XLSX·PDF]
     UI --> APP[easy-fulfill.py\n탭 장착·상품 조회 워커]
     APP --> AUTH[Google Sheets 설정 시트\n네이버 API 키]
-    APP --> NAVER[naver_commerce.py\n네이버 판매 상품 API]
+    APP --> NAVER[integrations/naver_commerce.py\n네이버 판매 상품 API]
     CALC --> XLSX[templates/*.xlsx]
     CALC --> OUT[output/*.xlsx, *.pdf]
 ```
 
 | 파일 | 책임 |
 |---|---|
-| `quotation_statement.py` | 입력 검증, `Decimal` 계산, 행 추가, Excel 양식 채움, 출력 파일명, Excel COM PDF 변환 |
-| `quotation_statement_widget.py` | PySide6 화면, 품목 상태, 상품 선택 팝업, 생성 확인, PDF 작업 스레드·진행 창 |
+| `documents/quotation_statement.py` | 입력 검증, `Decimal` 계산, 행 추가, Excel 양식 채움, 출력 파일명, Excel COM PDF 변환 |
+| `documents/quotation_statement_widget.py` | PySide6 화면, 품목 상태, 상품 선택 팝업, 생성 확인, PDF 작업 스레드·진행 창 |
 | `easy-fulfill.py` | 마지막 탭 장착, Google Sheets 설정 조회, 네이버 상품 조회 워커, 실패 진단 로그 |
-| `naver_commerce.py` | 네이버 토큰 발급과 판매 중 스마트스토어 상품 목록 조회 |
+| `integrations/naver_commerce.py` | 네이버 토큰 발급과 판매 중 스마트스토어 상품 목록 조회 |
 | `templates/*.xlsx` | 출력 양식과 도장 포함 공급자 정보 |
 | `tests/test_quotation_statement.py` | 계산 경계값, 행 확장, 템플릿 서식, PDF 오류 복구 테스트 |
 
@@ -362,7 +362,7 @@ GET  /api/documents/{id}/download
 
 ```powershell
 python -m unittest tests.test_quotation_statement
-python -m py_compile easy-fulfill.py quotation_statement.py quotation_statement_widget.py naver_commerce.py
+python -m py_compile easy-fulfill.py documents/quotation_statement.py documents/quotation_statement_widget.py integrations/naver_commerce.py
 git diff --check
 ```
 

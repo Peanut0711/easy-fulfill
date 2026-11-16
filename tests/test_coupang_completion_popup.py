@@ -8,7 +8,7 @@ from urllib.parse import quote
 
 from playwright.sync_api import Error, sync_playwright
 
-import coupang_detail_replace as detail
+from product_detail import coupang_detail_replace as detail
 
 
 POPUP = '''<div><p>수정요청이 완료되었습니다.</p>

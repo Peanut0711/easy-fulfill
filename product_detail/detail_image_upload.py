@@ -9,6 +9,8 @@ from urllib.parse import urlsplit
 from PySide6.QtCore import QProcess, QProcessEnvironment, Qt
 from PySide6.QtWidgets import QDialog, QLabel, QProgressBar, QVBoxLayout
 
+from shared.paths import APP_ROOT
+
 
 def validated_cdn_url(value):
     if not isinstance(value, str):
@@ -38,7 +40,7 @@ class ImageUploadDialog(QDialog):
         progress.setRange(0, 0)
         layout.addWidget(progress)
         self.process = QProcess(self)
-        self.process.setWorkingDirectory(str(Path(__file__).resolve().parent))
+        self.process.setWorkingDirectory(str(APP_ROOT))
         self.process.setProcessChannelMode(QProcess.MergedChannels)
         environment = QProcessEnvironment.systemEnvironment()
         environment.insert("PYTHONIOENCODING", "utf-8")
@@ -47,9 +49,11 @@ class ImageUploadDialog(QDialog):
         self.process.readyReadStandardOutput.connect(self._read_output)
         self.process.finished.connect(self._finished)
         self.process.errorOccurred.connect(self._process_error)
-        self.process.start(sys.executable, [str(Path(__file__).with_name("coupang_cdn_upload.py")),
-                                           "--upload", "--local-image", str(image_path),
-                                           "--result-json", str(result_path)])
+        self.process.start(sys.executable, [
+            "-m", "product_detail.coupang_cdn_upload",
+            "--upload", "--local-image", str(image_path),
+            "--result-json", str(result_path),
+        ])
 
     def _read_output(self):
         self.output = (self.output + bytes(self.process.readAllStandardOutput()).decode(

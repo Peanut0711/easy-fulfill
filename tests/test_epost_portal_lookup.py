@@ -2,7 +2,7 @@
 
 import unittest
 
-from epost_portal_lookup import (
+from shipping.epost_portal_lookup import (
     GRID_DIAGNOSTIC_PATH,
     QUERY_CONTROL_DIAGNOSTIC_PATH,
     TEXT_CONTROL_DIAGNOSTIC_PATH,
@@ -21,7 +21,7 @@ from epost_portal_lookup import (
     total_count_from_page_text,
     verify_target_rows,
 )
-from post_parcel_receipt_store import PrintCandidate
+from shipping.post_parcel_receipt_store import PrintCandidate
 
 
 def candidate(regi_no: str, received_at: str = "2026-08-19T12:00:00") -> PrintCandidate:

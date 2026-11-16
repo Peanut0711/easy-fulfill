@@ -4,7 +4,7 @@ from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from detail_preview_server import DetailPreviewServer
+from product_detail.detail_preview_server import DetailPreviewServer
 
 
 class PreviewServerTests(unittest.TestCase):

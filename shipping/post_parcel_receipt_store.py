@@ -8,7 +8,9 @@ from pathlib import Path
 from contextlib import closing
 import sqlite3
 
-from post_parcel import ParcelReceipt
+from shared.paths import APP_ROOT
+
+from .post_parcel import ParcelReceipt
 
 
 @dataclass(frozen=True)
@@ -29,7 +31,7 @@ class ReceiptStoreError(RuntimeError):
 
 def default_receipt_store_path() -> Path:
     """Git에 포함하지 않는 로컬 접수 이력 파일 경로."""
-    return Path(__file__).resolve().parent / "output" / "post-parcel-receipts.sqlite3"
+    return APP_ROOT / "output" / "post-parcel-receipts.sqlite3"
 
 
 class ParcelReceiptStore:

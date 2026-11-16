@@ -5,7 +5,8 @@ from __future__ import annotations
 import argparse
 import json
 import shutil
-from pathlib import Path
+
+from shared.paths import APP_ROOT
 
 
 def seller_name(page):
@@ -26,7 +27,7 @@ def main():
     if args.login == args.clear:
         parser.error("--login 또는 --clear 중 하나를 지정하세요.")
     if args.clear:
-        profile_dir = Path(__file__).resolve().parent / "output" / "coupang-browser-profile"
+        profile_dir = APP_ROOT / "output" / "coupang-browser-profile"
         if profile_dir.exists():
             shutil.rmtree(profile_dir)
         print(json.dumps({"connected": False, "cleared": True}, ensure_ascii=False))
@@ -34,7 +35,7 @@ def main():
 
     try:
         from playwright.sync_api import sync_playwright
-        import coupang_cdn_upload
+        from . import coupang_cdn_upload
     except ModuleNotFoundError as error:
         if error.name != "playwright":
             raise

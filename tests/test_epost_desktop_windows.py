@@ -2,13 +2,13 @@
 
 import unittest
 
-from epost_oz_print_dialog import (
+from shipping.epost_oz_print_dialog import (
     close_context_after_print,
     PRINT_DIALOG_ATTEMPT_TIMEOUT_SECONDS,
     PRINT_DIALOG_OPEN_ATTEMPTS,
     OZ_TOOLBAR_DIAGNOSTIC_PATH,
 )
-from epost_desktop_windows import (
+from shipping.epost_desktop_windows import (
     OZ_PRINT_TOOLBAR_CLIENT_X,
     OZ_PRINT_TOOLBAR_CLIENT_Y,
     PRINT_DIALOG_TITLE,

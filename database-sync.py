@@ -1,12 +1,12 @@
 """
 CLI: database 폴더 최신 파일 → 구글 스프레드시트(신규 행 append).
 
-로직은 db_sheet_sync 모듈을 사용합니다.
+로직은 sheets.db_sheet_sync 모듈을 사용합니다.
 """
 import io
 import sys
 
-from db_sheet_sync import DEFAULT_SPREADSHEET_ID, sync_coupang, sync_naver
+from sheets.db_sheet_sync import DEFAULT_SPREADSHEET_ID, sync_coupang, sync_naver
 
 if sys.platform == "win32":
     try:

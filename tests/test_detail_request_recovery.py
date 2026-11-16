@@ -11,8 +11,8 @@ from unittest.mock import Mock, call, patch
 import requests
 from PIL import Image
 
-import coupang_cdn_upload as cdn
-import naver_detail_preview as preview
+from product_detail import coupang_cdn_upload as cdn
+from product_detail import naver_detail_preview as preview
 
 
 def upload_response(status=200, body=None, content_type="application/json", **headers):

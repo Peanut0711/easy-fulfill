@@ -17,8 +17,8 @@ import xml.etree.ElementTree as ET
 
 import requests
 
-from google_sheets_oauth import get_authorized_gspread_client
-from post_parcel import call_api, element_text, required_setting
+from sheets.google_sheets_oauth import get_authorized_gspread_client
+from shipping.post_parcel import call_api, element_text, required_setting
 from tracking.repository import open_config_worksheet, read_config_values_map
 from tracking.workers import SPREADSHEET_ID, CONFIG_SHEET_HEADERS, CONFIG_SHEET_TITLE
 

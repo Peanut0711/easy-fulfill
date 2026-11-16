@@ -12,7 +12,9 @@ import gspread
 import pandas as pd
 from pathlib import Path
 
-from google_sheets_oauth import get_authorized_gspread_client
+from shared.paths import APP_ROOT
+
+from .google_sheets_oauth import get_authorized_gspread_client
 
 # 기본 스프레드시트 ID (앱·CLI에서 동일 값 사용)
 DEFAULT_SPREADSHEET_ID = "1F0l6FMjXvKXAR9WyDvxEWcRvji-TaJbBim_G12TJ2Pw"
@@ -22,7 +24,7 @@ NAVER_CONFIG = {
     "sheet_index": 0,  # 1번 시트
     "header_row": 1,   # 1행이 헤더
     "option_id_column": "상품번호(스마트스토어)",  # 네이버는 옵션ID가 없고 상품번호를 사용
-    "db_dir": "database",
+    "db_dir": str(APP_ROOT / "database"),
     # 구 스마트스토어 내보내기: Product_*.csv / 신규: 스마트스토어상품_YYYYMMDD_HHMMSS.csv
     "file_patterns": ["Product_*.csv", "스마트스토어상품_*.csv"],
 }
@@ -31,7 +33,7 @@ COUPANG_CONFIG = {
     "sheet_index": 1,  # 2번 시트
     "header_row": 2,   # 2행이 헤더
     "option_id_column": "옵션 ID",
-    "db_dir": "database",
+    "db_dir": str(APP_ROOT / "database"),
     "file_pattern": "price_inventory_*.xlsx"
 }
 

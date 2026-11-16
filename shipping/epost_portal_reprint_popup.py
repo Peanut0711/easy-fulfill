@@ -8,10 +8,11 @@ from __future__ import annotations
 
 import argparse
 import json
-from pathlib import Path
 import time
 
-from epost_portal_lookup import (
+from shared.paths import APP_ROOT
+
+from .epost_portal_lookup import (
     PAGE_READY_TIMEOUT_SECONDS,
     apply_print_target_query,
     normalize_registration_number,
@@ -19,24 +20,24 @@ from epost_portal_lookup import (
     wait_for_print_page,
     wait_for_query_result,
 )
-from epost_portal_print_popup import (
+from .epost_portal_print_popup import (
     open_print_popup,
     select_verified_target_rows,
     wait_for_popup,
     wait_for_popup_close,
 )
-from epost_portal_session import (
+from .epost_portal_session import (
     LOGIN_TIMEOUT_SECONDS,
     PORTAL_URL,
     ensure_portal_login,
     launch_epost_context,
     restore_epost_session,
 )
-from post_parcel_receipt_store import ParcelReceiptStore, ReceiptStoreError
+from .post_parcel_receipt_store import ParcelReceiptStore, ReceiptStoreError
 
 
 REPRINT_GRID_DIAGNOSTIC_PATH = (
-    Path(__file__).resolve().parent / "output" / "epost-portal-reprint-grid-diagnostic.json"
+    APP_ROOT / "output" / "epost-portal-reprint-grid-diagnostic.json"
 )
 MAX_REPRINT_GRID_SCROLL_STEPS = 40
 REPRINT_GRID_SCROLL_CLICKS_PER_STEP = 8

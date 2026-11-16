@@ -13,10 +13,11 @@ import sys
 import threading
 from collections import deque
 from datetime import datetime
-from pathlib import Path
 from urllib.parse import urlparse
 
-ROOT = Path(__file__).resolve().parent
+from shared.paths import APP_ROOT
+
+ROOT = APP_ROOT
 DETAIL_URL = "https://wing.coupang.com/tenants/seller-web/vendor-inventory/modify?vendorInventoryId={vendor_inventory_id}"
 WING_CLOSED_MARKER = "[WING 창 닫힘 감지]"
 
@@ -100,7 +101,7 @@ def load_coupang_modules():
     """실행 Python에 Playwright가 없을 때 작업 로그에 복구 방법을 남긴다."""
     try:
         from playwright.sync_api import Error as playwright_error, sync_playwright
-        import coupang_cdn_upload
+        from . import coupang_cdn_upload
     except ModuleNotFoundError as error:
         if error.name != "playwright":
             raise

@@ -32,7 +32,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from quotation_statement import (
+from shared.paths import APP_ROOT
+
+from .quotation_statement import (
     DocumentValidationError,
     ItemInput,
     NEGOTIATION_LIMIT,
@@ -221,7 +223,7 @@ class QuotationStatementWidget(QWidget):
         self._order_lookup_worker = order_lookup_worker
         self._coupang_order_lookup_worker = coupang_order_lookup_worker
         self._on_created = on_created
-        self._base_dir = Path(base_dir or Path(__file__).resolve().parent)
+        self._base_dir = Path(base_dir or APP_ROOT)
         self._search_thread = None
         self._order_lookup_thread = None
         self._pdf_thread = None

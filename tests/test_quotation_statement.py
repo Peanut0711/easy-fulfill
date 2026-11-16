@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 from openpyxl import load_workbook
 
-from quotation_statement import (
+from documents.quotation_statement import (
     DocumentValidationError,
     ItemInput,
     NegotiationRequired,
@@ -18,8 +18,8 @@ from quotation_statement import (
     export_xlsx_to_pdf,
     generate_document,
 )
-import naver_commerce
-import coupang_commerce
+from integrations import naver_commerce
+from integrations import coupang_commerce
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -239,7 +239,7 @@ class PdfExportTests(unittest.TestCase):
                 Path(kwargs["env"]["EASY_FULFILL_PDF_PATH"]).write_bytes(b"%PDF-1.4")
                 return subprocess.CompletedProcess(args, 0, "", "")
 
-            with patch("quotation_statement.subprocess.run", side_effect=fake_run):
+            with patch("documents.quotation_statement.subprocess.run", side_effect=fake_run):
                 pdf = export_xlsx_to_pdf(xlsx)
             self.assertEqual(pdf, xlsx.with_suffix(".pdf"))
             self.assertTrue(pdf.is_file())
@@ -255,7 +255,7 @@ class PdfExportTests(unittest.TestCase):
                 Path(kwargs["env"]["EASY_FULFILL_PDF_PATH"]).write_bytes(b"%PDF-1.4")
                 return subprocess.CompletedProcess(args, 1, "cleanup=Workbook.Close hresult=-2147418111", "")
 
-            with patch("quotation_statement.subprocess.run", side_effect=fake_run):
+            with patch("documents.quotation_statement.subprocess.run", side_effect=fake_run):
                 pdf = export_xlsx_to_pdf(xlsx)
             self.assertTrue(pdf.is_file())
             log = (Path(directory) / "pdf_export.log").read_text(encoding="utf-8")

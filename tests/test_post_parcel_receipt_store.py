@@ -4,8 +4,8 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
-from post_parcel import ParcelReceipt
-from post_parcel_receipt_store import ParcelReceiptStore, ReceiptStoreError
+from shipping.post_parcel import ParcelReceipt
+from shipping.post_parcel_receipt_store import ParcelReceiptStore, ReceiptStoreError
 
 
 RECEIPT = ParcelReceipt(

@@ -2,7 +2,7 @@
 
 import unittest
 
-from epost_portal_print_popup import preferred_outer_control_id, print_popup_is_open
+from shipping.epost_portal_print_popup import preferred_outer_control_id, print_popup_is_open
 
 
 class _VisibleText:

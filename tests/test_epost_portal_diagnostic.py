@@ -2,7 +2,7 @@
 
 import unittest
 
-from epost_portal_diagnostic import looks_like_print_page, sanitized_page_path
+from shipping.epost_portal_diagnostic import looks_like_print_page, sanitized_page_path
 
 
 class _Locator:

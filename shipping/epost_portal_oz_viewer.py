@@ -8,29 +8,30 @@ from __future__ import annotations
 
 import argparse
 import json
-from pathlib import Path
 
-from epost_desktop_windows import (
+from shared.paths import APP_ROOT
+
+from .epost_desktop_windows import (
     oz_viewer_windows,
     wait_for_new_single_oz_viewer,
     wait_for_window_close,
 )
-from epost_portal_lookup import PAGE_READY_TIMEOUT_SECONDS, korea_today, pending_candidates_for_date, wait_for_print_page
-from epost_portal_print_popup import preferred_outer_control_id, prepare_verified_print_popup
-from epost_portal_reprint_popup import prepare_verified_reprint_popup
-from epost_portal_session import (
+from .epost_portal_lookup import PAGE_READY_TIMEOUT_SECONDS, korea_today, pending_candidates_for_date, wait_for_print_page
+from .epost_portal_print_popup import preferred_outer_control_id, prepare_verified_print_popup
+from .epost_portal_reprint_popup import prepare_verified_reprint_popup
+from .epost_portal_session import (
     LOGIN_TIMEOUT_SECONDS,
     PORTAL_URL,
     ensure_portal_login,
     launch_epost_context,
     restore_epost_session,
 )
-from post_parcel_receipt_store import ParcelReceiptStore, ReceiptStoreError
+from .post_parcel_receipt_store import ParcelReceiptStore, ReceiptStoreError
 
 
 OZ_VIEWER_TIMEOUT_SECONDS = 20
 POPUP_PRINT_BUTTON_DIAGNOSTIC_PATH = (
-    Path(__file__).resolve().parent / "output" / "epost-portal-popup-print-button-controls.json"
+    APP_ROOT / "output" / "epost-portal-popup-print-button-controls.json"
 )
 
 

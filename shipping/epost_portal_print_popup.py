@@ -8,10 +8,11 @@ from __future__ import annotations
 
 import argparse
 import json
-from pathlib import Path
 import time
 
-from epost_portal_lookup import (
+from shared.paths import APP_ROOT
+
+from .epost_portal_lookup import (
     PAGE_READY_TIMEOUT_SECONDS,
     apply_new_print_query,
     korea_today,
@@ -21,19 +22,19 @@ from epost_portal_lookup import (
     wait_for_print_page,
     wait_for_query_result,
 )
-from epost_portal_session import (
+from .epost_portal_session import (
     LOGIN_TIMEOUT_SECONDS,
     PORTAL_URL,
     ensure_portal_login,
     launch_epost_context,
     restore_epost_session,
 )
-from post_parcel_receipt_store import ParcelReceiptStore, ReceiptStoreError
+from .post_parcel_receipt_store import ParcelReceiptStore, ReceiptStoreError
 
 
 POPUP_TIMEOUT_SECONDS = 15
 PRINT_BUTTON_DIAGNOSTIC_PATH = (
-    Path(__file__).resolve().parent / "output" / "epost-portal-print-button-controls.json"
+    APP_ROOT / "output" / "epost-portal-print-button-controls.json"
 )
 
 

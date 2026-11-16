@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import argparse
 import json
-from pathlib import Path
 import time
 from urllib.parse import urlparse
 
-from epost_portal_session import (
+from shared.paths import APP_ROOT
+
+from .epost_portal_session import (
     LOGIN_TIMEOUT_SECONDS,
     PORTAL_URL,
     ensure_portal_login,
@@ -17,7 +18,7 @@ from epost_portal_session import (
 )
 
 
-DIAGNOSTIC_PATH = Path(__file__).resolve().parent / "output" / "epost-portal-diagnostic.json"
+DIAGNOSTIC_PATH = APP_ROOT / "output" / "epost-portal-diagnostic.json"
 
 
 def control_snapshot(page) -> list[dict[str, str]]:

@@ -21,6 +21,8 @@ from openpyxl.cell.rich_text import CellRichText, TextBlock
 from openpyxl.cell.text import InlineFont
 from openpyxl.utils import get_column_letter, range_boundaries
 
+from shared.paths import APP_ROOT
+
 
 WON = Decimal("1")
 VAT_DIVISOR = Decimal("1.1")
@@ -453,9 +455,8 @@ def generate_document(
         shipping_gross_override=shipping_gross_override,
         discount_rate_override=discount_rate_override,
     )
-    base = Path(__file__).resolve().parent
-    templates = Path(templates_dir) if templates_dir else base / "templates"
-    output = Path(output_dir) if output_dir else base / "output"
+    templates = Path(templates_dir) if templates_dir else APP_ROOT / "templates"
+    output = Path(output_dir) if output_dir else APP_ROOT / "output"
     is_quote = document_type == "견적서"
     if not is_quote and document_type != "거래명세서":
         raise DocumentValidationError("문서 종류를 확인해주세요.")

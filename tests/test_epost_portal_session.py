@@ -2,7 +2,7 @@
 
 import unittest
 
-from epost_portal_session import (
+from shipping.epost_portal_session import (
     CONFIG_KEY_PORTAL_MEMBER_ID,
     CONFIG_KEY_PORTAL_PASSWORD,
     PortalCredentialError,

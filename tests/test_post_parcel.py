@@ -3,7 +3,7 @@
 import unittest
 import xml.etree.ElementTree as ET
 
-from post_parcel import (
+from shipping.post_parcel import (
     ParcelValidationError,
     address_suggestion,
     build_real_order_values,

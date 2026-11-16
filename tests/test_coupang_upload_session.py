@@ -10,9 +10,9 @@ from unittest.mock import Mock, patch
 
 from PIL import Image
 
-import coupang_cdn_upload as cdn
-import coupang_session
-import naver_to_coupang_html as batch
+from product_detail import coupang_cdn_upload as cdn
+from product_detail import coupang_session
+from product_detail import naver_to_coupang_html as batch
 
 
 def response(status=400, url=cdn.UPLOAD_URL, content_type="application/json"):

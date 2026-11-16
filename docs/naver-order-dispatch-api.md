@@ -25,7 +25,7 @@
   코드는 **무변경**. 합류 메서드: `_build_naver_orders_from_df(df, product_mapping)`
   (엑셀 처리 함수에서 추출, 양 경로 공유).
 
-**API 흐름** (`naver_commerce.py`)
+**API 흐름** (`integrations/naver_commerce.py`)
 1. `get_access_token` (bcrypt 전자서명 — 기존 문의 기능과 공용)
 2. `fetch_changed_product_order_ids` — `GET …/product-orders/last-changed-statuses`
    - ⚠️ **한 번에 최대 24시간**만 허용(초과 시 `104140 조회 날짜가 유효하지 않습니다`).

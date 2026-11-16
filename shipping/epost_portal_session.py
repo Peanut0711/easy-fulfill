@@ -6,7 +6,6 @@ import argparse
 import ctypes
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
 import time
@@ -15,8 +14,10 @@ from dataclasses import dataclass
 from typing import Mapping
 from urllib.parse import urlparse
 
+from shared.paths import APP_ROOT
 
-ROOT = Path(__file__).resolve().parent
+
+ROOT = APP_ROOT
 PROFILE_DIR = ROOT / "output" / "epost-browser-profile"
 AUTH_STATE_PATH = PROFILE_DIR / "easy-fulfill-auth-state.bin"
 PORTAL_URL = "https://biz.epost.go.kr/ui/index.jsp"
@@ -63,7 +64,7 @@ def portal_credentials_from_settings(settings: Mapping[str, object]) -> PortalCr
 def load_portal_credentials() -> PortalCredentials:
     """접근 제어된 기존 설정 탭에서만 포털 로그인 정보를 읽는다."""
     try:
-        from google_sheets_oauth import get_authorized_gspread_client
+        from sheets.google_sheets_oauth import get_authorized_gspread_client
         from tracking.repository import open_config_worksheet, read_config_values_map
 
         worksheet = open_config_worksheet(

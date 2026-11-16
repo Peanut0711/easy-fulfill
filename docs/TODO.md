@@ -46,7 +46,7 @@ Easy Fulfill 추후 작업 백로그. 완료 시 항목을 지우지 말고 `- [
       대상: `run_naver_inquiry_poll_worker`(네이버+쿠팡), 배송 위험/다이제스트 워커, 관련 Thread 클래스.
       → **다음 API 기능을 붙이기 전에** 하는 것을 추천(메인 파일 비대화 방지).
 - [ ] API provider 로직은 계속 **provider별 파일 분리** 유지(`*_commerce.py` / `*_tracker.py`).
-      이미 적용 중: `naver_commerce.py`, `coupang_commerce.py`, `kpost_tracker.py`, `slack_notify.py`.
+      이미 적용 중: `integrations/naver_commerce.py`, `integrations/coupang_commerce.py`, `tracking/kpost_tracker.py`, `integrations/slack_notify.py`.
 
 ## UI 구조
 

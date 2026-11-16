@@ -2,7 +2,7 @@
 
 import unittest
 
-from epost_portal_output_confirm import (
+from shipping.epost_portal_output_confirm import (
     OUTPUT_CONFIRM_DIAGNOSTIC_PATH,
     confirmed_output_regi_nos,
 )

@@ -8,14 +8,13 @@ database-sync는 시트 쓰기가 필요하므로 스코프는 spreadsheets(전�
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import gspread
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 
-APP_ROOT = Path(__file__).resolve().parent
+from shared.paths import APP_ROOT
+
 GOOGLE_AUTH_DIR = APP_ROOT / "google-oauth"
 OAUTH_CREDENTIAL_PATH = GOOGLE_AUTH_DIR / "credentials.json"
 TOKEN_PATH = GOOGLE_AUTH_DIR / "token.json"

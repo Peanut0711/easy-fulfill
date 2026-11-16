@@ -23,10 +23,13 @@ from urllib.parse import urlparse
 
 from PIL import Image, ImageOps
 from playwright.sync_api import sync_playwright
-from detail_image_layout import upgrade_legacy_image_groups
+
+from shared.paths import APP_ROOT
+
+from .detail_image_layout import upgrade_legacy_image_groups
 
 
-ROOT = Path(__file__).resolve().parent
+ROOT = APP_ROOT
 OUTPUT_ROOT = ROOT / "output" / "detail-preview"
 PROFILE_DIR = ROOT / "output" / "coupang-browser-profile"
 AUTH_STATE_PATH = PROFILE_DIR / "easy-fulfill-auth-state.bin"
@@ -419,7 +422,7 @@ def write_cdn_html(output_dir: Path, mapping: list[dict]):
 
 
 def render_paste_html(preview_html: str):
-    from detail_text_style import portable_text_html
+    from .detail_text_style import portable_text_html
 
     match = re.search(r"<main>(.*)</main>", preview_html, re.DOTALL)
     if not match:

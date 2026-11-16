@@ -61,8 +61,8 @@ product_category/
 - `database/` 아래 주문번호 및 중복 로드 기록 파일 형식
 - 기존 Excel 출력의 열, 서식, 파일명 규칙
 - 외부 스크립트의 인자 계약
-  - `naver_to_coupang_html.py`
-  - `coupang_detail_replace.py`
+  - `product_detail/naver_to_coupang_html.py`
+  - `product_detail/coupang_detail_replace.py`
 - OAuth 토큰 위치와 재인증 흐름
 - 배송추적 수동중지/재개, 메모 비동기 저장, Slack 알림의 동작
 - 기존 실행 방식: `python easy-fulfill.py`

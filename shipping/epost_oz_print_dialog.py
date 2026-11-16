@@ -8,10 +8,11 @@ from __future__ import annotations
 
 import argparse
 import json
-from pathlib import Path
 import time
 
-from epost_desktop_windows import (
+from shared.paths import APP_ROOT
+
+from .epost_desktop_windows import (
     activate_window,
     click_oz_viewer_print_toolbar_icon,
     oz_viewer_windows,
@@ -24,17 +25,17 @@ from epost_desktop_windows import (
     wait_for_new_single_print_dialog,
     wait_for_window_close,
 )
-from epost_portal_lookup import PAGE_READY_TIMEOUT_SECONDS, wait_for_print_page
-from epost_portal_oz_viewer import OZ_VIEWER_TIMEOUT_SECONDS, click_popup_print_button
-from epost_portal_reprint_popup import prepare_verified_reprint_popup
-from epost_portal_session import (
+from .epost_portal_lookup import PAGE_READY_TIMEOUT_SECONDS, wait_for_print_page
+from .epost_portal_oz_viewer import OZ_VIEWER_TIMEOUT_SECONDS, click_popup_print_button
+from .epost_portal_reprint_popup import prepare_verified_reprint_popup
+from .epost_portal_session import (
     LOGIN_TIMEOUT_SECONDS,
     PORTAL_URL,
     ensure_portal_login,
     launch_epost_context,
     restore_epost_session,
 )
-from post_parcel_receipt_store import ParcelReceiptStore, ReceiptStoreError
+from .post_parcel_receipt_store import ParcelReceiptStore, ReceiptStoreError
 
 
 PRINT_DIALOG_TIMEOUT_SECONDS = 15
@@ -47,7 +48,7 @@ PRINT_DIALOG_ATTEMPT_TIMEOUT_SECONDS = 30
 # 열린 모달창이 전면이라는 포털 동작을 이용해 짧게 기다린 뒤 Enter를 보낸다.
 PRINT_DIALOG_FOREGROUND_READY_SECONDS = 12
 OZ_TOOLBAR_DIAGNOSTIC_PATH = (
-    Path(__file__).resolve().parent / "output" / "epost-oz-viewer-toolbar-controls.json"
+    APP_ROOT / "output" / "epost-oz-viewer-toolbar-controls.json"
 )
 
 

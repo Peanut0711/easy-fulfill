@@ -141,9 +141,11 @@
 ```text
 easy-fulfill/
 ├─ easy-fulfill.py
-├─ naver_commerce.py
-├─ quotation_statement.py
-├─ quotation_statement_widget.py
+├─ integrations/
+│  └─ naver_commerce.py
+├─ documents/
+│  ├─ quotation_statement.py
+│  └─ quotation_statement_widget.py
 ├─ templates/
 │  ├─ quotation_template.xlsx
 │  └─ transaction_statement_template.xlsx
@@ -159,9 +161,9 @@ easy-fulfill/
 
 | 파일 | 책임 |
 |---|---|
-| `quotation_statement.py` | `Decimal` 계산, 입력 검증, 파일명 정리, 템플릿 행 확장, 엑셀 값 기록, Excel PDF 변환 |
-| `quotation_statement_widget.py` | PySide6 입력 화면, 품목 표, 미리보기, 생성 버튼, 비동기 상품 목록 조회·키워드 찾기 |
-| `naver_commerce.py` | 기존 인증 재사용, 판매 중 스마트스토어 상품 목록 조회 함수 추가 |
+| `documents/quotation_statement.py` | `Decimal` 계산, 입력 검증, 파일명 정리, 템플릿 행 확장, 엑셀 값 기록, Excel PDF 변환 |
+| `documents/quotation_statement_widget.py` | PySide6 입력 화면, 품목 표, 미리보기, 생성 버튼, 비동기 상품 목록 조회·키워드 찾기 |
+| `integrations/naver_commerce.py` | 기존 인증 재사용, 판매 중 스마트스토어 상품 목록 조회 함수 추가 |
 | `easy-fulfill.py` | 새 위젯 생성·장착, 기존 설정의 네이버 인증정보 전달, 상태 메시지 연결 |
 | `ui/main_window.ui` | 마지막 `문서 만들기` 탭과 빈 레이아웃만 추가 |
 | `templates/*.xlsx` | 개인정보를 제거하고 공급자 고정정보와 인쇄 서식만 남긴 원본 양식 |
@@ -293,7 +295,7 @@ Windows 파일명에 사용할 수 없는 문자는 제거한다. 같은 이름�
 
 ### 5단계: 스마트스토어 상품 찾기
 
-- `naver_commerce.py`에 판매 중 상품 목록 조회 함수만 추가한다.
+- `integrations/naver_commerce.py`에 판매 중 상품 목록 조회 함수만 추가한다.
 - 기존 공유 인증정보와 오류 처리 함수를 재사용한다.
 - 짧은 키워드로 실행 중 메모리의 상품 목록을 필터링한다.
 - 검색 결과에서 제품명·가격을 확인하고 적용하면 API 상품명과 기준가격을 품목 행에 채운다.
@@ -342,7 +344,7 @@ Windows 파일명에 사용할 수 없는 문자는 제거한다. 같은 이름�
 ```powershell
 python -m unittest tests.test_quotation_statement
 python -m tests.test_quick_excel_parser
-python -m py_compile easy-fulfill.py quotation_statement.py quotation_statement_widget.py naver_commerce.py
+python -m py_compile easy-fulfill.py documents/quotation_statement.py documents/quotation_statement_widget.py integrations/naver_commerce.py
 git diff --check
 git status --short
 ```

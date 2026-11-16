@@ -2,7 +2,7 @@
 
 import unittest
 
-from epost_portal_reprint_popup import (
+from shipping.epost_portal_reprint_popup import (
     REPRINT_GRID_DIAGNOSTIC_PATH,
     REPRINT_GRID_SCROLL_CLICKS_PER_STEP,
     MAX_REPRINT_GRID_SCROLL_STEPS,
@@ -12,7 +12,7 @@ from epost_portal_reprint_popup import (
     verified_reprint_rows,
     reprint_lookup_date,
 )
-from post_parcel_receipt_store import PrintCandidate
+from shipping.post_parcel_receipt_store import PrintCandidate
 
 
 class EpostPortalReprintPopupTests(unittest.TestCase):

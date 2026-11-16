@@ -9,21 +9,22 @@ from __future__ import annotations
 import argparse
 from datetime import datetime
 import json
-from pathlib import Path
 import re
 import time
 from typing import Iterable
 from zoneinfo import ZoneInfo
 
-from epost_portal_diagnostic import looks_like_print_page
-from epost_portal_session import (
+from shared.paths import APP_ROOT
+
+from .epost_portal_diagnostic import looks_like_print_page
+from .epost_portal_session import (
     LOGIN_TIMEOUT_SECONDS,
     PORTAL_URL,
     ensure_portal_login,
     launch_epost_context,
     restore_epost_session,
 )
-from post_parcel_receipt_store import ParcelReceiptStore, PrintCandidate, ReceiptStoreError
+from .post_parcel_receipt_store import ParcelReceiptStore, PrintCandidate, ReceiptStoreError
 
 
 PAGE_READY_TIMEOUT_SECONDS = 600
@@ -37,13 +38,13 @@ REGI_END_SELECTOR = "input[id$='Div00_ipbEndNum_input']"
 GRID_REGI_NO_COLUMN = 3
 GRID_PRINT_STATE_COLUMN = 4
 QUERY_CONTROL_DIAGNOSTIC_PATH = (
-    Path(__file__).resolve().parent / "output" / "epost-portal-query-controls.json"
+    APP_ROOT / "output" / "epost-portal-query-controls.json"
 )
 GRID_DIAGNOSTIC_PATH = (
-    Path(__file__).resolve().parent / "output" / "epost-portal-grid-diagnostic.json"
+    APP_ROOT / "output" / "epost-portal-grid-diagnostic.json"
 )
 TEXT_CONTROL_DIAGNOSTIC_PATH = (
-    Path(__file__).resolve().parent / "output" / "epost-portal-text-control-diagnostic.json"
+    APP_ROOT / "output" / "epost-portal-text-control-diagnostic.json"
 )
 
 

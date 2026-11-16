@@ -56,8 +56,9 @@ from PySide6.QtGui import (
 from PySide6.QtWebEngineCore import QWebEngineSettings
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from shiboken6 import isValid
-from detail_preview_server import DetailPreviewServer
-from detail_image_upload import upload_image_for_editor, validated_cdn_url
+from shared.paths import APP_ROOT
+from product_detail.detail_preview_server import DetailPreviewServer
+from product_detail.detail_image_upload import upload_image_for_editor, validated_cdn_url
 import requests
 from io import BytesIO
 import warnings
@@ -107,7 +108,7 @@ from orders.invoice import INVOICE_COLUMNS, build_invoice_rows
 from orders.gift_event import DEFAULT_GIFT_EVENT, read_gift_event
 from orders.matching import match_naver_invoice_rows
 from ui.gift_event_settings import GiftEventSettingsDialog
-from post_parcel import (
+from shipping.post_parcel import (
     ParcelApiError,
     ParcelValidationError,
     new_real_order_no,
@@ -115,7 +116,7 @@ from post_parcel import (
     submit_real_order,
     submit_test_order,
 )
-from post_parcel_receipt_store import ParcelReceiptStore, ReceiptStoreError
+from shipping.post_parcel_receipt_store import ParcelReceiptStore, ReceiptStoreError
 
 try:
     import gspread
@@ -127,7 +128,7 @@ SPREADSHEET_ID = "1F0l6FMjXvKXAR9WyDvxEWcRvji-TaJbBim_G12TJ2Pw"
 NAVER_SMARTSTORE_PRODUCT_URL_PREFIX = "https://smartstore.naver.com/higenis/products/"
 # 쿠팡 VP 상품 페이지 (스프레드시트 D열 상품번호 기준)
 COUPANG_VP_PRODUCT_URL_PREFIX = "https://www.coupang.com/vp/products/"
-# OAuth 경로·토큰: google_sheets_oauth.py (database-sync와 공유, google-oauth/)
+# OAuth 경로·토큰: sheets/google_sheets_oauth.py (database-sync와 공유, google-oauth/)
 # 일별 주문 인덱스(네이버·쿠팡·지마켓) 공유용 — 스프레드시트에서 세 번째 탭(gspread 워크시트 인덱스 2)
 ORDER_INDEX_WORKSHEET_INDEX = 2
 ORDER_INDEX_SHEET_TITLE = "일별 주문번호"
@@ -364,7 +365,7 @@ def run_order_index_read_sync_worker(*, include_gift_event=False):
     if gspread is None:
         return {"ok": False, "error": "gspread 패키지가 필요합니다. (pip install gspread)"}
     try:
-        from google_sheets_oauth import get_authorized_gspread_client
+        from sheets.google_sheets_oauth import get_authorized_gspread_client
     except ImportError as e:
         return {"ok": False, "error": str(e)}
     payload = {}
@@ -438,7 +439,7 @@ def run_order_index_write_worker(naver, coupang, gmarket, reason="변경"):
     if gspread is None:
         return {"ok": False, "error": "gspread 패키지가 필요합니다. (pip install gspread)"}
     try:
-        from google_sheets_oauth import get_authorized_gspread_client
+        from sheets.google_sheets_oauth import get_authorized_gspread_client
     except ImportError as e:
         return {"ok": False, "error": str(e)}
     try:
@@ -467,7 +468,7 @@ def run_order_index_undo_worker():
     if gspread is None:
         return {"ok": False, "error": "gspread 패키지가 필요합니다. (pip install gspread)"}
     try:
-        from google_sheets_oauth import get_authorized_gspread_client
+        from sheets.google_sheets_oauth import get_authorized_gspread_client
     except ImportError as e:
         return {"ok": False, "error": str(e)}
     try:
@@ -574,13 +575,13 @@ def run_naver_inquiry_poll_worker():
     if gspread is None:
         return {"ok": False, "error": "gspread 패키지가 필요합니다."}
     try:
-        from google_sheets_oauth import get_authorized_gspread_client
+        from sheets.google_sheets_oauth import get_authorized_gspread_client
     except ImportError as e:
         return {"ok": False, "error": str(e)}
     try:
-        import naver_commerce
-        import coupang_commerce
-        import slack_notify
+        from integrations import naver_commerce
+        from integrations import coupang_commerce
+        from integrations import slack_notify
     except ImportError as e:
         return {"ok": False, "error": str(e)}
     try:
@@ -843,7 +844,7 @@ def run_product_code_map_load_worker(store_type: str):
     else:
         return {"ok": False, "error": f"지원되지 않는 store_type: {store_type}", "store_type": store_type}
     try:
-        from google_sheets_oauth import get_authorized_gspread_client
+        from sheets.google_sheets_oauth import get_authorized_gspread_client
     except ImportError as e:
         return {"ok": False, "error": str(e), "store_type": store_type}
     try:
@@ -891,8 +892,8 @@ def run_naver_order_fetch_worker(days):
     if gspread is None:
         return {"ok": False, "error": "gspread 패키지가 필요합니다."}
     try:
-        from google_sheets_oauth import get_authorized_gspread_client
-        import naver_commerce
+        from sheets.google_sheets_oauth import get_authorized_gspread_client
+        from integrations import naver_commerce
     except ImportError as e:
         return {"ok": False, "error": str(e)}
     try:
@@ -942,8 +943,8 @@ def run_naver_product_search_worker(query):
     if gspread is None:
         return _document_product_search_failure("의존성 확인", "gspread 패키지가 필요합니다.")
     try:
-        from google_sheets_oauth import get_authorized_gspread_client
-        import naver_commerce
+        from sheets.google_sheets_oauth import get_authorized_gspread_client
+        from integrations import naver_commerce
     except ImportError as e:
         return _document_product_search_failure("모듈 불러오기", e)
     stage = "초기화"
@@ -984,8 +985,8 @@ def run_naver_order_lookup_worker(order_id):
     if gspread is None:
         return {"ok": False, "error": "gspread 패키지가 필요합니다."}
     try:
-        from google_sheets_oauth import get_authorized_gspread_client
-        import naver_commerce
+        from sheets.google_sheets_oauth import get_authorized_gspread_client
+        from integrations import naver_commerce
     except ImportError as exc:
         return {"ok": False, "error": f"주문 조회 모듈을 불러오지 못했습니다: {exc}"}
     try:
@@ -1015,8 +1016,8 @@ def run_coupang_order_lookup_worker(order_id):
     if gspread is None:
         return {"ok": False, "error": "gspread 패키지가 필요합니다."}
     try:
-        from google_sheets_oauth import get_authorized_gspread_client
-        import coupang_commerce
+        from sheets.google_sheets_oauth import get_authorized_gspread_client
+        from integrations import coupang_commerce
     except ImportError as exc:
         return {"ok": False, "error": f"쿠팡 주문 조회 모듈을 불러오지 못했습니다: {exc}"}
     try:
@@ -1073,8 +1074,8 @@ def run_naver_dispatch_worker(records):
     if gspread is None:
         return {"ok": False, "error": "gspread 패키지가 필요합니다."}
     try:
-        from google_sheets_oauth import get_authorized_gspread_client
-        import naver_commerce
+        from sheets.google_sheets_oauth import get_authorized_gspread_client
+        from integrations import naver_commerce
     except ImportError as e:
         return {"ok": False, "error": str(e)}
     try:
@@ -1167,7 +1168,7 @@ class NaverCredsValidateThread(QThread):
 
     def run(self):
         try:
-            import naver_commerce
+            from integrations import naver_commerce
         except ImportError as e:
             self.result_ready.emit({"ok": False, "valid": False,
                                     "error": f"naver_commerce 로드 실패: {e}"})
@@ -1190,7 +1191,7 @@ class CoupangCredsValidateThread(QThread):
 
     def run(self):
         try:
-            import coupang_commerce
+            from integrations import coupang_commerce
         except ImportError as e:
             self.result_ready.emit({"ok": False, "valid": False,
                                     "error": f"coupang_commerce 로드 실패: {e}"})
@@ -1213,7 +1214,7 @@ class DbSheetSyncThread(QThread):
     def run(self):
         p = self._params
         try:
-            from db_sheet_sync import run_db_sheet_sync_job
+            from sheets.db_sheet_sync import run_db_sheet_sync_job
 
             self.result_ready.emit(
                 run_db_sheet_sync_job(
@@ -3134,7 +3135,7 @@ class MainWindow(QMainWindow):
             raise ImportError("gspread 패키지가 필요합니다. (pip install gspread)")
 
         try:
-            from google_sheets_oauth import get_authorized_gspread_client
+            from sheets.google_sheets_oauth import get_authorized_gspread_client
         except ImportError as e:
             raise ImportError(
                 "google-auth-oauthlib 패키지가 필요합니다. "
@@ -5183,7 +5184,7 @@ class MainWindow(QMainWindow):
 
     def _open_gift_event_settings(self):
         def open_worksheet():
-            from google_sheets_oauth import get_authorized_gspread_client
+            from sheets.google_sheets_oauth import get_authorized_gspread_client
             return _standalone_open_config_ws(get_authorized_gspread_client())
 
         dialog = GiftEventSettingsDialog(open_worksheet, self)
@@ -5397,7 +5398,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "상세페이지", "다른 상세페이지 작업이 진행 중입니다.")
             return
         process = QProcess(self)
-        process.setWorkingDirectory(str(Path(__file__).resolve().parent))
+        process.setWorkingDirectory(str(APP_ROOT))
         process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
         environment = QProcessEnvironment.systemEnvironment()
         environment.insert("PYTHONIOENCODING", "utf-8")
@@ -5479,13 +5480,13 @@ class MainWindow(QMainWindow):
             self._open_detail_editor(self._detail_created_product_no)
 
     def _on_detail_login_clicked(self):
-        self._start_detail_process("쿠팡 로그인 연결", ["coupang_session.py", "--login"])
+        self._start_detail_process("쿠팡 로그인 연결", ["-m", "product_detail.coupang_session", "--login"])
 
     def _on_detail_clear_session_clicked(self):
         if QMessageBox.question(self, "로그인 세션 삭제", "이 PC에 저장된 쿠팡 WING 로그인 세션을 삭제할까요?") != QMessageBox.StandardButton.Yes:
             return
         self.label_detail_session.setText("저장된 로그인 세션 삭제 중")
-        self._start_detail_process("쿠팡 로그인 세션 삭제", ["coupang_session.py", "--clear"])
+        self._start_detail_process("쿠팡 로그인 세션 삭제", ["-m", "product_detail.coupang_session", "--clear"])
 
     def _on_detail_create_clicked(self):
         product_no = self._detail_product_no(self.lineEdit_detail_naver_create, "네이버 상품번호", "naver")
@@ -5507,7 +5508,7 @@ class MainWindow(QMainWindow):
                 if message.clickedButton() is not regenerate:
                     return
             self._detail_created_product_no = product_no
-            self._start_detail_process("상품 상세 HTML 생성", ["naver_to_coupang_html.py", product_no, "--upload"])
+            self._start_detail_process("상품 상세 HTML 생성", ["-m", "product_detail.naver_to_coupang_html", product_no, "--upload"])
 
     def _open_detail_file(self, product_no, name):
         path = self._detail_output_dir(product_no) / name
@@ -5569,7 +5570,7 @@ class MainWindow(QMainWindow):
                 return
             self._detail_log(f"[쿠팡 상품 HTML 적용] 저장된 HTML 사용: {html_path}")
             self.pushButton_detail_finish.setEnabled(True)
-            self._start_detail_process("기존 쿠팡 상품 HTML 채우기", ["coupang_detail_replace.py", product_no, vendor_id], hold_wing=True)
+            self._start_detail_process("기존 쿠팡 상품 HTML 채우기", ["-m", "product_detail.coupang_detail_replace", product_no, vendor_id], hold_wing=True)
 
     def _on_detail_finish_clicked(self):
         if self._detail_process is not None and self._detail_process_holding_wing:
@@ -5587,7 +5588,7 @@ class MainWindow(QMainWindow):
         if not hasattr(self.ui, "label_google_auth_status"):
             return
         try:
-            from google_sheets_oauth import get_oauth_status_description
+            from sheets.google_sheets_oauth import get_oauth_status_description
 
             self.ui.label_google_auth_status.setText(get_oauth_status_description())
         except Exception as e:
@@ -5617,7 +5618,7 @@ class MainWindow(QMainWindow):
         if not hasattr(self.ui, "label_db_sync_naver_file"):
             return
         try:
-            from db_sheet_sync import NAVER_CONFIG
+            from sheets.db_sheet_sync import NAVER_CONFIG
         except ImportError:
             QMessageBox.warning(self, "DB동기화", "db_sheet_sync 모듈을 불러올 수 없습니다.")
             return
@@ -5636,7 +5637,7 @@ class MainWindow(QMainWindow):
         if not hasattr(self.ui, "label_db_sync_coupang_file"):
             return
         try:
-            from db_sheet_sync import COUPANG_CONFIG
+            from sheets.db_sheet_sync import COUPANG_CONFIG
         except ImportError:
             QMessageBox.warning(self, "DB동기화", "db_sheet_sync 모듈을 불러올 수 없습니다.")
             return
@@ -5667,7 +5668,7 @@ class MainWindow(QMainWindow):
         if not hasattr(self.ui, "label_db_sync_naver_file"):
             return
         try:
-            from db_sheet_sync import (
+            from sheets.db_sheet_sync import (
                 COUPANG_CONFIG,
                 NAVER_CONFIG,
                 format_db_sync_label_line,
@@ -5812,7 +5813,7 @@ class MainWindow(QMainWindow):
         )
         if reply != QMessageBox.StandardButton.Yes:
             return
-        from google_sheets_oauth import delete_oauth_token_file
+        from sheets.google_sheets_oauth import delete_oauth_token_file
 
         deleted = delete_oauth_token_file()
         self._invalidate_google_sheets_client_and_caches()
@@ -5839,7 +5840,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "재인증", "gspread 패키지가 필요합니다. (pip install gspread)")
             return False
         try:
-            from google_sheets_oauth import delete_oauth_token_file, get_authorized_gspread_client
+            from sheets.google_sheets_oauth import delete_oauth_token_file, get_authorized_gspread_client
         except ImportError:
             QMessageBox.warning(self, "재인증", "google-auth-oauthlib 패키지가 필요합니다.")
             return False
@@ -5862,7 +5863,7 @@ class MainWindow(QMainWindow):
         return True
 
     def _on_google_open_oauth_folder_clicked(self):
-        from google_sheets_oauth import GOOGLE_AUTH_DIR
+        from sheets.google_sheets_oauth import GOOGLE_AUTH_DIR
 
         GOOGLE_AUTH_DIR.mkdir(parents=True, exist_ok=True)
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(GOOGLE_AUTH_DIR.resolve())))
@@ -6098,7 +6099,7 @@ class MainWindow(QMainWindow):
         if layout is None or getattr(self, "_document_widget", None) is not None:
             return
         try:
-            from quotation_statement_widget import QuotationStatementWidget
+            from documents.quotation_statement_widget import QuotationStatementWidget
 
             self._document_widget = QuotationStatementWidget(
                 product_search_worker=run_naver_product_search_worker,
@@ -7901,7 +7902,7 @@ class MainWindow(QMainWindow):
 
             if gspread is None:
                 raise ParcelValidationError("gspread 패키지가 필요합니다. (pip install gspread)")
-            from google_sheets_oauth import get_authorized_gspread_client
+            from sheets.google_sheets_oauth import get_authorized_gspread_client
 
             QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
             try:
@@ -8103,7 +8104,7 @@ class MainWindow(QMainWindow):
             "ID와 비밀번호는 명령줄·로그·Git에 저장하거나 표시하지 않습니다.",
         )
         process = QProcess(self)
-        process.setWorkingDirectory(str(Path(__file__).resolve().parent))
+        process.setWorkingDirectory(str(APP_ROOT))
         process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
         environment = QProcessEnvironment.systemEnvironment()
         environment.insert("PYTHONIOENCODING", "utf-8")
@@ -8113,7 +8114,7 @@ class MainWindow(QMainWindow):
         process.finished.connect(self._on_epost_portal_login_finished)
         self._epost_portal_process = process
         self._epost_portal_process_output = ""
-        process.start(sys.executable, ["epost_portal_session.py", "--login"])
+        process.start(sys.executable, ["-m", "shipping.epost_portal_session", "--login"])
 
     def _on_epost_portal_login_output(self):
         process = getattr(self, "_epost_portal_process", None)
@@ -8174,7 +8175,7 @@ class MainWindow(QMainWindow):
             "수취인·주소·전화번호·목록 행은 저장하지 않습니다.",
         )
         process = QProcess(self)
-        process.setWorkingDirectory(str(Path(__file__).resolve().parent))
+        process.setWorkingDirectory(str(APP_ROOT))
         process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
         environment = QProcessEnvironment.systemEnvironment()
         environment.insert("PYTHONIOENCODING", "utf-8")
@@ -8184,7 +8185,7 @@ class MainWindow(QMainWindow):
         process.finished.connect(self._on_epost_portal_diagnostic_finished)
         self._epost_portal_diagnostic_process = process
         self._epost_portal_diagnostic_output = ""
-        process.start(sys.executable, ["epost_portal_diagnostic.py", "--diagnose"])
+        process.start(sys.executable, ["-m", "shipping.epost_portal_diagnostic", "--diagnose"])
 
     def _on_epost_portal_diagnostic_output(self):
         process = getattr(self, "_epost_portal_diagnostic_process", None)
@@ -8246,7 +8247,7 @@ class MainWindow(QMainWindow):
             "행 선택·운송장출력·인쇄는 실행하지 않습니다.",
         )
         process = QProcess(self)
-        process.setWorkingDirectory(str(Path(__file__).resolve().parent))
+        process.setWorkingDirectory(str(APP_ROOT))
         process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
         environment = QProcessEnvironment.systemEnvironment()
         environment.insert("PYTHONIOENCODING", "utf-8")
@@ -8256,7 +8257,7 @@ class MainWindow(QMainWindow):
         process.finished.connect(self._on_epost_portal_lookup_finished)
         self._epost_portal_lookup_process = process
         self._epost_portal_lookup_output = ""
-        process.start(sys.executable, ["epost_portal_lookup.py", "--lookup"])
+        process.start(sys.executable, ["-m", "shipping.epost_portal_lookup", "--lookup"])
 
     def _on_epost_portal_lookup_output(self):
         process = getattr(self, "_epost_portal_lookup_process", None)
@@ -8367,7 +8368,7 @@ class MainWindow(QMainWindow):
             return
 
         process = QProcess(self)
-        process.setWorkingDirectory(str(Path(__file__).resolve().parent))
+        process.setWorkingDirectory(str(APP_ROOT))
         process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
         environment = QProcessEnvironment.systemEnvironment()
         environment.insert("PYTHONIOENCODING", "utf-8")
@@ -8377,7 +8378,7 @@ class MainWindow(QMainWindow):
         process.finished.connect(self._on_epost_portal_print_popup_finished)
         self._epost_portal_print_popup_process = process
         self._epost_portal_print_popup_output = ""
-        process.start(sys.executable, ["epost_portal_print_popup.py", "--open-popup"])
+        process.start(sys.executable, ["-m", "shipping.epost_portal_print_popup", "--open-popup"])
 
     def _on_epost_portal_print_popup_output(self):
         process = getattr(self, "_epost_portal_print_popup_process", None)
@@ -8464,7 +8465,7 @@ class MainWindow(QMainWindow):
             return
 
         process = QProcess(self)
-        process.setWorkingDirectory(str(Path(__file__).resolve().parent))
+        process.setWorkingDirectory(str(APP_ROOT))
         process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
         environment = QProcessEnvironment.systemEnvironment()
         environment.insert("PYTHONIOENCODING", "utf-8")
@@ -8475,7 +8476,7 @@ class MainWindow(QMainWindow):
         self._epost_portal_oz_viewer_process = process
         self._epost_portal_oz_viewer_output = ""
         process.start(sys.executable, [
-            "epost_portal_oz_viewer.py",
+            "-m", "shipping.epost_portal_oz_viewer",
             "--open-reprint-oz-viewer" if reprint else "--open-oz-viewer",
         ])
 
@@ -8553,7 +8554,7 @@ class MainWindow(QMainWindow):
             "행 선택·운송장출력·인쇄는 실행하지 않습니다.",
         )
         process = QProcess(self)
-        process.setWorkingDirectory(str(Path(__file__).resolve().parent))
+        process.setWorkingDirectory(str(APP_ROOT))
         process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
         environment = QProcessEnvironment.systemEnvironment()
         environment.insert("PYTHONIOENCODING", "utf-8")
@@ -8563,7 +8564,7 @@ class MainWindow(QMainWindow):
         process.finished.connect(self._on_epost_portal_output_confirm_finished)
         self._epost_portal_output_confirm_process = process
         self._epost_portal_output_confirm_output = ""
-        process.start(sys.executable, ["epost_portal_output_confirm.py", "--confirm"])
+        process.start(sys.executable, ["-m", "shipping.epost_portal_output_confirm", "--confirm"])
 
     def _on_epost_portal_output_confirm_output(self):
         process = getattr(self, "_epost_portal_output_confirm_process", None)
@@ -8638,7 +8639,7 @@ class MainWindow(QMainWindow):
             return
 
         process = QProcess(self)
-        process.setWorkingDirectory(str(Path(__file__).resolve().parent))
+        process.setWorkingDirectory(str(APP_ROOT))
         process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
         environment = QProcessEnvironment.systemEnvironment()
         environment.insert("PYTHONIOENCODING", "utf-8")
@@ -8648,7 +8649,7 @@ class MainWindow(QMainWindow):
         process.finished.connect(self._on_epost_portal_reprint_popup_finished)
         self._epost_portal_reprint_popup_process = process
         self._epost_portal_reprint_popup_output = ""
-        process.start(sys.executable, ["epost_portal_reprint_popup.py", "--open-popup"])
+        process.start(sys.executable, ["-m", "shipping.epost_portal_reprint_popup", "--open-popup"])
 
     def _on_epost_portal_reprint_popup_output(self):
         process = getattr(self, "_epost_portal_reprint_popup_process", None)
@@ -8766,7 +8767,7 @@ class MainWindow(QMainWindow):
             return
 
         process = QProcess(self)
-        process.setWorkingDirectory(str(Path(__file__).resolve().parent))
+        process.setWorkingDirectory(str(APP_ROOT))
         process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
         environment = QProcessEnvironment.systemEnvironment()
         environment.insert("PYTHONIOENCODING", "utf-8")
@@ -8779,7 +8780,7 @@ class MainWindow(QMainWindow):
         self._epost_oz_print_dialog_execute_print = execute_print
         self._epost_oz_print_dialog_allow_batch = allow_batch
         arguments = [
-            "epost_oz_print_dialog.py",
+            "-m", "shipping.epost_oz_print_dialog",
             "--execute-reprint-print" if execute_print else "--open-reprint-print-dialog",
         ]
         if allow_batch:

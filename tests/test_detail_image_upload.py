@@ -14,8 +14,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PIL import Image
 from PySide6.QtWidgets import QApplication, QDialog
 from PySide6.QtCore import QProcess, QTimer
-import coupang_cdn_upload as cdn
-import detail_image_upload as ui
+from product_detail import coupang_cdn_upload as cdn
+from product_detail import detail_image_upload as ui
 
 
 class LocalImageTests(unittest.TestCase):
@@ -148,7 +148,11 @@ class UploadDialogTests(unittest.TestCase):
         observed = []
         def start(process, executable, arguments):
             self.assertEqual(executable, sys.executable)
-            self.assertEqual(arguments[1:4], ['--upload', '--local-image', '사진.png'])
+            self.assertEqual(Path(process.workingDirectory()), Path(__file__).resolve().parents[1])
+            self.assertEqual(arguments[:-1], [
+                '-m', 'product_detail.coupang_cdn_upload',
+                '--upload', '--local-image', '사진.png', '--result-json',
+            ])
             result_path = arguments[-1]
             def try_escape():
                 process.parent().reject()

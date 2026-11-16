@@ -10,7 +10,7 @@ from unittest.mock import Mock, patch
 
 from PIL import Image, features
 
-import coupang_cdn_upload as cdn
+from product_detail import coupang_cdn_upload as cdn
 
 
 class ImageFormatTests(unittest.TestCase):

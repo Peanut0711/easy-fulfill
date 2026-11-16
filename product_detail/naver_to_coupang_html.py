@@ -12,10 +12,12 @@ from contextlib import ExitStack
 from datetime import datetime
 from pathlib import Path
 
-import naver_detail_preview
+from shared.paths import APP_ROOT
+
+from . import naver_detail_preview
 
 
-ROOT = Path(__file__).resolve().parent
+ROOT = APP_ROOT
 OUTPUT_ROOT = ROOT / "output" / "detail-preview"
 
 
@@ -23,7 +25,7 @@ def load_coupang_upload_modules():
     """실행 Python에 Playwright가 없을 때 작업 로그에 복구 방법을 남긴다."""
     try:
         from playwright.sync_api import sync_playwright
-        import coupang_cdn_upload
+        from . import coupang_cdn_upload
     except ModuleNotFoundError as error:
         if error.name != "playwright":
             raise

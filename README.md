@@ -45,13 +45,13 @@ python easy-fulfill.py
 한 상품을 준비만 하려면 다음을 실행합니다.
 
 ```bash
-python naver_to_coupang_html.py 13204504134 --prepare-only
+python -m product_detail.naver_to_coupang_html 13204504134 --prepare-only
 ```
 
 여러 상품은 상품번호를 줄바꿈으로 적은 UTF-8 텍스트 파일을 준비한 뒤 실행합니다.
 
 ```bash
-python naver_to_coupang_html.py --list product_numbers.txt --upload
+python -m product_detail.naver_to_coupang_html --list product_numbers.txt --upload
 ```
 
 새로 업로드할 이미지가 있을 때 전용 쿠팡 WING 브라우저의 로그인 권한을 확인합니다. 기존 CDN 이미지만 재사용하거나 이미지가 없으면 브라우저·로그인 없이 HTML을 생성합니다. 로그인 세션은 로컬 `output/coupang-browser-profile`에만 저장되며, 일반 Chrome 로그인과는 별도입니다. 완료된 상품별 `output/detail-preview/<상품번호>/coupang-paste.html` 파일의 내용을 쿠팡 **기본 등록 → HTML 작성**에 붙여 넣으면 됩니다.
@@ -69,7 +69,7 @@ WING의 기본 상세 또는 HTML 작성 탭 선택이 실패하면 `output/wing
 기존 쿠팡 상품의 옵션별 이미지 상세를 공용 HTML로 바꾸는 시험 도구는 다음처럼 실행합니다. 기본 실행은 HTML을 화면에 채운 뒤 저장하지 않고 종료합니다.
 
 ```bash
-python coupang_detail_replace.py 13204504134 16078736117
+python -m product_detail.coupang_detail_replace 13204504134 16078736117
 ```
 
 `--apply`는 화면을 확인한 뒤 `APPLY`를 한 번 더 입력해야만 **수정 및 검수 요청**을 보냅니다.
@@ -112,8 +112,14 @@ python -m unittest discover
 ```
 easy-fulfill/
 ├── easy-fulfill.py      # 메인 프로그램 파일
-├── google_sheets_oauth.py  # Sheets OAuth 공통 (GUI·database-sync)
 ├── database-sync.py     # 스프레드시트 동기화 (동일 google-oauth)
+├── documents/          # 견적서·거래명세서
+├── integrations/       # 네이버·쿠팡 API, Slack 알림
+├── orders/             # 주문 읽기 및 송장 데이터
+├── product_detail/     # 상세페이지 미리보기·변환·업로드
+├── sheets/             # Google Sheets OAuth와 DB 동기화
+├── shipping/           # 우체국 소포 접수·운송장 인쇄
+├── tracking/           # 배송 추적
 ├── requirements.txt     # 필요한 패키지 목록
 ├── README.md           # 프로젝트 설명
 ├── tests/              # 자동 테스트

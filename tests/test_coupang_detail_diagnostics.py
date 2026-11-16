@@ -9,7 +9,7 @@ from unittest.mock import Mock, patch
 
 from playwright.sync_api import Error, TimeoutError, sync_playwright
 
-import coupang_detail_replace as detail
+from product_detail import coupang_detail_replace as detail
 
 
 class DetailDiagnosticTests(unittest.TestCase):
