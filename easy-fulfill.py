@@ -400,6 +400,18 @@ def run_order_index_read_sync_worker(*, include_gift_event=False):
     payload = {}
     try:
         gc = get_authorized_gspread_client()
+        if not include_gift_event:
+            # 주기 폴링·시작 동기화: 탭 제목으로 값만 한 번 읽는다(메타데이터 요청 2회 생략).
+            # 오늘 행·헤더가 이미 있으면 그대로 쓰고, 없거나 형식이 다르면 아래 기존 경로가 처리한다.
+            try:
+                from sheets.batch_read import batch_get_all_values
+                quick_values = batch_get_all_values(gc, SPREADSHEET_ID, [ORDER_INDEX_SHEET_TITLE])[0]
+            except Exception:
+                quick_values = None
+            if quick_values and _order_index_sheet_row_looks_like_header(quick_values[0]):
+                quick_row = _standalone_read_today_order_indices_from_values(quick_values)
+                if quick_row is not None:
+                    return {"ok": True, "kind": "data", "row": quick_row}
         if include_gift_event:
             try:
                 payload["gift_event"], _ = read_gift_event(_standalone_open_config_ws(gc))
