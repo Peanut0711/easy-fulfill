@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 from tracking.service import (
+    STALE_CONFIG_KEYS,
     STALE_DEFAULTS,
     TRACKING_MANAGEMENT_COL,
     TRACKING_MANAGEMENT_EXCLUDED,
@@ -264,6 +265,45 @@ def _config_read_render_calls(list_thread):
     controller._populate_tracking_table = lambda: calls.append("populate")
     controller._on_tracking_config_read_finished({"ok": False})
     return calls
+
+
+class _SettingsSnapshotHost(_TrackingControllerHost):
+    """표 갱신 한 번에 설정 파일을 몇 번 읽는지 센다."""
+
+    def __init__(self, settings):
+        super().__init__()
+        self.settings = settings
+        self.reads = 0
+
+    def read_app_settings(self):
+        self.reads += 1
+        return dict(self.settings)
+
+    def get_app_setting(self, _key, default=None):
+        raise AssertionError("표 갱신 중에는 키별로 설정 파일을 다시 읽지 않아야 합니다.")
+
+
+risk_rows = [["등기번호"] + [""] * 12]
+for index in range(30):
+    risk_row = [""] * 13
+    risk_row[0] = f"60000000000{index:02d}"
+    risk_row[1] = "2026-08-03 09:00:00"
+    risk_row[4] = f"수취인{index}"
+    risk_row[6] = "운송장출력"
+    risk_row[7] = "N"
+    risk_row[TRACKING_MANAGEMENT_COL] = "추적중"
+    risk_rows.append(risk_row)
+snapshot_host = _SettingsSnapshotHost({STALE_CONFIG_KEYS["수거누락"]: 1})
+snapshot_host.ui = SimpleNamespace(tableWidget_tracking=QTableWidget())
+snapshot_host._tracking_list_values = risk_rows
+snapshot_controller = TrackingController(snapshot_host)
+snapshot_controller._populate_tracking_table()
+assert snapshot_host.reads == 1
+assert snapshot_host.ui.tableWidget_tracking.rowCount() == 30
+assert len(snapshot_controller._collect_risk_rows()) == 30
+assert snapshot_host.reads == 2
+assert "기준 1h+" in snapshot_controller._build_risk_digest_text(
+    snapshot_controller._collect_risk_rows())
 
 
 # 설정 Sheet가 목록보다 먼저 끝나도 빈 표를 그리지 않아야 한다.

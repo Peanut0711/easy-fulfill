@@ -3692,6 +3692,22 @@ class MainWindow(QMainWindow):
             thread.start()
         self._set_naver_inquiry_status("쿠팡 키 유효함 ✓ (저장됨 · 전원 적용)")
 
+    def read_app_settings(self):
+        """database/app_settings.json 전체를 한 번 읽어 dict로 반환합니다.
+
+        여러 키를 연달아 쓰는 화면 갱신에서 키마다 파일을 다시 열지 않도록 사용합니다.
+        파일이 없거나 손상되면 빈 dict를 반환해 각 키가 기본값을 쓰게 합니다.
+        """
+        try:
+            if self.app_settings_path.exists() and self.app_settings_path.stat().st_size > 0:
+                with open(self.app_settings_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, dict):
+                    return data
+        except Exception as e:
+            print(f"! 앱 설정 읽기 오류: {e}")
+        return {}
+
     def get_app_setting(self, key, default=None):
         """database/app_settings.json 에서 단일 설정값을 읽습니다."""
         try:

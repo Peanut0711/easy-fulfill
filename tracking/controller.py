@@ -208,15 +208,31 @@ class TrackingController(QObject):
     def _tracking_table_col(cls, source_col):
         return next(i for i, (idx, _label) in enumerate(cls._TRACKING_TABLE_COLUMNS)
                     if idx == source_col)
-    def _evaluate_risk(self, status, where, done, ref, now_dt, management=""):
-        """분류별 영업시간 기준으로 위험 여부와 경과 시간을 계산한다."""
+    def _risk_settings(self):
+        """정체 기준과 도서산간 가산시간을 설정 파일 한 번 읽기로 계산한다.
+
+        표 갱신·다이제스트처럼 여러 행을 판정할 때 행마다 설정 JSON을 다시 열지 않도록
+        호출부에서 한 번 만들어 모든 행에 재사용한다.
+        """
+        reader = getattr(self.host, "read_app_settings", None)
+        if callable(reader):
+            settings = reader()
+            get = lambda key: settings.get(key, "")  # noqa: E731
+        else:
+            get = None
         thresholds = {
-            category: self._stale_threshold(category)
+            category: self._stale_threshold(category, get)
             for category in STALE_DEFAULTS
         }
+        return thresholds, self._remote_bonus_hours(get)
+
+    def _evaluate_risk(self, status, where, done, ref, now_dt, management="",
+                       risk_settings=None):
+        """분류별 영업시간 기준으로 위험 여부와 경과 시간을 계산한다."""
+        thresholds, remote_bonus = risk_settings or self._risk_settings()
         return evaluate_risk(
             status, where, done, ref, now_dt, thresholds,
-            self._remote_bonus_hours(), management)
+            remote_bonus, management)
 
     def _on_tracking_list_poll(self):
         """주기 타이머: 배송추적 탭을 보고 있을 때만 목록을 자동 재로딩."""
@@ -378,6 +394,7 @@ class TrackingController(QObject):
         bg_hub = QColor("#ffb3b3")      # 허브 정체 = 빨강(위험)
         bg_warn = QColor("#ffe0b3")     # 수거누락·이동정체 = 주황(주의)
         counts = {"허브정체": 0, "수거누락": 0, "이동정체": 0}
+        risk_settings = self._risk_settings()
 
         cols = self._TRACKING_TABLE_COLUMNS
         prev_regino = self._selected_tracking_regino()  # 자동 갱신 시 선택 유지용
@@ -393,7 +410,7 @@ class TrackingController(QObject):
                 ref = self._parse_event_dt(_cell(row, 11)) or self._parse_event_dt(_cell(row, 1))
                 risk, _elapsed = self._evaluate_risk(
                     _cell(row, 6), _cell(row, 8), done, ref, now_dt,
-                    _cell(row, TRACKING_MANAGEMENT_COL))
+                    _cell(row, TRACKING_MANAGEMENT_COL), risk_settings)
                 if risk:
                     counts[risk] += 1
                 bg = bg_hub if risk == "허브정체" else (bg_warn if risk else None)
@@ -942,6 +959,7 @@ class TrackingController(QObject):
         values = self._tracking_list_values
         data = values[1:] if len(values) > 1 else []
         now_dt = datetime.now()
+        risk_settings = self._risk_settings()
 
         def _cell(row, idx):
             return row[idx] if idx < len(row) else ""
@@ -953,7 +971,7 @@ class TrackingController(QObject):
             ref = ev or self._parse_event_dt(_cell(row, 1))
             risk, elapsed_h = self._evaluate_risk(
                 _cell(row, 6), _cell(row, 8), done, ref, now_dt,
-                _cell(row, TRACKING_MANAGEMENT_COL))
+                _cell(row, TRACKING_MANAGEMENT_COL), risk_settings)
             if not risk:
                 continue
             out.append({
@@ -977,10 +995,7 @@ class TrackingController(QObject):
 
     def _build_risk_digest_text(self, risks):
         """위험 목록을 Slack 일일 다이제스트 본문으로 변환한다."""
-        thresholds = {
-            category: self._stale_threshold(category)
-            for category in STALE_DEFAULTS
-        }
+        thresholds, _remote_bonus = self._risk_settings()
         return build_risk_digest_text(risks, thresholds)
 
     def _maybe_send_daily_digest(self):
@@ -1022,22 +1037,25 @@ class TrackingController(QObject):
     def _cleanup_digest_thread(self):
         self._digest_thread = None
 
-    def _stale_threshold(self, category):
+    def _stale_threshold(self, category, get=None):
         """분류별 정체 판정 기준 시간(영업시간, 공유 설정 동기화된 로컬 값).
-        값이 없으면 STALE_DEFAULTS(허브 12 / 수거누락 24 / 이동 48)."""
+        값이 없으면 STALE_DEFAULTS(허브 12 / 수거누락 24 / 이동 48).
+        get: 이미 읽어 둔 설정에서 키를 조회하는 함수(없으면 설정 파일을 읽는다)."""
         default = STALE_DEFAULTS.get(category, 12)
         try:
-            v = self.get_app_setting(STALE_CONFIG_KEYS[category], "")
+            key = STALE_CONFIG_KEYS[category]
+            v = get(key) if get is not None else self.get_app_setting(key, "")
             if str(v).strip():
                 return int(v)
         except (KeyError, TypeError, ValueError):
             pass
         return default
 
-    def _remote_bonus_hours(self):
+    def _remote_bonus_hours(self, get=None):
         """도서산간 가산시간(영업시간, 공유 설정 동기화된 로컬 값). 기본 24."""
         try:
-            v = self.get_app_setting(CONFIG_KEY_STALE_REMOTE_BONUS, "")
+            key = CONFIG_KEY_STALE_REMOTE_BONUS
+            v = get(key) if get is not None else self.get_app_setting(key, "")
             if str(v).strip():
                 return int(v)
         except (TypeError, ValueError):
