@@ -497,6 +497,14 @@ def run_order_load_sheets_worker(mapping_store_type=None):
         return {**payload, "ok": False, "error": str(e)}
 
 
+def _remove_file_quietly(path):
+    """임시 파일을 지운다. 이미 없거나 지우지 못해도 원래 작업 결과를 바꾸지 않는다."""
+    try:
+        Path(path).unlink(missing_ok=True)
+    except OSError as error:
+        print(f"! 임시 파일 삭제 실패: {path} ({error})")
+
+
 def _current_actor():
     """변경이력에 남길 사용자 식별(로컬 로그인명@호스트). 사무실 PC별로 사람 구분용."""
     try:
@@ -7036,6 +7044,7 @@ class MainWindow(QMainWindow):
 
     def process_naver_excel_file(self):
         """네이버 스토어 엑셀 파일에서 주문번호를 처리합니다."""
+        temp_path = None  # 복호화한 임시 파일(오류가 나도 지운다)
         try:
             print(f"\n[네이버 스토어 엑셀 파일 처리 시작] 파일: {self.selected_file_path}")
 
@@ -7179,9 +7188,10 @@ class MainWindow(QMainWindow):
                     raise Exception(error_msg)
             
             return self._build_naver_orders_from_df(df, product_mapping)
-            
-            return True  # 처리 성공(실패·누락 열 반환은 None)
+
         except Exception as e:
+            if temp_path:
+                _remove_file_quietly(temp_path)  # 복호화한 주문서(고객정보)를 남기지 않는다.
             error_msg = str(e)
             print(f"❌ 엑셀 파일 처리 중 오류 발생: {error_msg}")
             if _is_likely_google_sheets_oauth_error(e):
@@ -9408,11 +9418,6 @@ class MainWindow(QMainWindow):
             self._set_status_label(
                 self.ui.label_invoice, f"{_inv} · 발송 생성 완료 ✓", ok=True)
 
-            # 임시 파일 정리
-            temp_order_file.unlink(missing_ok=True)
-            temp_invoice_file.unlink()
-            temp_dir.rmdir()
-
         except Exception as e:
             error_msg = str(e)
             print(f"❌ 일괄 발송 파일 생성 중 오류 발생: {error_msg}")
@@ -9423,6 +9428,15 @@ class MainWindow(QMainWindow):
                 "오류",
                 f"일괄 발송 파일 생성 중 오류가 발생했습니다.\n\n{error_msg}"
             )
+        finally:
+            # 임시 파일 정리는 성공·실패와 관계없이 하고, 정리 실패를 생성 실패로 보지 않는다.
+            temp_dir = Path("temp")
+            for name in ("temp_order.xlsx", "temp_invoice.xlsx"):
+                _remove_file_quietly(temp_dir / name)
+            try:
+                temp_dir.rmdir()  # 다른 파일이 남아 있으면 폴더는 그대로 둔다.
+            except OSError:
+                pass
             
     @staticmethod
     def _naver_api_rows_to_order_frame(rows):
@@ -9669,15 +9683,15 @@ class MainWindow(QMainWindow):
             # 매칭된 건의 스토어·주문번호·수취인명을 공유 추적 시트에 보강
             self._enqueue_tracking_registration(naver_matched_records)
 
-            # 8. 임시 파일 정리
-            if decrypted_order_file is not None:
-                decrypted_order_file.unlink()
-            
         except Exception as e:
             error_msg = str(e)
             traceback.print_exc()
             print(f"❌ 일괄 발송 파일 처리 중 오류 발생: {error_msg}")
             raise Exception(f"일괄 발송 파일 처리 중 오류가 발생했습니다: {error_msg}")
+        finally:
+            # 8. 임시 파일 정리: 복호화한 주문서(고객정보)는 오류가 나도 남기지 않는다.
+            if decrypted_order_file is not None:
+                _remove_file_quietly(decrypted_order_file)
 
     def _process_coupang_invoice(self, temp_order_file, temp_invoice_file, invoice_df=None):
         """쿠팡 스토어 일괄 발송 파일 처리"""
