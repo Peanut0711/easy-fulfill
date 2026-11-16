@@ -99,6 +99,8 @@ class TrackingController(QObject):
         self._tracking_refresh_thread = None
         self._tracking_config_read_thread = None
         self._tracking_config_write_thread = None
+        # 쓰기 진행 중에 들어온 공유 설정 변경(키 → 최신 값). 끝나면 이어서 쓴다.
+        self._tracking_config_pending_writes = {}
         self._tracking_key_validate_thread = None
         self._key_validate_mode = "status"
         self._key_validate_pending_key = ""
@@ -900,13 +902,8 @@ class TrackingController(QObject):
         url = url.strip()
         self.set_app_setting("slack_webhook_url", url)
         # 공유 「설정」 탭에도 반영(전원 자동 적용)
-        if gspread is not None and url and self._tracking_config_write_thread is None:
-            thread = TrackingConfigWriteThread({CONFIG_KEY_SLACK_WEBHOOK: url}, self)
-            self._tracking_config_write_thread = thread
-            thread.result_ready.connect(self._on_tracking_config_write_finished)
-            thread.finished.connect(self._cleanup_tracking_config_write_thread)
-            thread.finished.connect(thread.deleteLater)
-            thread.start()
+        if url:
+            self.queue_tracking_config_write({CONFIG_KEY_SLACK_WEBHOOK: url})
         self._refresh_slack_status()
 
     def _on_slack_auto_toggled(self, state):
@@ -1066,13 +1063,7 @@ class TrackingController(QObject):
         """설정 1건을 로컬 저장 + 표 갱신 + 공유 「설정」 탭에 반영."""
         self.set_app_setting(key, value)
         self._populate_tracking_table()
-        if gspread is not None and self._tracking_config_write_thread is None:
-            thread = TrackingConfigWriteThread({key: str(value)}, self)
-            self._tracking_config_write_thread = thread
-            thread.result_ready.connect(self._on_tracking_config_write_finished)
-            thread.finished.connect(self._cleanup_tracking_config_write_thread)
-            thread.finished.connect(thread.deleteLater)
-            thread.start()
+        self.queue_tracking_config_write({key: value})
 
     def _on_stale_threshold_changed(self, category, value):
         """설정 팝업의 분류별 정체기준 변경 → 로컬 저장 + 공유 「설정」 탭 반영 + 표 갱신."""
@@ -1174,9 +1165,29 @@ class TrackingController(QObject):
     def _commit_kpost_regkey(self, key):
         """검증된 우체국 regkey 를 로컬과 공유 「설정」 탭에 저장합니다."""
         self.set_app_setting("kpost_regkey", key)
-        if gspread is None or self._tracking_config_write_thread is not None:
+        self.queue_tracking_config_write({CONFIG_KEY_KPOST_REGKEY: key})
+
+    def queue_tracking_config_write(self, updates):
+        """공유 「설정」 탭 쓰기를 대기열에 넣는다.
+
+        쓰기가 진행 중이면 버리지 않고 키별 최신 값으로 모았다가 끝난 뒤 이어서 쓴다
+        (스핀박스를 빠르게 바꿔도 마지막 값이 시트에 남는다).
+        """
+        if gspread is None:
             return
-        thread = TrackingConfigWriteThread({CONFIG_KEY_KPOST_REGKEY: key}, self)
+        pending = getattr(self.host, "_tracking_config_pending_writes", None)
+        if pending is None:
+            pending = self._tracking_config_pending_writes = {}
+        pending.update({key: str(value) for key, value in updates.items()})
+        self._start_tracking_config_write()
+
+    def _start_tracking_config_write(self):
+        pending = getattr(self.host, "_tracking_config_pending_writes", None)
+        if self._tracking_config_write_thread is not None or not pending:
+            return
+        updates = dict(pending)
+        pending.clear()
+        thread = TrackingConfigWriteThread(updates, self)
         self._tracking_config_write_thread = thread
         thread.result_ready.connect(self._on_tracking_config_write_finished)
         thread.finished.connect(self._cleanup_tracking_config_write_thread)
@@ -1185,12 +1196,13 @@ class TrackingController(QObject):
 
     def _on_tracking_config_write_finished(self, payload: dict):
         if payload.get("ok"):
-            self._set_tracking_summary("인증키를 공유 시트에 저장했습니다. (직원 전원 자동 적용)")
+            self._set_tracking_summary("공유 설정을 시트에 저장했습니다. (직원 전원 자동 적용)")
         else:
             print(f"! 공유 설정 저장 실패: {payload.get('error', '')}")
 
     def _cleanup_tracking_config_write_thread(self):
         self._tracking_config_write_thread = None
+        self._start_tracking_config_write()  # 진행 중에 모인 변경을 이어서 쓴다.
 
     def _begin_tracking_config_read(self):
         """공유 「설정」 탭에서 회사 공통 키를 읽어 입력란·로컬에 반영합니다."""

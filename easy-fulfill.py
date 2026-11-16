@@ -3331,16 +3331,10 @@ class MainWindow(QMainWindow):
             self._dlg_inquiry_end.blockSignals(False)
         self.set_app_setting("inquiry_work_start_hour", start)
         self.set_app_setting("inquiry_work_end_hour", end)
-        if gspread is not None and self._tracking_config_write_thread is None:
-            thread = TrackingConfigWriteThread({
-                CONFIG_KEY_INQUIRY_WORK_START: str(start),
-                CONFIG_KEY_INQUIRY_WORK_END: str(end),
-            }, self)
-            self._tracking_config_write_thread = thread
-            thread.result_ready.connect(self._on_tracking_config_write_finished)
-            thread.finished.connect(self._cleanup_tracking_config_write_thread)
-            thread.finished.connect(thread.deleteLater)
-            thread.start()
+        self._tracking_controller.queue_tracking_config_write({
+            CONFIG_KEY_INQUIRY_WORK_START: str(start),
+            CONFIG_KEY_INQUIRY_WORK_END: str(end),
+        })
 
     def _set_key_status_text(self, text):
         t = (text or "").strip()
@@ -3727,14 +3721,8 @@ class MainWindow(QMainWindow):
             self._set_naver_inquiry_status("키 검증 실패 — 저장 안 함")
             return
         # 검증 통과 → 공유 「설정」 탭에 저장(전원 적용)
-        if self._tracking_config_write_thread is None:
-            thread = TrackingConfigWriteThread(
-                {CONFIG_KEY_NAVER_CLIENT_ID: cid, CONFIG_KEY_NAVER_CLIENT_SECRET: csec}, self)
-            self._tracking_config_write_thread = thread
-            thread.result_ready.connect(self._on_tracking_config_write_finished)
-            thread.finished.connect(self._cleanup_tracking_config_write_thread)
-            thread.finished.connect(thread.deleteLater)
-            thread.start()
+        self._tracking_controller.queue_tracking_config_write(
+            {CONFIG_KEY_NAVER_CLIENT_ID: cid, CONFIG_KEY_NAVER_CLIENT_SECRET: csec})
         self._set_naver_inquiry_status("네이버 키 유효함 ✓ (저장됨 · 전원 적용)")
 
     def _on_coupang_creds_edit_clicked(self):
@@ -3802,17 +3790,11 @@ class MainWindow(QMainWindow):
             self._set_naver_inquiry_status("쿠팡 키 검증 실패 — 저장 안 함")
             return
         # 검증 통과 → 공유 「설정」 탭에 저장(전원 적용)
-        if self._tracking_config_write_thread is None:
-            thread = TrackingConfigWriteThread({
-                CONFIG_KEY_COUPANG_VENDOR_ID: vid,
-                CONFIG_KEY_COUPANG_ACCESS_KEY: ak,
-                CONFIG_KEY_COUPANG_SECRET_KEY: sk,
-            }, self)
-            self._tracking_config_write_thread = thread
-            thread.result_ready.connect(self._on_tracking_config_write_finished)
-            thread.finished.connect(self._cleanup_tracking_config_write_thread)
-            thread.finished.connect(thread.deleteLater)
-            thread.start()
+        self._tracking_controller.queue_tracking_config_write({
+            CONFIG_KEY_COUPANG_VENDOR_ID: vid,
+            CONFIG_KEY_COUPANG_ACCESS_KEY: ak,
+            CONFIG_KEY_COUPANG_SECRET_KEY: sk,
+        })
         self._set_naver_inquiry_status("쿠팡 키 유효함 ✓ (저장됨 · 전원 적용)")
 
     def read_app_settings(self):
