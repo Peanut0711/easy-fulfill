@@ -52,8 +52,10 @@ TRACKING_SHEET_TITLE = "송장추적"
 TRACKING_SHEET_HEADERS = [
     "등기번호", "등록일시", "스토어", "주문번호", "수취인명",
     "택배사코드", "배송상태", "완료여부", "마지막위치", "최근조회시각", "비고",
-    "최근이벤트시각", "관리상태",
+    "최근이벤트시각", "관리상태", "최근조회오류",
 ]
+# K열(비고)은 사용자가 표에서 직접 적는 메모다. 새로고침은 K열을 쓰지 않고,
+# 우체국 조회 오류 문구는 N열(최근조회오류)에 남긴다(성공하면 비운다).
 CONFIG_SHEET_TITLE = "설정"
 CONFIG_SHEET_HEADERS = ["키", "값"]
 CONFIG_KEY_KPOST_REGKEY = "kpost_regkey"
@@ -64,6 +66,22 @@ CONFIG_KEY_AUTO_REFRESH_MIN = "tracking_auto_refresh_min"
 CONFIG_KEY_LAST_AUTO_REFRESH = "tracking_last_auto_refresh"
 KPOST_PICKUP_HOUR = 18
 KPOST_TRACKING_REQUEST_DELAY_SEC = 0.1
+
+
+def _tracking_result_updates(ridx, status, done_yn, where, checked_at, event_time, management):
+    """조회 결과 반영: G:J(상태·완료·위치·조회시각)와 L:N(이벤트시각·관리상태·오류 비움). K열 메모는 건드리지 않는다."""
+    return [
+        {"range": f"G{ridx}:J{ridx}", "values": [[status, done_yn, where, checked_at]]},
+        {"range": f"L{ridx}:N{ridx}", "values": [[event_time, management, ""]]},
+    ]
+
+
+def _tracking_error_updates(ridx, checked_at, error):
+    """조회 실패 반영: J열 조회시각과 N열 오류 문구만 쓴다."""
+    return [
+        {"range": f"J{ridx}", "values": [[checked_at]]},
+        {"range": f"N{ridx}", "values": [[error]]},
+    ]
 
 
 def _standalone_open_tracking_ws(gc):
@@ -229,30 +247,23 @@ def run_tracking_refresh_worker(regkey, progress_cb=None, auto=False, interval_m
                 # ERR-131(시스템 부하 차단): 더 호출하면 차단되므로 중단
                 if code == "ERR-131":
                     aborted = True
-                    batch_updates.append({
-                        "range": f"J{ridx}:K{ridx}",
-                        "values": [[now, "우체국 시스템 부하로 조회 중단(ERR-131)"]],
-                    })
+                    batch_updates.extend(_tracking_error_updates(
+                        ridx, now, "우체국 시스템 부하로 조회 중단(ERR-131)"))
                     break
                 # ERR-001(조회결과 없음): 아직 추적정보 없음 → 실패가 아님
                 if code == "ERR-001":
                     progress += 1
                     management = _tracking_management_state(
                         row, "추적정보 없음", error_code=code, now_dt=now_dt)
-                    batch_updates.append({
-                        "range": f"G{ridx}:M{ridx}",
-                        "values": [["추적정보 없음", "N", "", now, "", "", management]],
-                    })
+                    batch_updates.extend(_tracking_result_updates(
+                        ridx, "추적정보 없음", "N", "", now, "", management))
                     time.sleep(KPOST_TRACKING_REQUEST_DELAY_SEC)
                     continue
                 management = _tracking_management_state(
                     row, (row[6] if len(row) > 6 else ""),
                     error_code=code, now_dt=now_dt)
                 failed += 1
-                batch_updates.append({
-                    "range": f"J{ridx}:K{ridx}",
-                    "values": [[now, s.get("error", "조회 실패")]],
-                })
+                batch_updates.extend(_tracking_error_updates(ridx, now, s.get("error", "조회 실패")))
                 if management != (row[TRACKING_MANAGEMENT_COL]
                                   if len(row) > TRACKING_MANAGEMENT_COL else ""):
                     batch_updates.append({"range": f"M{ridx}", "values": [[management]]})
@@ -265,12 +276,9 @@ def run_tracking_refresh_worker(regkey, progress_cb=None, auto=False, interval_m
                 progress += 1
             management = _tracking_management_state(
                 row, s.get("status", ""), s.get("where", ""), now_dt=now_dt)
-            # G:M = 배송상태, 완료여부, 마지막위치, 최근조회시각, 비고, 최근이벤트시각, 관리상태
-            batch_updates.append({
-                "range": f"G{ridx}:M{ridx}",
-                "values": [[s.get("status", ""), done_yn, s.get("where", ""),
-                            now, "", s.get("time", ""), management]],
-            })
+            batch_updates.extend(_tracking_result_updates(
+                ridx, s.get("status", ""), done_yn, s.get("where", ""),
+                now, s.get("time", ""), management))
             time.sleep(KPOST_TRACKING_REQUEST_DELAY_SEC)
         if batch_updates:
             batch_update_tracking(ws, batch_updates)
@@ -333,14 +341,13 @@ def run_tracking_refresh_one_worker(regkey, regino):
             if code == "ERR-001":
                 management = _tracking_management_state(
                     tracking_row, "추적정보 없음", error_code=code)
-                batch_update_tracking(ws, [{"range": f"G{ridx}:M{ridx}",
-                                             "values": [["추적정보 없음", "N", "", now, "", "", management]]}])
+                batch_update_tracking(ws, _tracking_result_updates(
+                    ridx, "추적정보 없음", "N", "", now, "", management))
                 return {"ok": True, "regino": regino, "status": "추적정보 없음", "complete": False}
             management = _tracking_management_state(
                 tracking_row, (tracking_row[6] if len(tracking_row) > 6 else ""),
                 error_code=code)
-            batch_update_tracking(ws, [{"range": f"J{ridx}:K{ridx}",
-                                        "values": [[now, s.get("error", "조회 실패")]]}])
+            batch_update_tracking(ws, _tracking_error_updates(ridx, now, s.get("error", "조회 실패")))
             if management != (tracking_row[TRACKING_MANAGEMENT_COL]
                               if len(tracking_row) > TRACKING_MANAGEMENT_COL else ""):
                 update_tracking_cell(ws, ridx, "M", management)
@@ -349,9 +356,9 @@ def run_tracking_refresh_one_worker(regkey, regino):
         done_yn = "Y" if s.get("complete") else "N"
         management = _tracking_management_state(
             tracking_row, s.get("status", ""), s.get("where", ""))
-        batch_update_tracking(ws, [{"range": f"G{ridx}:M{ridx}",
-                                    "values": [[s.get("status", ""), done_yn, s.get("where", ""),
-                                                now, "", s.get("time", ""), management]]}])
+        batch_update_tracking(ws, _tracking_result_updates(
+            ridx, s.get("status", ""), done_yn, s.get("where", ""),
+            now, s.get("time", ""), management))
         return {"ok": True, "regino": regino, "status": s.get("status", ""),
                 "complete": s.get("complete", False)}
     except Exception as e:

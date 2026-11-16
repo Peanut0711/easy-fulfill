@@ -21,7 +21,11 @@ def open_tracking_worksheet(
     for worksheet in spreadsheet.worksheets():
         if worksheet.title == sheet_title:
             if len(worksheet.row_values(1)) < len(headers):
-                worksheet.update([list(headers)], range_name="A1:M1", value_input_option="RAW")
+                # 열이 추가된 스키마(예: N열 최근조회오류)는 시트에 열을 늘린 뒤 헤더를 채운다.
+                if getattr(worksheet, "col_count", len(headers)) < len(headers):
+                    worksheet.add_cols(len(headers) - worksheet.col_count)
+                last_column = chr(ord("A") + len(headers) - 1)
+                worksheet.update([list(headers)], range_name=f"A1:{last_column}1", value_input_option="RAW")
             return worksheet
     worksheet = spreadsheet.add_worksheet(title=sheet_title, rows=2000, cols=len(headers))
     worksheet.update([list(headers)], range_name="A1", value_input_option="RAW")
