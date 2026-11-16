@@ -36,7 +36,7 @@ def run_scenario(name):
     class FakeIndexWriteThread(QThread):
         result_ready = Signal(dict)
 
-        def __init__(self, naver, coupang, gmarket, parent=None, reason="변경"):
+        def __init__(self, naver, coupang, gmarket, parent=None, reason="변경", expected=None):
             super().__init__(parent)
             self.values = (naver, coupang, gmarket)
 

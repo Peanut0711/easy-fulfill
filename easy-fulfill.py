@@ -106,6 +106,7 @@ from orders.bulk import (
 from orders.excel_values import excel_text
 from orders.invoice import INVOICE_COLUMNS, build_invoice_rows
 from orders.gift_event import DEFAULT_GIFT_EVENT, gift_event_from_config_rows, read_gift_event
+from orders.index_sync import conflict_message as order_index_conflict_message, merge_order_indices
 from orders.matching import CoupangOrderIndex, NaverOrderIndex, normalize_coupang_text
 from ui.gift_event_settings import GiftEventSettingsDialog
 from shipping.post_parcel import (
@@ -142,6 +143,8 @@ ORDER_INDEX_SHEET_TITLE = "일별 주문번호"
 ORDER_INDEX_SHEET_HEADERS = ["날짜", "네이버", "쿠팡", "지마켓"]
 ORDER_INDEX_SHEET_POLL_MS = 150_000  # 2.5분 (2~3분 간격)
 ORDER_INDEX_SHEET_PUSH_DEBOUNCE_MS = 800
+# 인덱스 시트 반영 실패 시 재시도 간격(점점 길게, 마지막 값 반복)
+ORDER_INDEX_PUSH_RETRY_DELAYS_MS = (5_000, 15_000, 30_000, 60_000)
 # 주문번호 인덱스 변경이력(공유) — 누가·언제·이전값→새값을 남겨 실수 시 1클릭 되돌리기.
 ORDER_INDEX_LOG_SHEET_TITLE = "주문번호 변경이력"
 ORDER_INDEX_LOG_HEADERS = ["시각", "사용자", "스토어", "이전값", "새값", "사유"]
@@ -271,29 +274,32 @@ def _order_index_sheet_row_looks_like_header(row):
 
 
 def _standalone_open_order_index_ws(gc):
-    """백그라운드 스레드용. worksheets() 메타데이터 한 번으로 워크시트를 찾고,
+    """백그라운드 스레드용. worksheets() 메타데이터 한 번으로 「일별 주문번호」 탭을 제목으로 찾고,
     없으면 생성합니다. (기존의 get_worksheet 중복 호출로 인한 추가 API 왕복 제거.
     빈 시트 초기화·레거시 헤더 처리는 값을 한 번 읽은 뒤
     _standalone_normalize_order_index_values 에서 재읽기 없이 수행합니다.)"""
     spreadsheet = gc.open_by_key(SPREADSHEET_ID)
     worksheets = spreadsheet.worksheets()
+    # 탭 순서가 바뀌어도 다른 탭(매핑·설정)에 헤더·날짜 행을 쓰지 않도록 제목으로 찾는다.
+    for worksheet in worksheets:
+        if worksheet.title == ORDER_INDEX_SHEET_TITLE:
+            return worksheet
     if len(worksheets) < ORDER_INDEX_WORKSHEET_INDEX:
         raise ValueError(
             f"스프레드시트에「{ORDER_INDEX_SHEET_TITLE}」({ORDER_INDEX_WORKSHEET_INDEX + 1}번째 탭)을 "
             f"둘 공간이 없습니다. 앞쪽 탭이 {ORDER_INDEX_WORKSHEET_INDEX}개(예: 네이버·쿠팡 DB) "
             f"있어야 합니다. (현재 탭 {len(worksheets)}개)"
         )
-    if len(worksheets) == ORDER_INDEX_WORKSHEET_INDEX:
-        # add_worksheet 는 생성된 워크시트를 반환하므로 별도 get_worksheet 불필요.
-        ws = spreadsheet.add_worksheet(
-            title=ORDER_INDEX_SHEET_TITLE,
-            rows=100,
-            cols=10,
-            index=ORDER_INDEX_WORKSHEET_INDEX,
-        )
-        print(f"✓ 스프레드시트에 「{ORDER_INDEX_SHEET_TITLE}」 탭을 만들었습니다.")
-        return ws
-    return worksheets[ORDER_INDEX_WORKSHEET_INDEX]
+    # 제목이 같은 탭이 없으면 기존 위치(3번째)에 새로 만든다.
+    # add_worksheet 는 생성된 워크시트를 반환하므로 별도 get_worksheet 불필요.
+    ws = spreadsheet.add_worksheet(
+        title=ORDER_INDEX_SHEET_TITLE,
+        rows=100,
+        cols=10,
+        index=ORDER_INDEX_WORKSHEET_INDEX,
+    )
+    print(f"✓ 스프레드시트에 「{ORDER_INDEX_SHEET_TITLE}」 탭을 만들었습니다.")
+    return ws
 
 
 def _standalone_normalize_order_index_values(ws, values):
@@ -447,10 +453,11 @@ def run_order_load_sheets_worker(mapping_store_type=None):
         sheets = fetch_sheet_properties(gc, SPREADSHEET_ID)
         config_props = next(
             (props for props in sheets if props.get("title") == CONFIG_SHEET_TITLE), None)
-        if config_props is None or len(sheets) <= ORDER_INDEX_WORKSHEET_INDEX:
+        index_props = next(
+            (props for props in sheets if props.get("title") == ORDER_INDEX_SHEET_TITLE), None)
+        if config_props is None or index_props is None:
             # 설정·인덱스 탭을 새로 만들어야 하는 드문 경우는 기존 경로가 생성까지 처리한다.
             return _legacy_order_load_sheets(mapping_store_type)
-        index_props = sheets[ORDER_INDEX_WORKSHEET_INDEX]
         titles = [config_props["title"], index_props["title"]]
         if mapping_spec is not None:
             titles.append(sheets[mapping_spec[0]]["title"])
@@ -523,12 +530,14 @@ def _append_order_index_log(gc, changed, reason):
     log_ws.append_rows(rows, value_input_option="USER_ENTERED")
 
 
-def run_order_index_write_worker(naver, coupang, gmarket, reason="변경"):
+def run_order_index_write_worker(naver, coupang, gmarket, reason="변경", expected=None):
     """
     UI 스레드가 아닌 곳에서 호출. 오늘 날짜 행에 인덱스 3종을 기록합니다.
-    시트 전체 읽기는 한 번만 수행하고 그 값을 그대로 재사용합니다.
+    expected는 이 PC가 마지막으로 확인한 시트 값(기준값)입니다. 시트를 다시 읽어
+    orders.index_sync 규칙으로 병합하므로, 그사이 다른 PC가 바꾼 스토어 값을 되돌리지 않고
+    같은 스토어를 양쪽이 바꿨으면 큰 값으로 맞춘 뒤 충돌로 알립니다.
     변경된 스토어는 「주문번호 변경이력」에 누가·언제·이전값→새값으로 남깁니다.
-    반환 dict: ok — 또는 ok False, error
+    반환 dict: ok, written(실제 시트 값), conflicts — 또는 ok False, error
     """
     if gspread is None:
         return {"ok": False, "error": "gspread 패키지가 필요합니다. (pip install gspread)"}
@@ -541,17 +550,25 @@ def run_order_index_write_worker(naver, coupang, gmarket, reason="변경"):
         ws = _standalone_open_order_index_ws(gc)
         values = ws.get_all_values()  # 쓰기 위치 판단용 단일 읽기
         values = _standalone_normalize_order_index_values(ws, values)
-        old = _standalone_read_today_order_indices_from_values(values) or {}
-        _standalone_write_order_indices_ws(ws, naver, coupang, gmarket, values=values)
-        new = {"naver": naver, "coupang": coupang, "gmarket": gmarket}
+        sheet_row = _standalone_read_today_order_indices_from_values(values)
+        local = {"naver": naver, "coupang": coupang, "gmarket": gmarket}
+        conflicts = []
+        if sheet_row is None:
+            new = local  # 오늘 행이 없으면 이 PC 값으로 새로 만든다.
+        else:
+            new, conflicts = merge_order_indices(local, expected, sheet_row, local_dirty=True)
+        old = sheet_row or {}
         changed = [(k, old.get(k), new[k]) for k in ("naver", "coupang", "gmarket")
                    if str(old.get(k)) != str(new[k])]
+        if changed or sheet_row is None:
+            _standalone_write_order_indices_ws(
+                ws, new["naver"], new["coupang"], new["gmarket"], values=values)
         if changed:
             try:
                 _append_order_index_log(gc, changed, reason)
             except Exception as le:
                 print(f"! 인덱스 변경이력 기록 실패: {le}")
-        return {"ok": True}
+        return {"ok": True, "written": new, "conflicts": [item.to_dict() for item in conflicts]}
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
@@ -1230,17 +1247,19 @@ class OrderIndexWriteThread(QThread):
 
     result_ready = Signal(dict)
 
-    def __init__(self, naver, coupang, gmarket, parent=None, reason="변경"):
+    def __init__(self, naver, coupang, gmarket, parent=None, reason="변경", expected=None):
         super().__init__(parent)
         self._naver = naver
         self._coupang = coupang
         self._gmarket = gmarket
         self._reason = reason
+        self._expected = expected
 
     def run(self):
         self.result_ready.emit(
             run_order_index_write_worker(
-                self._naver, self._coupang, self._gmarket, reason=self._reason)
+                self._naver, self._coupang, self._gmarket, reason=self._reason,
+                expected=self._expected)
         )
 
 
@@ -3075,6 +3094,10 @@ class MainWindow(QMainWindow):
 
         self._index_sheet_push_pending = False
         self._index_sheet_last_sync_display = None
+        # 마지막으로 확인한 시트 인덱스(여러 PC 병합 기준값)와 마지막 전송값·재시도 횟수
+        self._index_sheet_base = None
+        self._index_sheet_sent_values = None
+        self._index_sheet_push_retries = 0
         self._index_sheet_push_timer = QTimer(self)
         self._index_sheet_push_timer.setSingleShot(True)
         self._index_sheet_push_timer.timeout.connect(self._flush_order_indices_to_sheet)
@@ -3995,21 +4018,61 @@ class MainWindow(QMainWindow):
             return
         n, c, g = self.current_idx_naver, self.current_idx_coupang, self.current_idx_gmarket
         reason = getattr(self, "_pending_index_reason", "변경")
-        thread = OrderIndexWriteThread(n, c, g, self, reason=reason)
+        self._index_sheet_push_pending = True  # 성공 결과를 받을 때까지 반영 대기로 본다.
+        self._index_sheet_sent_values = {"naver": n, "coupang": c, "gmarket": g}
+        thread = OrderIndexWriteThread(
+            n, c, g, self, reason=reason, expected=self._index_sheet_base)
         self._index_sheet_op_thread = thread
         thread.result_ready.connect(self._on_order_index_write_finished)
         thread.finished.connect(self._cleanup_index_sheet_op_thread)
         thread.finished.connect(thread.deleteLater)
         thread.start()
 
+    def _current_order_indices(self):
+        return {"naver": self.current_idx_naver, "coupang": self.current_idx_coupang,
+                "gmarket": self.current_idx_gmarket}
+
     def _on_order_index_write_finished(self, payload: dict):
         if payload.get("ok"):
-            self._index_sheet_push_pending = False
+            written = payload.get("written") or self._index_sheet_sent_values
+            self._index_sheet_base = dict(written)
+            self._index_sheet_push_retries = 0
+            # 전송 뒤에 생긴 로컬 변경은 보존하고, 다른 PC 값으로 맞춰진 스토어는 반영한다.
+            local = self._current_order_indices()
+            merged, _ = merge_order_indices(
+                local, self._index_sheet_sent_values, written, local_dirty=True)
+            if merged != local:
+                self._apply_order_indices_to_ui(merged["naver"], merged["coupang"], merged["gmarket"])
+                try:
+                    self._persist_index_values_to_json()
+                except Exception as e:
+                    print(f"! 인덱스 JSON 저장 실패(시트 반영 뒤): {e}")
+            if merged != written:
+                self._schedule_order_index_sheet_push()
+            else:
+                self._index_sheet_push_pending = False
             self._index_sheet_last_sync_display = datetime.now()
+            self._notify_order_index_conflicts(payload.get("conflicts") or [])
         else:
+            # 실패하면 반영 대기로 두고 점점 긴 간격(5초→15초→30초→60초)으로 다시 시도한다.
             self._index_sheet_push_pending = True
-            print(f"! 스프레드시트 인덱스 반영 실패: {payload.get('error', '')}")
+            retries = getattr(self, "_index_sheet_push_retries", 0)
+            delay = ORDER_INDEX_PUSH_RETRY_DELAYS_MS[min(retries, len(ORDER_INDEX_PUSH_RETRY_DELAYS_MS) - 1)]
+            self._index_sheet_push_retries = retries + 1
+            self._index_sheet_push_timer.start(delay)
+            print(f"! 스프레드시트 인덱스 반영 실패({delay // 1000}초 뒤 재시도): {payload.get('error', '')}")
         self._update_index_sheet_sync_label()
+
+    def _notify_order_index_conflicts(self, conflicts):
+        """다른 PC와 같은 스토어 인덱스를 동시에 바꾼 경우 겹쳤을 수 있는 번호를 알린다."""
+        if not conflicts:
+            return
+        message = order_index_conflict_message(conflicts)
+        print(f"! 주문번호 인덱스 충돌\n{message}")
+        # 마지막 동기화 값(기준)을 모르는 경우(시작 동기화 전 등)는 실제 충돌인지 알 수 없어 기록만 한다.
+        known = [item for item in conflicts if item.get("base") is not None]
+        if known:
+            QMessageBox.warning(self, "주문번호 인덱스 충돌", order_index_conflict_message(known))
 
     def _update_index_sheet_sync_label(self):
         if not hasattr(self.ui, "label_index_sheet_sync"):
@@ -4065,6 +4128,9 @@ class MainWindow(QMainWindow):
                 on_applied()
             return
 
+        if self._index_sheet_push_timer.isActive():
+            # 디바운스 중이던 로컬 변경은 읽기 결과와 병합된 뒤 다시 반영해야 하므로 대기로 표시한다.
+            self._index_sheet_push_pending = True
         self._index_sheet_push_timer.stop()
         self._index_sheet_read_interactive = interactive
         self._index_sheet_read_on_applied = on_applied
@@ -4775,47 +4841,36 @@ class MainWindow(QMainWindow):
             return
 
         kind = payload.get("kind")
-        if kind == "created":
-            self._last_refresh_created_today_row = True
-            self._apply_order_indices_to_ui(1, 1, 1)
+        if kind not in ("created", "data"):
+            self._update_index_sheet_sync_label()
+            return
+        self._last_refresh_created_today_row = kind == "created"
+        sheet = dict(payload["row"]) if kind == "data" else {"naver": 1, "coupang": 1, "gmarket": 1}
+        # 아직 시트에 반영하지 않은 로컬 변경이 있으면 덮어쓰지 않고 병합한다(다른 PC 값은 반영).
+        dirty = self._index_sheet_push_pending or self._index_sheet_push_timer.isActive()
+        local = self._current_order_indices()
+        merged, conflicts = merge_order_indices(local, self._index_sheet_base, sheet, local_dirty=dirty)
+        self._index_sheet_base = dict(sheet)
+        if merged != local:
+            self._apply_order_indices_to_ui(merged["naver"], merged["coupang"], merged["gmarket"])
             try:
                 self._persist_index_values_to_json()
             except Exception as e:
-                print(f"! 인덱스 JSON 저장 실패(시트 신규 행): {e}")
+                print(f"! 인덱스 JSON 저장 실패(시트에서 읽은 뒤): {e}")
+        elif log_if_unchanged:
+            print(
+                f"✓ Google 시트 인덱스 동기화 완료 (네이버: {merged['naver']} | 지마켓: {merged['gmarket']} | "
+                f"쿠팡: {merged['coupang']} | 11번가(로컬): {self.current_idx_11st})"
+            )
+        if merged != sheet:
+            self._index_sheet_push_pending = True
+            self._schedule_order_index_sheet_push()
+        else:
             self._index_sheet_push_pending = False
-            self._index_sheet_last_sync_display = datetime.now()
-            self._update_index_sheet_sync_label()
-            return
-
-        if kind != "data":
-            self._update_index_sheet_sync_label()
-            return
-
-        row = payload["row"]
-        na, co, gm = row["naver"], row["coupang"], row["gmarket"]
-        self._last_refresh_created_today_row = False
-        if (
-            self.current_idx_naver == na
-            and self.current_idx_coupang == co
-            and self.current_idx_gmarket == gm
-        ):
-            if log_if_unchanged:
-                print(
-                    f"✓ Google 시트 인덱스 동기화 완료 (네이버: {na} | 지마켓: {gm} | "
-                    f"쿠팡: {co} | 11번가(로컬): {self.current_idx_11st})"
-                )
-            self._index_sheet_push_pending = False
-            self._index_sheet_last_sync_display = datetime.now()
-            self._update_index_sheet_sync_label()
-            return
-        self._apply_order_indices_to_ui(na, co, gm)
-        try:
-            self._persist_index_values_to_json()
-        except Exception as e:
-            print(f"! 인덱스 JSON 저장 실패(시트에서 읽은 뒤): {e}")
-        self._index_sheet_push_pending = False
+            self._index_sheet_push_timer.stop()
         self._index_sheet_last_sync_display = datetime.now()
         self._update_index_sheet_sync_label()
+        self._notify_order_index_conflicts([item.to_dict() for item in conflicts])
 
     def _on_startup_order_index_sync_finished(self, payload: dict):
         # 논블로킹 시작: 결과는 백그라운드 완료 후 라벨·UI에만 조용히 반영합니다.
@@ -4899,12 +4954,9 @@ class MainWindow(QMainWindow):
             if interactive:
                 self._apply_order_index_read_interactive(payload)
             else:
-                # 비대화형: 적용 직전 로컬 변경/포커스가 생겼으면 덮어쓰지 않음
-                if payload.get("ok") and (
-                    self._index_sheet_push_timer.isActive()
-                    or self._index_sheet_push_pending
-                    or self._index_idx_field_has_focus()
-                ):
+                # 비대화형: 입력 중인 인덱스 칸은 덮어쓰지 않는다. 반영 대기 중인 로컬 변경은
+                # _apply_order_index_sync_payload가 시트 값과 병합하므로(다른 PC 변경 반영) 그대로 적용한다.
+                if payload.get("ok") and self._index_idx_field_has_focus():
                     self._update_index_sheet_sync_label()
                 else:
                     self._apply_order_index_sync_payload(payload, prompt_reauth=False)
