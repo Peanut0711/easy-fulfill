@@ -106,7 +106,7 @@ from orders.bulk import (
 )
 from orders.invoice import INVOICE_COLUMNS, build_invoice_rows
 from orders.gift_event import DEFAULT_GIFT_EVENT, read_gift_event
-from orders.matching import match_naver_invoice_rows
+from orders.matching import CoupangOrderIndex, NaverOrderIndex, normalize_coupang_text
 from ui.gift_event_settings import GiftEventSettingsDialog
 from shipping.post_parcel import (
     ParcelApiError,
@@ -9164,13 +9164,17 @@ class MainWindow(QMainWindow):
                 return ''.join(ch for ch in str(value) if ch.isdigit())
 
             order_number_series = None
+            naver_order_index = None
             if column_mapping['order']['주문번호']:
                 order_number_series = order_df[column_mapping['order']['주문번호']].apply(_normalize_digits).str[:13]
-            
+                # 송장마다 주문서 전체를 다시 비교하지 않도록 주문번호별 행을 한 번만 묶는다.
+                naver_order_index = NaverOrderIndex(order_df, order_number_series, column_mapping['order'])
+
             # 6. 매칭된 주문 정보 출력 및 운송장번호 업데이트
             print("\n[매칭된 주문 정보]")
             matched_count = 0
             naver_matched_records = []
+            naver_invoice_numbers = {}  # 주문서 행 라벨 → 송장번호(같은 행은 나중 송장이 우선)
             # API 발송처리용: (전체 주문번호 ↔ 등기번호) 쌍 — 상품주문번호는 발송 시 API로 해석
             self._naver_dispatch_records = []
 
@@ -9182,8 +9186,8 @@ class MainWindow(QMainWindow):
                 if column_mapping['invoice']['고객 주문번호']:
                     invoice_order_number = _normalize_digits(invoice_row[column_mapping['invoice']['고객 주문번호']])[:13]
 
-                matching_rows = order_df.iloc[0:0]
-                if order_number_series is not None and invoice_order_number:
+                matched_labels = []
+                if naver_order_index is not None and invoice_order_number:
                     invoice_base_address = ''
                     for key in ('수취인주소', '수취인 주소'):
                         column = column_mapping['invoice'][key]
@@ -9195,14 +9199,13 @@ class MainWindow(QMainWindow):
                         _normalize_value(invoice_row[column_mapping['invoice']['수취인상세주소']])
                         if column_mapping['invoice']['수취인상세주소'] else ''
                     )
-                    matching_rows = match_naver_invoice_rows(
-                        order_df, order_number_series, invoice_order_number,
-                        column_mapping['order'], invoice_name, invoice_phone,
+                    matched_labels = naver_order_index.match(
+                        invoice_order_number, invoice_name, invoice_phone,
                         (invoice_base_address, invoice_detail_address,
                          f"{invoice_base_address} {invoice_detail_address}"),
                     )
-                
-                if not matching_rows.empty:
+
+                if matched_labels:
                     matched_count += 1
                     print(f"\n[매칭된 주문 {matched_count}]")
                     print(f"수취인명: {invoice_name}")
@@ -9210,10 +9213,11 @@ class MainWindow(QMainWindow):
                     if invoice_order_number:
                         print(f"고객 주문번호: {invoice_order_number}")
                     print(f"송장번호: {invoice_number}")
-                    print(f"주소: {matching_rows[column_mapping['order']['통합배송지']].iloc[0]}")
-                    
-                    # 운송장번호 업데이트
-                    order_df.loc[matching_rows.index, '송장번호'] = invoice_number
+                    print(f"주소: {order_df.at[matched_labels[0], column_mapping['order']['통합배송지']]}")
+
+                    # 운송장번호 업데이트(행마다 DataFrame에 쓰지 않고 모아서 한 번에 반영)
+                    for label in matched_labels:
+                        naver_invoice_numbers[label] = invoice_number
                     print(f"✓ 송장번호 업데이트 완료")
 
                     naver_matched_records.append({
@@ -9225,13 +9229,16 @@ class MainWindow(QMainWindow):
 
                     # 발송처리 API용: 주문서의 '전체' 주문번호(orderId)를 송장번호와 함께 저장
                     full_oid = _normalize_digits(
-                        matching_rows[column_mapping['order']['주문번호']].iloc[0])
+                        order_df.at[matched_labels[0], column_mapping['order']['주문번호']])
                     if full_oid and invoice_number:
                         self._naver_dispatch_records.append({
                             "orderId": full_oid,
                             "trackingNumber": invoice_number,
                             "수취인명": invoice_name,
                         })
+
+            if naver_invoice_numbers:
+                order_df.loc[list(naver_invoice_numbers), '송장번호'] = list(naver_invoice_numbers.values())
 
             print(f"\n✓ 총 {matched_count}개의 주문이 매칭되었습니다.")
 
@@ -9342,33 +9349,30 @@ class MainWindow(QMainWindow):
                 "송장이 엉키면 오배송·CS 위험이 크기 때문입니다."
             )
             
-            def _coupang_norm_str(val):
-                if pd.isna(val):
-                    return ''
-                s = str(val).strip()
-                if s.lower() == 'nan':
-                    return ''
-                return s
-            
-            def _coupang_explain_invoice_unmatched(odf, inv_name, inv_phone):
-                nc = required_order_columns['수취인이름']
-                pc = required_order_columns['수취인전화번호']
+            _coupang_norm_str = normalize_coupang_text
+
+            # 송장마다 주문서 전체를 정규화·비교하지 않도록 (수취인명, 전화번호) 인덱스를 한 번 만든다.
+            coupang_order_index = CoupangOrderIndex(
+                order_df,
+                required_order_columns['수취인이름'],
+                required_order_columns['수취인전화번호'],
+                _coupang_norm_str,
+            )
+
+            def _coupang_explain_invoice_unmatched(inv_name, inv_phone):
                 reasons = []
                 if not inv_name:
                     reasons.append("송장 수취인명이 비어 있음")
                 if not inv_phone:
                     reasons.append("송장 수취인 전화번호가 비어 있음")
-                on = odf[nc].map(_coupang_norm_str)
-                same_name = odf[on == inv_name]
-                if same_name.empty:
+                same_name_phones = coupang_order_index.phones_for_name(inv_name)
+                if same_name_phones is None:
                     reasons.append(
                         "주문서에 동일한 수취인명이 없음 "
                         "(철자·띄어쓰기·괄호·별칭 등 표기 차이 가능)"
                     )
                 else:
-                    ophones = sorted(
-                        {p for p in same_name[pc].map(_coupang_norm_str).tolist() if p}
-                    )
+                    ophones = sorted({p for p in same_name_phones if p})
                     reasons.append(
                         f"이름은 주문서와 일치하나 전화번호 불일치 "
                         f"(송장: {inv_phone!r}, 주문서: {ophones})"
@@ -9382,6 +9386,7 @@ class MainWindow(QMainWindow):
             matched_count = 0
             unmatched_invoice = 0
             coupang_matched_records = []
+            coupang_invoice_numbers = {}  # 주문서 행 라벨 → 송장번호(같은 행은 나중 송장이 우선)
 
             # 각 송장 행에 대해 매칭 시도
             for idx, invoice_row in invoice_df.iterrows():
@@ -9390,25 +9395,23 @@ class MainWindow(QMainWindow):
                 invoice_phone = _coupang_norm_str(invoice_row[required_invoice_columns['수취인 전화번호']])
                 
                 # 수취인명과 전화번호로 매칭
-                matching_rows = order_df[
-                    (order_df[required_order_columns['수취인이름']].map(_coupang_norm_str) == invoice_name) &
-                    (order_df[required_order_columns['수취인전화번호']].map(_coupang_norm_str) == invoice_phone)
-                ]
-                
-                if not matching_rows.empty:
+                matched_labels = coupang_order_index.match(invoice_name, invoice_phone)
+
+                if matched_labels:
                     matched_count += 1
                     print(f"\n[매칭된 주문 {matched_count}]")
                     print(f"수취인명: {invoice_name}")
                     print(f"전화번호: {invoice_phone}")
                     print(f"송장번호: {invoice_number}")
-                    print(f"주소: {matching_rows[required_order_columns['수취인 주소']].iloc[0]}")
-                    
-                    order_df.loc[matching_rows.index, '운송장번호'] = invoice_number
+                    print(f"주소: {order_df.at[matched_labels[0], required_order_columns['수취인 주소']]}")
+
+                    for label in matched_labels:
+                        coupang_invoice_numbers[label] = invoice_number
                     print(f"✓ 송장번호 업데이트 완료")
 
                     onum = ""
                     if '주문번호' in order_df.columns:
-                        onum = str(matching_rows['주문번호'].iloc[0]).strip()
+                        onum = str(order_df.at[matched_labels[0], '주문번호']).strip()
                     coupang_matched_records.append({
                         "등기번호": invoice_number,
                         "스토어": "coupang",
@@ -9417,13 +9420,16 @@ class MainWindow(QMainWindow):
                     })
                 else:
                     unmatched_invoice += 1
-                    why = _coupang_explain_invoice_unmatched(order_df, invoice_name, invoice_phone)
+                    why = _coupang_explain_invoice_unmatched(invoice_name, invoice_phone)
                     print(f"\n[매칭 실패 — 송장 행 {unmatched_invoice}]")
                     print(f"수취인명: {invoice_name or '(비어 있음)'}")
                     print(f"전화번호: {invoice_phone or '(비어 있음)'}")
                     print(f"등기번호: {invoice_number}")
                     print(f"사유: {why}")
             
+            if coupang_invoice_numbers:
+                order_df.loc[list(coupang_invoice_numbers), '운송장번호'] = list(coupang_invoice_numbers.values())
+
             print(f"\n✓ 총 {matched_count}개의 주문이 매칭되었습니다.")
             if unmatched_invoice:
                 print(f"⚠ 송장 {unmatched_invoice}건은 주문서와 맞는 조합이 없어 운송장번호를 넣지 못했습니다.")
