@@ -57,6 +57,7 @@ from PySide6.QtWebEngineWidgets import QWebEngineView
 from shiboken6 import isValid
 from shared.paths import APP_ROOT
 from shared.lazy_import import deferred_module, preload_modules_in_background
+from shared.qt_background import run_in_background
 from product_detail.detail_preview_server import DetailPreviewServer
 from product_detail.detail_image_upload import upload_image_for_editor, validated_cdn_url
 import requests
@@ -1654,8 +1655,8 @@ class ImageDialog(QDialog):
     
     def load_image(self, image_url):
         try:
-            # 이미지 다운로드
-            response = requests.get(image_url)
+            # 이미지 다운로드(제한 시간 포함, 기다리는 동안 화면은 멈추지 않는다)
+            response = run_in_background(requests.get, image_url, timeout=15)
             image_data = BytesIO(response.content)
             
             # QPixmap으로 변환
@@ -6406,10 +6407,14 @@ class MainWindow(QMainWindow):
             "currentPage": 1,
         }
         try:
-            resp = requests.get(KPOST_OPENAPI2_URL, params=params, timeout=15)
+            # 최대 15초 걸릴 수 있어 작업 스레드에서 기다린다(화면은 계속 그린다).
+            resp = run_in_background(requests.get, KPOST_OPENAPI2_URL, params=params, timeout=15)
             resp.raise_for_status()
         except requests.RequestException as e:
-            return None, ("HTTP 오류", str(e))
+            # 예외 문구에는 regkey가 담긴 요청 URL이 들어 있으므로 원인 종류만 보여 준다.
+            status = getattr(getattr(e, "response", None), "status_code", None)
+            reason = f"HTTP {status}" if status else type(e).__name__
+            return None, ("HTTP 오류", f"우편번호 검색 요청 실패({reason})")
 
         text = resp.content.decode("utf-8", errors="replace")
         return self._kpost_parse_postnew_response(text)
@@ -7210,7 +7215,7 @@ class MainWindow(QMainWindow):
                 print("✓ 파일 복호화 완료")
                 
                 # 복호화된 파일 읽기
-                df = pd.read_excel(temp_path, header=1)
+                df = run_in_background(pd.read_excel, temp_path, header=1)
                 print(f"✓ 파일 읽기 성공")
                 print(f"데이터프레임 정보:")
                 print(f"- 행 수: {len(df)}")
@@ -7641,7 +7646,7 @@ class MainWindow(QMainWindow):
                 print(f"! 파일 헤더 확인 실패: {str(e)}")
             
             # 엑셀 파일 읽기
-            df = pd.read_excel(self.selected_file_path)
+            df = run_in_background(pd.read_excel, self.selected_file_path)
             print(f"\n[열 정보]")
             print(f"감지된 열 목록: {', '.join(str(col) for col in df.columns)}")
 
@@ -7793,7 +7798,7 @@ class MainWindow(QMainWindow):
                 print(f"! 파일 헤더 확인 실패: {str(e)}")
             
             # 엑셀 파일 읽기
-            df = pd.read_excel(self.selected_file_path)
+            df = run_in_background(pd.read_excel, self.selected_file_path)
             print(f"\n[열 정보]")
             print(f"감지된 열 목록: {', '.join(str(col) for col in df.columns)}")
             
@@ -7992,7 +7997,7 @@ class MainWindow(QMainWindow):
                 print(f"! 파일 헤더 확인 실패: {str(e)}")
 
             # 엑셀 파일 읽기 (.xls, 헤더가 3행에 위치 → header=2)
-            df = pd.read_excel(self.selected_file_path, header=2)
+            df = run_in_background(pd.read_excel, self.selected_file_path, header=2)
             print(f"\n[열 정보]")
             print(f"감지된 열 목록: {', '.join(str(col) for col in df.columns)}")
 
@@ -8337,17 +8342,22 @@ class MainWindow(QMainWindow):
                 raise ParcelValidationError("gspread 패키지가 필요합니다. (pip install gspread)")
             from sheets.google_sheets_oauth import get_authorized_gspread_client
 
-            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-            try:
+            def load_config_and_previous_result():
                 config = _read_config_values_map(
                     _standalone_open_config_ws(get_authorized_gspread_client()),
                 )
-                previous_result = None
+                previous = None
                 if open_submission is not None:
                     # 결과를 모르는 이전 요청: 같은 주문번호로 이미 접수됐는지 먼저 조회한다.
                     # 조회 요청 자체가 실패하면(네트워크) 예외로 중단해 다시 접수하지 않는다.
-                    previous_result = lookup_order_receipt(
+                    previous = lookup_order_receipt(
                         open_submission.order_no, config, open_submission.request_ymd)
+                return config, previous
+
+            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+            try:
+                # 시트·우체국 조회는 작업 스레드에서 기다린다(화면은 계속 그림, 입력은 받지 않음).
+                config, previous_result = run_in_background(load_config_and_previous_result)
             finally:
                 QApplication.restoreOverrideCursor()
 
@@ -8382,7 +8392,8 @@ class MainWindow(QMainWindow):
 
             QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
             try:
-                suggestions = resolve_recipient_address(
+                suggestions = run_in_background(
+                    resolve_recipient_address,
                     rows[0].get("수취인 주소", ""),
                     config.get("epost_postcode_api_key", ""),
                 )
@@ -8458,7 +8469,8 @@ class MainWindow(QMainWindow):
                 receipt_store.begin_submission(rows[0]["주문번호"], row_fingerprint)
             QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
             try:
-                result = submit_test_order(rows[0], config) if test_mode else submit_real_order(rows[0], config)
+                result = run_in_background(
+                    submit_test_order if test_mode else submit_real_order, rows[0], config)
             finally:
                 QApplication.restoreOverrideCursor()
 
@@ -9582,7 +9594,7 @@ class MainWindow(QMainWindow):
                         office_file.decrypt(output_file)
 
                 # 2. 주문서 데이터프레임 생성
-                order_df = pd.read_excel(decrypted_order_file, sheet_name='발주발송관리', header=None)
+                order_df = run_in_background(pd.read_excel, decrypted_order_file, sheet_name='발주발송관리', header=None)
                 order_df = order_df.drop(0).reset_index(drop=True)
 
                 # 열 이름 설정
@@ -9659,7 +9671,7 @@ class MainWindow(QMainWindow):
             
             # 4. 송장 파일 읽기(미리보기에서 읽은 데이터가 있으면 재사용)
             if invoice_df is None:
-                invoice_df = pd.read_excel(temp_invoice_file, header=6)
+                invoice_df = run_in_background(pd.read_excel, temp_invoice_file, header=6)
             
             # 5. 열 매핑 설정
             column_mapping = {
@@ -9810,7 +9822,7 @@ class MainWindow(QMainWindow):
         try:
             # 1. 쿠팡 주문서 파일 읽기
             print("\n[쿠팡 주문서 파일 읽기]")
-            order_df = pd.read_excel(temp_order_file)
+            order_df = run_in_background(pd.read_excel, temp_order_file)
             
             # 묶음배송번호, 주문번호를 문자열로 변환하여 정확한 값 유지
             # 빈 칸이 섞여 실수형이 된 열도 '30000000001.0'·'nan'이 아닌 번호 문자열로 바꾼다.
@@ -9859,7 +9871,7 @@ class MainWindow(QMainWindow):
             # 2. 우체국 송장 파일 읽기
             print("\n[우체국 송장 파일 읽기]")
             if invoice_df is None:
-                invoice_df = pd.read_excel(temp_invoice_file, header=6)
+                invoice_df = run_in_background(pd.read_excel, temp_invoice_file, header=6)
             
             # 데이터프레임 정보 출력
             print("\n[송장서 데이터프레임 정보]")
