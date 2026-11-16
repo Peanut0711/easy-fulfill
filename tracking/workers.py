@@ -21,7 +21,6 @@ from .repository import (
     read_tracking_list_metadata,
     read_tracking_rows,
     read_tracking_values,
-    update_tracking_cell,
     update_tracking_management,
     update_tracking_notes,
     upsert_tracking_records,
@@ -375,29 +374,37 @@ def run_tracking_refresh_one_worker(regkey, regino):
                 break
         if ridx is None:
             return {"ok": False, "error": "시트에서 해당 등기번호를 찾지 못했습니다."}
+        before_management = (tracking_row[TRACKING_MANAGEMENT_COL]
+                             if len(tracking_row) > TRACKING_MANAGEMENT_COL else "")
         s = kpost_tracker.summarize_tracking(regkey, regino)
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         code = (s.get("error_code") or "").upper()
+
+        def write(updates):
+            # 조회하는 동안 다른 PC가 바꾼 관리상태(예: 추적 중지)는 되돌리지 않는다.
+            updates = _keep_concurrent_management_changes(ws, updates, {ridx: before_management.strip()})
+            batch_update_tracking(ws, updates)
+
         if not s.get("ok"):
             if code == "ERR-001":
                 management = _tracking_management_state(
                     tracking_row, "추적정보 없음", error_code=code)
-                batch_update_tracking(ws, _tracking_result_updates(
+                write(_tracking_result_updates(
                     ridx, "추적정보 없음", "N", "", now, "", management))
                 return {"ok": True, "regino": regino, "status": "추적정보 없음", "complete": False}
             management = _tracking_management_state(
                 tracking_row, (tracking_row[6] if len(tracking_row) > 6 else ""),
                 error_code=code)
-            batch_update_tracking(ws, _tracking_error_updates(ridx, now, s.get("error", "조회 실패")))
-            if management != (tracking_row[TRACKING_MANAGEMENT_COL]
-                              if len(tracking_row) > TRACKING_MANAGEMENT_COL else ""):
-                update_tracking_cell(ws, ridx, "M", management)
+            updates = _tracking_error_updates(ridx, now, s.get("error", "조회 실패"))
+            if management != before_management:
+                updates.append({"range": f"M{ridx}", "values": [[management]]})
+            write(updates)
             return {"ok": True, "regino": regino, "status": "(조회 실패)",
                     "complete": False, "note": s.get("error", "")}
         done_yn = "Y" if s.get("complete") else "N"
         management = _tracking_management_state(
             tracking_row, s.get("status", ""), s.get("where", ""))
-        batch_update_tracking(ws, _tracking_result_updates(
+        write(_tracking_result_updates(
             ridx, s.get("status", ""), done_yn, s.get("where", ""),
             now, s.get("time", ""), management))
         return {"ok": True, "regino": regino, "status": s.get("status", ""),

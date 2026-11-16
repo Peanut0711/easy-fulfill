@@ -131,6 +131,26 @@ class TrackingRefreshMemoTests(unittest.TestCase):
         self.assertEqual(sheet.cell(3, "G"), "추적정보 없음")  # 조회 결과는 그대로 반영
         self.assertEqual(sheet.cell(2, "M"), "추적중")
 
+    def test_single_refresh_keeps_manual_stop_set_during_lookup(self):
+        expected = {"6000000000000": ("G", "배달완료"), "6000000000001": ("G", "추적정보 없음"),
+                    "6000000000002": ("N", "일시 오류")}
+        for regino, row in (("6000000000000", 2), ("6000000000001", 3), ("6000000000002", 4)):
+            sheet = FakeTrackingSheet(tracking_rows())
+
+            def summarize(key, number, row=row):
+                sheet._write(f"M{row}", [["수동 중지"]])  # 단건 조회 도중 다른 PC가 추적 중지
+                return RESULTS[number]
+
+            with patch.object(oauth, "get_authorized_gspread_client", lambda: object()), \
+                    patch.object(workers, "_standalone_open_tracking_ws", lambda gc: sheet), \
+                    patch.object(kpost_tracker, "summarize_tracking", summarize):
+                result = workers.run_tracking_refresh_one_worker("KEY", regino)
+            self.assertTrue(result["ok"], result)
+            self.assertEqual(sheet.cell(row, "M"), "수동 중지", regino)
+            column, value = expected[regino]
+            self.assertEqual(sheet.cell(row, column), value, regino)  # 조회 결과는 그대로 반영
+            self.assertEqual(sheet.cell(row, "K"), tracking_rows()[row - 1][10], regino)
+
     def test_success_clears_previous_lookup_error(self):
         rows = tracking_rows()
         rows[1] += ["지난 오류"]
