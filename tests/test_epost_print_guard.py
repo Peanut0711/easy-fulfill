@@ -10,7 +10,11 @@ from shipping import epost_oz_print_dialog as dialog
 VIEWER = 100
 
 
-def foreground(handle, title, pid, image="ozviewer.exe"):
+PRINT_CONTROLS = ("Static", "ComboBox", "Button", "Button")  # 프린터 선택 콤보가 있는 인쇄 창
+MESSAGE_BOX = ("Static", "Static", "Button")  # 아이콘·문구·확인 버튼만 있는 오류·안내 창
+
+
+def foreground(handle, title, pid, image="ozviewer.exe", controls=PRINT_CONTROLS):
     """전면 창 정보를 흉내 낸다(뷰어 PID는 10)."""
     pids = {VIEWER: 10, handle: pid}
     images = {10: "ozviewer.exe", pid: image}
@@ -20,6 +24,7 @@ def foreground(handle, title, pid, image="ozviewer.exe"):
         _window_title=lambda h: title,
         _window_process_id=lambda h: pids.get(h, 0),
         _process_image_name=lambda p: images.get(p, ""),
+        _child_window_classes=lambda h: list(controls),
     )
 
 
@@ -39,6 +44,19 @@ class ForegroundCheckTests(unittest.TestCase):
             self.assertFalse(desktop.is_print_dialog_foreground(VIEWER))
         with foreground(0, "", 0):
             self.assertFalse(desktop.is_print_dialog_foreground(VIEWER))
+
+    def test_rejects_viewer_error_or_message_box(self):
+        # OZ Viewer가 띄운 오류 창에 Enter를 보내면 창만 닫히고 인쇄 완료로 기록된다.
+        with foreground(210, "OZ Report Viewer", 10, controls=MESSAGE_BOX):
+            self.assertFalse(desktop.is_print_dialog_foreground(VIEWER))
+        with foreground(211, "인쇄", 10, controls=MESSAGE_BOX):  # 제목이 '인쇄'인 오류 안내
+            self.assertFalse(desktop.is_print_dialog_foreground(VIEWER))
+        with foreground(212, "프린터 오류", 77, image="splwow64.exe", controls=MESSAGE_BOX):
+            self.assertFalse(desktop.is_print_dialog_foreground(VIEWER))
+
+    def test_accepts_new_style_printer_list_dialog(self):
+        with foreground(220, "인쇄", 10, controls=("SysTabControl32", "SysListView32", "Button")):
+            self.assertTrue(desktop.is_print_dialog_foreground(VIEWER))
 
 
 class ExecutePrintTests(unittest.TestCase):

@@ -337,22 +337,50 @@ def _process_image_name(pid: int) -> str:
         kernel32.CloseHandle(process)
 
 
+# 프린터를 고르는 컨트롤. 표준 인쇄 창(PrintDlg)은 콤보 상자, 새 형식(PrintDlgEx)은 목록 보기로
+# 프린터를 고른다. 오류·안내 메시지 창에는 문구와 버튼만 있어 이 컨트롤이 없다.
+PRINTER_SELECTION_CONTROL_CLASSES = frozenset({"combobox", "syslistview32"})
+
+
+def _child_window_classes(handle: int) -> list[str]:
+    """창 안의 모든 자식 컨트롤 클래스 이름."""
+    user32 = ctypes.windll.user32
+    classes: list[str] = []
+    callback_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+    def collect(child, _lparam):
+        buffer = ctypes.create_unicode_buffer(256)
+        user32.GetClassNameW(child, buffer, len(buffer))
+        classes.append(buffer.value)
+        return True
+
+    user32.EnumChildWindows(wintypes.HWND(handle), callback_type(collect), 0)
+    return classes
+
+
+def _has_printer_selection(handle: int) -> bool:
+    return any(name.lower() in PRINTER_SELECTION_CONTROL_CLASSES for name in _child_window_classes(handle))
+
+
 def is_print_dialog_foreground(viewer_handle: int) -> bool:
     """전면 창이 OZ Viewer가 연 인쇄 창인지 확인한다.
 
     표준 인쇄 창 제목('인쇄')이거나, OZ Viewer 프로세스의 다른 창(모달 인쇄 창)이거나,
-    프린터 드라이버 호스트(splwow64.exe)의 창이면 인쇄 창으로 본다. Viewer 자체나
-    다른 프로그램 창이면 False라서 Enter가 엉뚱한 곳에 가지 않는다.
+    프린터 드라이버 호스트(splwow64.exe)의 창이면서, 프린터를 고르는 컨트롤이 있어야
+    인쇄 창으로 본다. Viewer 자체, 다른 프로그램 창, Viewer·드라이버가 띄운 오류·안내
+    창(문구와 버튼만 있음)이면 False라서 Enter가 엉뚱한 곳에 가지 않고 인쇄 완료로도
+    기록되지 않는다.
     """
     handle = _foreground_window()
     if not handle or handle == viewer_handle:
         return False
     if _window_title(handle) == PRINT_DIALOG_TITLE:
-        return True
-    pid = _window_process_id(handle)
-    if pid and pid == _window_process_id(viewer_handle):
-        return True
-    return bool(pid) and _process_image_name(pid) in PRINT_DIALOG_HOST_PROCESSES
+        candidate = True
+    else:
+        pid = _window_process_id(handle)
+        candidate = bool(pid) and (pid == _window_process_id(viewer_handle)
+                                   or _process_image_name(pid) in PRINT_DIALOG_HOST_PROCESSES)
+    return candidate and _has_printer_selection(handle)
 
 
 def wait_for_print_dialog_foreground(viewer_handle: int, timeout_seconds: float) -> bool:
