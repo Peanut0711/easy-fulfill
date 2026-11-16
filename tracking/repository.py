@@ -56,8 +56,13 @@ def normalize_tracking_no(value) -> str:
 
 def read_config_values_map(worksheet) -> dict[str, str]:
     """설정 시트의 키/값 행을 dict로 반환한다."""
+    return config_values_map_from_rows(worksheet.get_all_values())
+
+
+def config_values_map_from_rows(rows: Sequence[Sequence[str]]) -> dict[str, str]:
+    """이미 읽은 설정 시트 값(헤더 포함)에서 키/값 dict를 만든다."""
     config = {}
-    for row in worksheet.get_all_values()[1:]:
+    for row in rows[1:]:
         if not row:
             continue
         key = (row[0] or "").strip()

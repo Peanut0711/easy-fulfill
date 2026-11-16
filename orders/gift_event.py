@@ -5,7 +5,7 @@ import math
 import re
 from dataclasses import dataclass
 
-from tracking.repository import ConfigValueChangedError, read_config_values_map, write_config_values
+from tracking.repository import ConfigValueChangedError, config_values_map_from_rows, write_config_values
 
 
 GIFT_EVENT_KEY = "order_gift_event"
@@ -74,7 +74,12 @@ DEFAULT_GIFT_EVENT = GiftEvent(False, tuple(GIFT_EVENT_STORES), (
 
 
 def read_gift_event(worksheet) -> tuple[GiftEvent, str]:
-    raw = read_config_values_map(worksheet).get(GIFT_EVENT_KEY, "")
+    return gift_event_from_config_rows(worksheet.get_all_values())
+
+
+def gift_event_from_config_rows(rows) -> tuple[GiftEvent, str]:
+    """이미 읽은 공유 설정 시트 값(헤더 포함)에서 사은품 행사 설정을 해석한다."""
+    raw = config_values_map_from_rows(rows).get(GIFT_EVENT_KEY, "")
     if not raw:
         return DEFAULT_GIFT_EVENT, raw
     try:

@@ -105,7 +105,7 @@ from orders.bulk import (
     work_order_amount,
 )
 from orders.invoice import INVOICE_COLUMNS, build_invoice_rows
-from orders.gift_event import DEFAULT_GIFT_EVENT, read_gift_event
+from orders.gift_event import DEFAULT_GIFT_EVENT, gift_event_from_config_rows, read_gift_event
 from orders.matching import CoupangOrderIndex, NaverOrderIndex, normalize_coupang_text
 from ui.gift_event_settings import GiftEventSettingsDialog
 from shipping.post_parcel import (
@@ -379,6 +379,93 @@ def run_order_index_read_sync_worker(*, include_gift_event=False):
         ws = _standalone_open_order_index_ws(gc)
         values = ws.get_all_values()  # 시트 전체 읽기는 시작 동기화에서 단 한 번만 수행
         values = _standalone_normalize_order_index_values(ws, values)
+        row = _standalone_read_today_order_indices_from_values(values)
+        if row is not None:
+            return {**payload, "ok": True, "kind": "data", "row": row}
+        _standalone_write_order_indices_ws(ws, 1, 1, 1, values=values)
+        return {
+            **payload,
+            "ok": True,
+            "kind": "created",
+            "row": {"naver": 1, "coupang": 1, "gmarket": 1},
+        }
+    except Exception as e:
+        return {**payload, "ok": False, "error": str(e)}
+
+
+def _legacy_order_load_sheets(mapping_store_type):
+    """탭별로 따로 여는 기존 경로(시트 생성·조회 실패 시 같은 결과를 보장하기 위한 대체 경로)."""
+    payload = run_order_index_read_sync_worker(include_gift_event=True)
+    if mapping_store_type in PRODUCT_CODE_MAP_SHEETS:
+        payload["mapping"] = run_product_code_map_load_worker(mapping_store_type)
+    return payload
+
+
+def run_order_load_sheets_worker(mapping_store_type=None):
+    """주문 불러오기 직전의 시트 읽기를 한 번에 수행한다(UI 스레드 밖에서 호출).
+
+    주문 인덱스(필요 시 오늘 행 생성), 공유 사은품 설정, 상품코드 매핑(네이버·쿠팡)을
+    스프레드시트 메타데이터 1회와 값 일괄 조회 1회로 읽는다. 기존에는 탭마다
+    open_by_key·worksheets·get_all_values를 따로 호출해 9회 요청했다.
+    공유 인덱스는 캐시 없이 이 호출 시점의 시트 값을 쓴다.
+
+    반환 형식은 run_order_index_read_sync_worker(include_gift_event=True)와 같고,
+    매핑이 필요한 스토어는 run_product_code_map_load_worker와 같은 payload를 "mapping"에 담는다.
+    설정 탭·인덱스 탭이 없거나 메타데이터·일괄 조회가 실패하면 기존 탭별 경로로 처리해
+    시트 생성과 항목별 실패 처리를 그대로 유지한다.
+    """
+    mapping_spec = PRODUCT_CODE_MAP_SHEETS.get(mapping_store_type)
+    if gspread is None:
+        return _legacy_order_load_sheets(mapping_store_type)
+    try:
+        from sheets.google_sheets_oauth import get_authorized_gspread_client
+        from sheets.batch_read import (
+            batch_get_all_values,
+            fetch_sheet_properties,
+            worksheet_from_properties,
+        )
+    except ImportError:
+        return _legacy_order_load_sheets(mapping_store_type)
+
+    try:
+        gc = get_authorized_gspread_client()
+    except Exception as e:
+        # 기존 흐름과 같게 인덱스 읽기 실패로 반환하고, 매핑은 기존 매핑 작업이 다시 시도한다.
+        payload = {"ok": False, "error": str(e)}
+        if mapping_spec is not None:
+            payload["mapping"] = run_product_code_map_load_worker(mapping_store_type)
+        return payload
+
+    try:
+        sheets = fetch_sheet_properties(gc, SPREADSHEET_ID)
+        config_props = next(
+            (props for props in sheets if props.get("title") == CONFIG_SHEET_TITLE), None)
+        if config_props is None or len(sheets) <= ORDER_INDEX_WORKSHEET_INDEX:
+            # 설정·인덱스 탭을 새로 만들어야 하는 드문 경우는 기존 경로가 생성까지 처리한다.
+            return _legacy_order_load_sheets(mapping_store_type)
+        index_props = sheets[ORDER_INDEX_WORKSHEET_INDEX]
+        titles = [config_props["title"], index_props["title"]]
+        if mapping_spec is not None:
+            titles.append(sheets[mapping_spec[0]]["title"])
+        batch = batch_get_all_values(gc, SPREADSHEET_ID, titles)
+    except Exception as e:
+        print(f"! 주문 불러오기 시트 일괄 조회 실패, 탭별 조회로 다시 시도: {e}")
+        return _legacy_order_load_sheets(mapping_store_type)
+
+    payload = {}
+    try:
+        payload["gift_event"], _ = gift_event_from_config_rows(batch[0])
+    except Exception as e:
+        payload["gift_event_error"] = str(e)
+    if mapping_spec is not None:
+        try:
+            payload["mapping"] = _product_code_map_payload_from_values(
+                mapping_store_type, batch[2], mapping_spec[1])
+        except Exception as e:
+            payload["mapping"] = {"ok": False, "error": str(e), "store_type": mapping_store_type}
+    try:
+        ws = worksheet_from_properties(gc, SPREADSHEET_ID, index_props)
+        values = _standalone_normalize_order_index_values(ws, batch[1])
         row = _standalone_read_today_order_indices_from_values(values)
         if row is not None:
             return {**payload, "ok": True, "kind": "data", "row": row}
@@ -852,35 +939,42 @@ def run_product_code_map_load_worker(store_type: str):
         spreadsheet = gc.open_by_key(SPREADSHEET_ID)
         worksheet = spreadsheet.get_worksheet(sheet_index)
         values = worksheet.get_all_values()
-        data_start_idx = header_row_num
-
-        mapping = {}
-        coupang_vp = {}
-        for row in values[data_start_idx:]:
-            product_code = row[0].strip() if len(row) > 0 else ""
-            key_value = row[4] if len(row) > 4 else ""
-
-            key_norm = _normalize_key_for_mapping_value(key_value)
-            if not key_norm:
-                continue
-
-            product_code_norm = str(product_code).strip()
-            if product_code_norm.lower() == "nan":
-                product_code_norm = ""
-
-            mapping[key_norm] = product_code_norm
-            if store_type == "coupang":
-                vp_raw = row[3] if len(row) > 3 else ""
-                vp_norm = _normalize_key_for_mapping_value(vp_raw)
-                coupang_vp[key_norm] = vp_norm
-
-        print(f"✓ 스프레드시트 매핑 로드 완료: {store_type} - {len(mapping)}개")
-        out = {"ok": True, "store_type": store_type, "mapping": mapping}
-        if store_type == "coupang":
-            out["coupang_vp"] = coupang_vp
-        return out
+        return _product_code_map_payload_from_values(store_type, values, header_row_num)
     except Exception as e:
         return {"ok": False, "error": str(e), "store_type": store_type}
+
+
+# 상품코드 매핑 시트 위치: (탭 순서 0-based, 헤더 행 수)
+PRODUCT_CODE_MAP_SHEETS = {"naver": (0, 1), "coupang": (1, 2)}
+
+
+def _product_code_map_payload_from_values(store_type, values, header_row_num):
+    """매핑 시트 값에서 상품번호/옵션ID → 상품코드(쿠팡은 VP 상품번호 포함) payload를 만든다."""
+    mapping = {}
+    coupang_vp = {}
+    for row in values[header_row_num:]:
+        product_code = row[0].strip() if len(row) > 0 else ""
+        key_value = row[4] if len(row) > 4 else ""
+
+        key_norm = _normalize_key_for_mapping_value(key_value)
+        if not key_norm:
+            continue
+
+        product_code_norm = str(product_code).strip()
+        if product_code_norm.lower() == "nan":
+            product_code_norm = ""
+
+        mapping[key_norm] = product_code_norm
+        if store_type == "coupang":
+            vp_raw = row[3] if len(row) > 3 else ""
+            vp_norm = _normalize_key_for_mapping_value(vp_raw)
+            coupang_vp[key_norm] = vp_norm
+
+    print(f"✓ 스프레드시트 매핑 로드 완료: {store_type} - {len(mapping)}개")
+    out = {"ok": True, "store_type": store_type, "mapping": mapping}
+    if store_type == "coupang":
+        out["coupang_vp"] = coupang_vp
+    return out
 
 
 def run_naver_order_fetch_worker(days):
@@ -1111,12 +1205,17 @@ class OrderIndexReadSyncThread(QThread):
 
     result_ready = Signal(dict)
 
-    def __init__(self, parent=None, *, include_gift_event=False):
+    def __init__(self, parent=None, *, include_gift_event=False, mapping_store_type=None):
         super().__init__(parent)
         self._include_gift_event = include_gift_event
+        self._mapping_store_type = mapping_store_type
 
     def run(self):
-        self.result_ready.emit(run_order_index_read_sync_worker(include_gift_event=self._include_gift_event))
+        if self._include_gift_event:
+            # 주문 불러오기: 인덱스·사은품 설정·상품코드 매핑을 한 번에 읽는다.
+            self.result_ready.emit(run_order_load_sheets_worker(self._mapping_store_type))
+        else:
+            self.result_ready.emit(run_order_index_read_sync_worker())
 
 
 class OrderIndexWriteThread(QThread):
@@ -2991,6 +3090,7 @@ class MainWindow(QMainWindow):
         # 폴링(읽기)·인덱스 쓰기 백그라운드 작업 단일 실행 추적 (None이면 유휴)
         self._index_sheet_op_thread = None
         self._index_undo_thread = None  # 인덱스 되돌리기 단일 실행 추적
+        self._prefetched_order_mapping = None  # 주문 불러오기 인덱스 읽기와 함께 받은 상품코드 매핑
         # 진행 중인 백그라운드 읽기의 결과 처리 방식 (대화형 여부 / 완료 후 콜백)
         self._index_sheet_read_interactive = False
         self._index_sheet_read_on_applied = None
@@ -3971,7 +4071,12 @@ class MainWindow(QMainWindow):
         self._index_sheet_push_timer.stop()
         self._index_sheet_read_interactive = interactive
         self._index_sheet_read_on_applied = on_applied
-        thread = OrderIndexReadSyncThread(self, include_gift_event=on_applied is not None)
+        self._prefetched_order_mapping = None
+        thread = OrderIndexReadSyncThread(
+            self,
+            include_gift_event=on_applied is not None,
+            mapping_store_type=getattr(self, "store_type", None) if on_applied is not None else None,
+        )
         self._index_sheet_op_thread = thread
         thread.result_ready.connect(self._on_order_index_read_finished)
         thread.finished.connect(self._cleanup_index_sheet_op_thread)
@@ -4425,6 +4530,12 @@ class MainWindow(QMainWindow):
             self._busy_overlay.hide()
 
     def _run_order_file_processing_with_async_mapping(self, store_type: str):
+        prefetched = getattr(self, "_prefetched_order_mapping", None)
+        self._prefetched_order_mapping = None
+        if prefetched is not None and prefetched.get("store_type") == store_type:
+            # 인덱스 동기화와 함께 읽은 매핑을 쓰고, 기존처럼 이벤트 루프에서 이어 처리한다.
+            QTimer.singleShot(0, lambda: self._on_product_mapping_for_order_file_ready(prefetched))
+            return
         self._product_mapping_thread = ProductMappingLoadThread(store_type)
         self._product_mapping_thread.result_ready.connect(
             self._on_product_mapping_for_order_file_ready
@@ -4694,6 +4805,8 @@ class MainWindow(QMainWindow):
                     self._apply_order_index_sync_payload(payload, prompt_reauth=False)
         finally:
             if on_applied:
+                # 같은 읽기에서 받은 상품코드 매핑은 이어지는 주문 파일 처리에서 쓴다.
+                self._prefetched_order_mapping = payload.get("mapping")
                 self._apply_order_gift_event(payload)
                 on_applied()
 
