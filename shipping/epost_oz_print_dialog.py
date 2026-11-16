@@ -17,12 +17,13 @@ from .epost_desktop_windows import (
     click_oz_viewer_print_toolbar_icon,
     oz_viewer_windows,
     print_dialog_windows,
-    send_enter_to_foreground_window,
+    send_enter_to_print_dialog,
     oz_toolbar_handle_from_diagnostics,
     toolbar_button_commands,
     wait_for_oz_toolbar_diagnostics,
     wait_for_new_single_oz_viewer,
     wait_for_new_single_print_dialog,
+    wait_for_print_dialog_foreground,
     wait_for_window_close,
 )
 from .epost_portal_lookup import PAGE_READY_TIMEOUT_SECONDS, wait_for_print_page
@@ -44,9 +45,20 @@ PRINT_DIALOG_TIMEOUT_SECONDS = 15
 # 있으므로 한 번만 요청하고 충분히 기다린다.
 PRINT_DIALOG_OPEN_ATTEMPTS = 1
 PRINT_DIALOG_ATTEMPT_TIMEOUT_SECONDS = 30
-# 일부 드라이버 인쇄 창은 프로세스 밖 창 열거에서 보이지 않는다. 실제 인쇄는
-# 열린 모달창이 전면이라는 포털 동작을 이용해 짧게 기다린 뒤 Enter를 보낸다.
-PRINT_DIALOG_FOREGROUND_READY_SECONDS = 12
+# 일부 드라이버 인쇄 창은 제목 '인쇄'로 열거되지 않는다. 실제 인쇄는 전면 창이
+# OZ Viewer의 모달 창(또는 드라이버 호스트 창)임을 확인한 즉시 Enter를 보내고,
+# 이 시간 안에 확인하지 못하면 Enter를 보내지 않는다(인쇄 창은 10초 이상 걸릴 수 있다).
+PRINT_DIALOG_FOREGROUND_TIMEOUT_SECONDS = 30
+
+
+def execute_print_when_dialog_ready(viewer, candidates, store) -> None:
+    """인쇄 창이 전면임을 확인한 뒤에만 Enter를 보내고 '인쇄 요청됨'으로 기록한다."""
+    if not wait_for_print_dialog_foreground(viewer.handle, PRINT_DIALOG_FOREGROUND_TIMEOUT_SECONDS) \
+            or not send_enter_to_print_dialog(viewer.handle):
+        raise RuntimeError(
+            "Windows 인쇄 창이 맨 앞에 있는지 확인하지 못해 실제 인쇄(Enter)를 보내지 않았습니다. "
+            "인쇄 요청 이력도 남기지 않았습니다. 열린 OZ Viewer·인쇄 창을 확인해 주세요.")
+    store.mark_windows_print_requested([candidate.regi_no for candidate in candidates])
 OZ_TOOLBAR_DIAGNOSTIC_PATH = (
     APP_ROOT / "output" / "epost-oz-viewer-toolbar-controls.json"
 )
@@ -139,9 +151,7 @@ def open_reprint_print_dialog(
             # 걸릴 수 있다. 그 사이 아이콘을 다시 누르면 중복 요청이 될 수 있으므로
             # 한 번만 요청하고 충분히 기다린다.
             if execute_print:
-                time.sleep(PRINT_DIALOG_FOREGROUND_READY_SECONDS)
-                send_enter_to_foreground_window()
-                store.mark_windows_print_requested([candidate.regi_no for candidate in candidates])
+                execute_print_when_dialog_ready(viewer, candidates, store)
                 return {
                     "printDialogOpened": None,
                     **prepared,

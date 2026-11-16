@@ -298,6 +298,89 @@ def click_print_dialog_confirm(dialog_handle: int) -> None:
     user32.keybd_event(VK_RETURN, 0, KEYEVENTF_KEYUP, 0)
 
 
+# 32비트 OZ Viewer가 64비트 Windows에서 인쇄할 때 프린터 드라이버 창을 띄우는 호스트 프로세스
+PRINT_DIALOG_HOST_PROCESSES = frozenset({"splwow64.exe"})
+PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+
+
+def _foreground_window() -> int:
+    return int(ctypes.windll.user32.GetForegroundWindow() or 0)
+
+
+def _window_title(handle: int) -> str:
+    user32 = ctypes.windll.user32
+    length = user32.GetWindowTextLengthW(wintypes.HWND(handle))
+    buffer = ctypes.create_unicode_buffer(max(length, 0) + 1)
+    user32.GetWindowTextW(wintypes.HWND(handle), buffer, len(buffer))
+    return buffer.value.strip()
+
+
+def _window_process_id(handle: int) -> int:
+    pid = wintypes.DWORD()
+    ctypes.windll.user32.GetWindowThreadProcessId(wintypes.HWND(handle), ctypes.byref(pid))
+    return int(pid.value)
+
+
+def _process_image_name(pid: int) -> str:
+    """프로세스 실행 파일 이름(소문자). 읽지 못하면 빈 문자열."""
+    kernel32 = ctypes.windll.kernel32
+    process = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not process:
+        return ""
+    try:
+        size = wintypes.DWORD(1024)
+        buffer = ctypes.create_unicode_buffer(size.value)
+        if not kernel32.QueryFullProcessImageNameW(process, 0, buffer, ctypes.byref(size)):
+            return ""
+        return os.path.basename(buffer.value).lower()
+    finally:
+        kernel32.CloseHandle(process)
+
+
+def is_print_dialog_foreground(viewer_handle: int) -> bool:
+    """전면 창이 OZ Viewer가 연 인쇄 창인지 확인한다.
+
+    표준 인쇄 창 제목('인쇄')이거나, OZ Viewer 프로세스의 다른 창(모달 인쇄 창)이거나,
+    프린터 드라이버 호스트(splwow64.exe)의 창이면 인쇄 창으로 본다. Viewer 자체나
+    다른 프로그램 창이면 False라서 Enter가 엉뚱한 곳에 가지 않는다.
+    """
+    handle = _foreground_window()
+    if not handle or handle == viewer_handle:
+        return False
+    if _window_title(handle) == PRINT_DIALOG_TITLE:
+        return True
+    pid = _window_process_id(handle)
+    if pid and pid == _window_process_id(viewer_handle):
+        return True
+    return bool(pid) and _process_image_name(pid) in PRINT_DIALOG_HOST_PROCESSES
+
+
+def wait_for_print_dialog_foreground(viewer_handle: int, timeout_seconds: float) -> bool:
+    """인쇄 창이 전면에 올 때까지 기다린다(아이콘을 다시 누르지 않는다)."""
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        if is_print_dialog_foreground(viewer_handle):
+            return True
+        time.sleep(0.25)
+    return False
+
+
+def _press_enter() -> None:
+    user32 = ctypes.windll.user32
+    user32.keybd_event(VK_RETURN, 0, 0, 0)
+    user32.keybd_event(VK_RETURN, 0, KEYEVENTF_KEYUP, 0)
+
+
+def send_enter_to_print_dialog(viewer_handle: int) -> bool:
+    """키 입력 직전에 전면 창을 다시 확인하고, 인쇄 창일 때만 Enter를 보낸다."""
+    if os.name != "nt":
+        raise RuntimeError("Windows 인쇄 창 제어는 Windows에서만 지원합니다.")
+    if not is_print_dialog_foreground(viewer_handle):
+        return False
+    _press_enter()
+    return True
+
+
 def send_enter_to_foreground_window() -> None:
     """현재 전면의 모달 창에 Enter를 한 번 전송한다.
 
