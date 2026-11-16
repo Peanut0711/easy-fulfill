@@ -115,7 +115,9 @@ def get_authorized_gspread_client(interactive: bool | None = None,
 
         TOKEN_PATH.write_text(creds.to_json(), encoding="utf-8")
 
-    return gspread.authorize(creds)
+    # 공유 시트의 최소 버전보다 낮은 앱은 모든 쓰기 요청을 보내기 전에 막는다(sheets.version_gate).
+    from sheets.version_gate import install_write_guard
+    return install_write_guard(gspread.authorize(creds))
 
 
 def delete_oauth_token_file() -> bool:

@@ -140,6 +140,8 @@ def DetailPreviewServer(*args, **kwargs):
 # 처음 쓸 때 불러오고, 창이 뜬 뒤 백그라운드에서 미리 불러온다(MainWindow.showEvent).
 pd = deferred_module("pandas")
 DATA_MODULE_PRELOAD_DELAY_MS = 300
+# 첫 화면·시작 동기화와 겹치지 않게 조금 뒤에 앱 버전 확인을 시작한다.
+APP_VERSION_CHECK_DELAY_MS = 3000
 # 창을 닫을 때 대기 중인 공유 시트 반영(인덱스·송장추적 등록·메모)을 기다리는 최대 시간과 재시도 횟수
 CLOSE_FLUSH_TIMEOUT_MS = 10_000
 CLOSE_FLUSH_MAX_ATTEMPTS = 3
@@ -1329,6 +1331,21 @@ class GoogleReauthThread(QThread):
             from sheets.google_sheets_oauth import get_authorized_gspread_client
             client = get_authorized_gspread_client(interactive=True)
             self.result_ready.emit({"ok": True, "client": client})
+        except Exception as error:
+            self.result_ready.emit({"ok": False, "error": str(error)})
+
+
+class AppVersionCheckThread(QThread):
+    """시작 시 공유 최소 버전을 확인·상향하고 이 PC의 버전을 「PC버전」 탭에 기록한다."""
+
+    result_ready = Signal(dict)
+
+    def run(self):
+        try:
+            from sheets.google_sheets_oauth import get_authorized_gspread_client
+            from sheets.version_gate import startup_check
+            result = startup_check(get_authorized_gspread_client(), _current_actor())
+            self.result_ready.emit({"ok": True, **result})
         except Exception as error:
             self.result_ready.emit({"ok": False, "error": str(error)})
 
@@ -4471,6 +4488,25 @@ class MainWindow(QMainWindow):
                 DATA_MODULE_PRELOAD_DELAY_MS,
                 lambda: preload_modules_in_background("pandas"),
             )
+            # 공유 시트가 요구하는 최소 버전 확인과 이 PC의 버전 기록(시작 동기화 뒤에).
+            QTimer.singleShot(APP_VERSION_CHECK_DELAY_MS, self._kickoff_app_version_check)
+
+    def _kickoff_app_version_check(self):
+        thread = AppVersionCheckThread(self)
+        thread.result_ready.connect(self._on_app_version_checked)
+        thread.finished.connect(thread.deleteLater)
+        self._app_version_check_thread = thread
+        thread.start()
+
+    def _on_app_version_checked(self, result):
+        if not result.get("ok"):
+            print(f"! 앱 버전 확인 실패: {result.get('error')}")
+            return
+        if result.get("blocked"):
+            from sheets.version_gate import blocked_message
+            QMessageBox.warning(self, "프로그램 업데이트 필요", blocked_message(result.get("minimum", "")))
+            return
+        print(f"앱 버전 {result.get('version')} (공유 최소 버전 {result.get('minimum') or '없음'})")
 
     # ── 종료: 대기 중인 공유 시트 반영을 마친 뒤 닫는다 ─────────────────────
     _BACKGROUND_TIMER_NAMES = (
