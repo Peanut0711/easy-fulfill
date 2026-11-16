@@ -126,6 +126,9 @@ except ImportError:  # gspread는 스프레드시트 매핑에만 필요
 # 처음 쓸 때 불러오고, 창이 뜬 뒤 백그라운드에서 미리 불러온다(MainWindow.showEvent).
 pd = deferred_module("pandas")
 DATA_MODULE_PRELOAD_DELAY_MS = 300
+# 창을 닫을 때 대기 중인 공유 시트 반영(인덱스·송장추적 등록·메모)을 기다리는 최대 시간과 재시도 횟수
+CLOSE_FLUSH_TIMEOUT_MS = 10_000
+CLOSE_FLUSH_MAX_ATTEMPTS = 3
 # 구글 스프레드시트(로컬 DB 대체) 설정
 SPREADSHEET_ID = "1F0l6FMjXvKXAR9WyDvxEWcRvji-TaJbBim_G12TJ2Pw"
 # 네이버 마크다운 상품 링크 (주문 처리 전용 고정 스토어)
@@ -1538,16 +1541,6 @@ class ImageDialog(QDialog):
     
     def closeEvent(self, event):
         """창이 닫힐 때 호출되는 이벤트"""
-        # 종료 중 새 백그라운드 작업(폴링·푸시)이 뜨지 않도록 타이머 정지
-        for _tname in ("_index_sheet_push_timer", "_index_sheet_poll_timer",
-                       "_tracking_list_timer", "_tracking_push_timer",
-                       "_naver_inquiry_timer", "_timer"):
-            _t = getattr(self, _tname, None)
-            try:
-                if _t is not None:
-                    _t.stop()
-            except Exception:
-                pass
         # 소분류 값 업데이트
         self.update_subcategory()
         
@@ -4297,6 +4290,109 @@ class MainWindow(QMainWindow):
                 DATA_MODULE_PRELOAD_DELAY_MS,
                 lambda: preload_modules_in_background("pandas"),
             )
+
+    # ── 종료: 대기 중인 공유 시트 반영을 마친 뒤 닫는다 ─────────────────────
+    _BACKGROUND_TIMER_NAMES = (
+        "_index_sheet_poll_timer", "_tracking_list_timer", "_tracking_auto_refresh_timer",
+        "_naver_inquiry_timer",
+    )
+
+    def _stop_background_timers(self):
+        """종료 중 새 폴링·자동 새로고침이 시작되지 않게 주기 타이머를 멈춘다.
+
+        반영 대기(디바운스) 타이머는 대기 여부 판단에 쓰므로 여기서 멈추지 않고,
+        _kick_pending_sheet_writes가 즉시 반영을 시작할 때 멈춘다.
+        """
+        for name in self._BACKGROUND_TIMER_NAMES:
+            timer = getattr(self, name, None)
+            if timer is not None:
+                timer.stop()
+
+    def _pending_sheet_writes(self):
+        """아직 공유 시트에 반영되지 않은 항목 이름 목록(종료 전에 마쳐야 하는 것)."""
+        if gspread is None:
+            return []  # 시트 연동이 없으면 반영할 방법이 없으므로 기다리지 않는다.
+        pending = []
+        if (self._index_sheet_push_pending
+                or self._index_sheet_push_timer.isActive()
+                or isinstance(self._index_sheet_op_thread, OrderIndexWriteThread)):
+            pending.append("주문번호 인덱스")
+        if self._tracking_pending_records or self._tracking_op_thread is not None:
+            pending.append("송장추적 등록")
+        if self._tracking_notes_pending or self._tracking_notes_update_thread is not None:
+            pending.append("배송추적 메모")
+        return pending
+
+    def _kick_pending_sheet_writes(self):
+        """대기 중인 반영을 디바운스 없이 바로 시작한다(실패한 항목은 정해진 횟수까지 재시도)."""
+        attempts = self._close_flush_attempts
+        if ((self._index_sheet_push_pending or self._index_sheet_push_timer.isActive())
+                and self._index_sheet_op_thread is None
+                and attempts["index"] < CLOSE_FLUSH_MAX_ATTEMPTS):
+            attempts["index"] += 1
+            self._index_sheet_push_timer.stop()
+            self._index_sheet_push_pending = True  # 결과가 성공으로 올 때까지 대기 상태로 본다.
+            self._flush_order_indices_to_sheet()
+        if (self._tracking_pending_records and self._tracking_op_thread is None
+                and attempts["tracking"] < CLOSE_FLUSH_MAX_ATTEMPTS):
+            attempts["tracking"] += 1
+            self._tracking_push_timer.stop()
+            self._tracking_controller._flush_tracking_records()
+        if (self._tracking_notes_pending and self._tracking_notes_update_thread is None
+                and attempts["notes"] < CLOSE_FLUSH_MAX_ATTEMPTS):
+            attempts["notes"] += 1
+            self._tracking_controller._flush_tracking_notes()
+
+    def closeEvent(self, event):
+        if getattr(self, "_close_ready", False):
+            event.accept()
+            return
+        self._stop_background_timers()
+        if not self._pending_sheet_writes():
+            self._close_ready = True
+            event.accept()
+            return
+        # 종료를 잠시 미루고 대기 중인 반영을 마친다. 끝나면 다시 close()를 호출한다.
+        event.ignore()
+        if getattr(self, "_close_flush_timer", None) is not None:
+            return  # 이미 종료 준비 중
+        self._close_flush_attempts = {"index": 0, "tracking": 0, "notes": 0}
+        self._close_flush_deadline = time.monotonic() + CLOSE_FLUSH_TIMEOUT_MS / 1000
+        self._show_busy_processing_overlay(
+            "공유 시트에 저장 중…", "주문번호 인덱스·송장추적 반영을 마친 뒤 종료합니다.")
+        self.statusBar().showMessage("공유 시트에 저장 중… 완료되면 종료합니다.")
+        self._close_flush_timer = QTimer(self)
+        self._close_flush_timer.setInterval(100)
+        self._close_flush_timer.timeout.connect(self._on_close_flush_tick)
+        self._close_flush_timer.start()
+        self._kick_pending_sheet_writes()
+
+    def _on_close_flush_tick(self):
+        pending = self._pending_sheet_writes()
+        retry_left = any(count < CLOSE_FLUSH_MAX_ATTEMPTS for count in self._close_flush_attempts.values())
+        if pending and time.monotonic() < self._close_flush_deadline and retry_left:
+            self._kick_pending_sheet_writes()
+            return
+        self._close_flush_timer.stop()
+        if pending:
+            answer = QMessageBox.question(
+                self, "공유 시트 저장 확인",
+                "다음 항목을 공유 시트에 아직 반영하지 못했습니다.\n\n- " + "\n- ".join(pending) +
+                "\n\n지금 종료하면 이 변경이 사라질 수 있습니다(주문번호 인덱스는 다음 실행 때 "
+                "시트 값으로 돌아갑니다).\n조금 더 기다리며 다시 시도할까요?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes,
+            )
+            if answer == QMessageBox.StandardButton.Yes:
+                self._close_flush_attempts = {"index": 0, "tracking": 0, "notes": 0}
+                self._close_flush_deadline = time.monotonic() + CLOSE_FLUSH_TIMEOUT_MS / 1000
+                self._close_flush_timer.start()
+                self._kick_pending_sheet_writes()
+                return
+        self._close_flush_timer = None
+        self._hide_busy_processing_overlay()
+        self._close_ready = True
+        self.close()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
