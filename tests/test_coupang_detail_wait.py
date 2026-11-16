@@ -13,19 +13,22 @@ from playwright.sync_api import Error, sync_playwright
 from product_detail import coupang_detail_replace as detail
 
 
-# 쿠팡 WING 상품 수정 화면의 상세설명 영역을 흉내 낸다.
+# 쿠팡 WING 상품 수정 화면의 상세설명 영역을 흉내 낸다. 실제 WING처럼 탭 라디오는 선택 후에도
+# checked가 false로 남고, 비활성 입력칸과 피드백 입력칸이 함께 있다.
 # popup1/popup2: 탭 클릭 시 SweetAlert 확인 팝업 표시, editor_delay: HTML 편집기 표시 지연(ms),
-# no_editor: 편집기를 끝내 표시하지 않음.
+# no_editor: 편집기를 끝내 표시하지 않음, basic_already: 이미 기본 상세라 HTML 작성 탭이 처음부터 보임.
 MOCK_WING_PAGE = r"""<!doctype html><meta charset="utf-8"><title>상품 수정</title>
 <style>.panel{display:none}.sweet-alert{display:none}</style>
-<input type="radio" name="level" id="tab-content-level-1" checked><label for="tab-content-level-1">옵션별 상세</label>
-<input type="radio" name="level" id="tab-content-level-0"><label for="tab-content-level-0" id="basic">기본 상세</label>
+<input type="radio" name="tab-content-level" id="tab-content-level-0"><label for="tab-content-level-0" id="basic">기본 등록</label>
+<input type="radio" name="tab-content-level" id="tab-content-level-1"><label for="tab-content-level-1">옵션별 등록</label>
 <div class="panel" id="basic-panel">
-  <input type="radio" name="kind" id="tab-content-1" checked><label for="tab-content-1">이미지 업로드</label>
-  <input type="radio" name="kind" id="tab-content-2"><label for="tab-content-2" id="html-tab">HTML 작성</label>
+  <input type="radio" name="tab-content" id="tab-content-0"><label for="tab-content-0">이미지 업로드</label>
+  <input type="radio" name="tab-content" id="tab-content-2"><label for="tab-content-2" id="html-tab">HTML 작성</label>
+  <textarea class="sc-common-input" disabled></textarea>
   <div id="editor-host"></div>
 </div>
-<textarea placeholder="의견을 적어주세요."></textarea>
+<textarea placeholder="의견을 적어주세요." style="display:none"></textarea>
+<textarea placeholder="현재 페이지에 대한 피드백을 적어주세요."></textarea>
 <div class="sweet-alert"><p>변경하시겠습니까?</p><button class="confirm">확인</button></div>
 <script>
 const params = new URLSearchParams(location.search);
@@ -45,12 +48,11 @@ alertBox.querySelector('button.confirm').addEventListener('click', () => {
   setTimeout(() => { alertBox.style.display = 'none'; }, 100);
   const action = pending; pending = null; action && action();
 });
+if (flag('basic_already')) document.getElementById('basic-panel').style.display = 'block';
 function chooseBasic() {
-  document.getElementById('tab-content-level-0').checked = true;
   setTimeout(() => { document.getElementById('basic-panel').style.display = 'block'; }, 150);
 }
 function chooseHtml() {
-  document.getElementById('tab-content-2').checked = true;
   if (flag('no_editor')) return;
   setTimeout(() => {
     const editor = document.createElement('textarea');
@@ -97,9 +99,9 @@ class DetailWaitTests(unittest.TestCase):
         elapsed = time.monotonic() - started
         self.assertEqual(textarea.get_attribute("id"), "html-editor")
         self.assertEqual(page.input_value("#html-editor"), "<p>상세</p>")
-        self.assertTrue(page.is_checked("#tab-content-level-0"))
-        self.assertTrue(page.is_checked("#tab-content-2"))
-        self.assertEqual(page.input_value('textarea[placeholder="의견을 적어주세요."]'), "")
+        for placeholder in detail.FEEDBACK_PLACEHOLDERS:
+            self.assertEqual(page.input_value(f'textarea[placeholder="{placeholder}"]'), "")
+        self.assertFalse(page.locator(".sweet-alert.showSweetAlert").count())
         return page, elapsed
 
     def test_without_popup_proceeds_as_soon_as_editor_is_ready(self):
@@ -108,8 +110,12 @@ class DetailWaitTests(unittest.TestCase):
         self.assertLess(elapsed, 3.0)
 
     def test_confirms_popups_on_both_tabs(self):
-        page, _elapsed = self.fill("popup1=1&popup2=1")
-        self.assertFalse(page.locator(".sweet-alert.showSweetAlert").count())
+        self.fill("popup1=1&popup2=1")
+
+    def test_already_basic_product_confirms_html_mode_popup(self):
+        # 실제 WING(등록상품 15120489904)에서 관찰한 흐름: 기본 등록은 변화 없음, HTML 작성만 확인 팝업.
+        _page, elapsed = self.fill("basic_already=1&popup2=1&alert_delay=550")
+        self.assertLess(elapsed, 3.0)
 
     def test_waits_for_late_editor(self):
         _page, elapsed = self.fill("editor_delay=2500")

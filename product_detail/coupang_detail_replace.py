@@ -137,14 +137,14 @@ def editor_textarea(page):
 DETAIL_STEP_TIMEOUT_MS = 15_000
 FEEDBACK_PLACEHOLDERS = ("의견을 적어주세요.", "현재 페이지에 대한 피드백을 적어주세요.")
 # 탭을 누른 뒤 화면 상태: 확인 팝업이 열렸으면 "alert", 다음 단계가 가능하면 "ready", 아니면 null.
-# 팝업은 SweetAlert가 여는 즉시 붙는 showSweetAlert 클래스로 감지해 늦게 보이는 팝업도 놓치지 않는다.
+# 팝업은 SweetAlert가 클릭 처리 중 바로 붙이는 showSweetAlert 클래스로 감지한다('visible'은 약 0.5초 뒤).
+# 실제 WING의 탭 라디오(tab-content-*)는 선택 후에도 checked가 false로 돌아가므로 판정에 쓰지 않고,
+# 다음 단계 요소(HTML 작성 탭, 피드백 입력칸이 아닌 사용 가능한 HTML 입력칸)가 보이는지로 판단한다.
 DETAIL_STEP_STATE_SCRIPT = r"""
-([radioId, step, feedbackPlaceholders]) => {
+([step, feedbackPlaceholders]) => {
     const shown = el => !!el && el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden';
     const alert = document.querySelector('.sweet-alert.showSweetAlert');
     if (shown(alert) && !alert.classList.contains('hideSweetAlert')) return 'alert';
-    const radio = document.getElementById(radioId);
-    if (radio && !radio.checked) return null;
     if (step === 'level') {
         return shown(document.querySelector('label[for="tab-content-2"]')) ? 'ready' : null;
     }
@@ -153,19 +153,16 @@ DETAIL_STEP_STATE_SCRIPT = r"""
     return shown(editor) ? 'ready' : null;
 }
 """
-DETAIL_STEPS = {
-    "level": ("tab-content-level-0", "기본 상세 전환"),
-    "editor": ("tab-content-2", "HTML 편집기 준비"),
-}
+DETAIL_STEPS = {"level": "기본 상세 전환", "editor": "HTML 편집기 준비"}
 
 
 def wait_for_detail_step(page, step, vendor_inventory_id, playwright_error, events=None,
                          timeout=DETAIL_STEP_TIMEOUT_MS):
-    """탭 클릭 뒤 확인 팝업이 뜨면 확인하고, 탭 전환·다음 화면 준비가 확인되는 즉시 반환한다.
+    """탭 클릭 뒤 확인 팝업이 뜨면 확인하고, 다음 단계 화면 요소가 보이는 즉시 반환한다.
 
     기존에는 팝업 대기 3초와 고정 대기 1초를 단계마다 기다렸다. 반환값은 확인한 팝업 수다.
     """
-    radio_id, stage = DETAIL_STEPS[step]
+    stage = DETAIL_STEPS[step]
     deadline = time.monotonic() + timeout / 1000
     confirmed = 0
     while True:
@@ -174,7 +171,7 @@ def wait_for_detail_step(page, step, vendor_inventory_id, playwright_error, even
             if time.monotonic() >= deadline:
                 raise playwright_error(f"{stage} 대기 시간 {timeout}ms 초과")
             state = page.wait_for_function(
-                DETAIL_STEP_STATE_SCRIPT, arg=[radio_id, step, list(FEEDBACK_PLACEHOLDERS)],
+                DETAIL_STEP_STATE_SCRIPT, arg=[step, list(FEEDBACK_PLACEHOLDERS)],
                 timeout=remaining,
             ).json_value()
             if state == "ready":
@@ -185,7 +182,7 @@ def wait_for_detail_step(page, step, vendor_inventory_id, playwright_error, even
         except playwright_error as error:
             path = save_detail_diagnostics(page, vendor_inventory_id, stage, events)
             message = (f"쿠팡 등록상품 ID {vendor_inventory_id}의 {stage} 상태를 {timeout / 1000:g}초 안에 확인하지 못했습니다. "
-                       "확인 팝업·탭 전환·HTML 입력칸 표시 여부를 진단 파일에서 확인하세요. "
+                       "확인 팝업·HTML 작성 탭·HTML 입력칸 표시 여부를 진단 파일에서 확인하세요. "
                        f"진단 파일: {path if path else '저장 실패 (작업 로그 확인)'}")
             print(f"[오류] {message}", flush=True)
             raise RuntimeError(message) from error
