@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+import hashlib
 import re
 import secrets
 from typing import Mapping, Sequence
@@ -47,6 +48,14 @@ class ParcelApiError(RuntimeError):
         self.code = code
         self.message = message
         super().__init__(f"{code}: {message}" if code else message)
+
+
+class ParcelNetworkError(ParcelApiError):
+    """우체국 API에 요청하지 못했거나 HTTP 오류 응답을 받은 경우(결과를 알 수 없음).
+
+    requests 예외 문구에는 인증키·암호화된 수취인 정보가 담긴 요청 URL이 포함되므로
+    API 이름과 원인 종류만 남긴다.
+    """
 
 
 @dataclass(frozen=True)
@@ -180,9 +189,29 @@ def _postcode_response_items(root: ET.Element) -> list[dict[str, str]]:
     return items
 
 
+def _safe_get(label: str, url: str, *, params, timeout: float, headers=None):
+    """GET 요청 후 HTTP 오류를 확인한다. 실패 문구에서 URL·쿼리(인증키 등)를 제거한다."""
+    response = None
+    try:
+        response = requests.get(url, params=params, headers=headers, timeout=timeout)
+        response.raise_for_status()
+        return response
+    except requests.HTTPError as error:
+        status = getattr(getattr(error, "response", None), "status_code", None) or getattr(response, "status_code", "")
+        reason = f"HTTP {status}"
+    except requests.Timeout:
+        reason = "응답 시간 초과"
+    except requests.ConnectionError:
+        reason = "연결 실패"
+    except requests.RequestException as error:
+        reason = type(error).__name__
+    raise ParcelNetworkError("", f"{label} 요청 실패({reason})") from None
+
+
 def postcode_lookup_items(query: str, api_key: str) -> list[dict[str, str]]:
     """우편번호 OpenAPI의 도로명주소 후보를 조회한다."""
-    response = requests.get(
+    response = _safe_get(
+        "우편번호 API",
         POSTCODE_API_URL,
         params={
             "regkey": api_key,
@@ -193,7 +222,6 @@ def postcode_lookup_items(query: str, api_key: str) -> list[dict[str, str]]:
         },
         timeout=15,
     )
-    response.raise_for_status()
     return _postcode_response_items(ET.fromstring(response.content))
 
 
@@ -282,7 +310,8 @@ def _request_plain_data(values: Mapping[str, object]) -> str:
 
 
 def call_api(api_name: str, plain_data: str, api_key: str, security_key: str) -> ET.Element:
-    response = requests.get(
+    response = _safe_get(
+        f"우체국 계약소포 API({api_name})",
         API_BASE_URL.format(api_name),
         params={"key": api_key, "regData": encrypt_reg_data(security_key, plain_data)},
         headers={
@@ -292,7 +321,6 @@ def call_api(api_name: str, plain_data: str, api_key: str, security_key: str) ->
         },
         timeout=20,
     )
-    response.raise_for_status()
     return ET.fromstring(response.content)
 
 
@@ -444,6 +472,38 @@ def submit_order(
         regi_no=result["regiNo"],
         rechecked=True,
     )
+
+
+def lookup_order_receipt(order_no: str, settings: Mapping[str, object], req_ymd: str) -> ParcelReceipt | None:
+    """주문번호로 이미 접수된 소포신청을 재조회한다. 없거나 API가 오류를 돌려주면 None.
+
+    요청 자체가 실패하면(ParcelNetworkError) 결과를 알 수 없으므로 예외를 그대로 올린다.
+    """
+    api_key = required_setting(settings, CONFIG_KEY_API, "소포신청 인증키")
+    security_key = required_setting(settings, CONFIG_KEY_SECURITY, "접수용 보안키")
+    lookup_values = {
+        "custNo": required_setting(settings, CONFIG_KEY_CUST_NO, "고객번호"),
+        "reqType": "1",
+        "orderNo": order_no,
+        "reqYmd": req_ymd,
+    }
+    root = call_api("GetResInfo", _request_plain_data(lookup_values), api_key, security_key)
+    if element_text(root.find(".//error_code")):
+        return None
+    found = _first_result(root)
+    if not found["regiNo"] or not found["reqNo"]:
+        return None
+    return ParcelReceipt(
+        order_no=order_no, req_no=found["reqNo"], res_no=found["resNo"],
+        regi_no=found["regiNo"], rechecked=True,
+    )
+
+
+def parcel_row_fingerprint(row: Mapping[str, object]) -> str:
+    """같은 송장 행을 다시 실행했는지 알아보기 위한 해시(개인정보 원문은 저장하지 않는다)."""
+    fields = ("수취인명", "우편번호", "수취인 주소", "수취인 전화번호", "수취인 이동통신", "상품명", "주문번호")
+    normalized = "\x1f".join(" ".join(text(row.get(field)).split()) for field in fields)
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
 def submit_test_order(row: Mapping[str, object], settings: Mapping[str, object]) -> ParcelReceipt:

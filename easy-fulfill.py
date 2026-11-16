@@ -111,8 +111,11 @@ from orders.matching import CoupangOrderIndex, NaverOrderIndex, normalize_coupan
 from ui.gift_event_settings import GiftEventSettingsDialog
 from shipping.post_parcel import (
     ParcelApiError,
+    ParcelNetworkError,
     ParcelValidationError,
+    lookup_order_receipt,
     new_real_order_no,
+    parcel_row_fingerprint,
     resolve_recipient_address,
     submit_real_order,
     submit_test_order,
@@ -8171,14 +8174,24 @@ class MainWindow(QMainWindow):
                 )
                 return
 
-            # 빈 주문번호는 실제 접수 전 확인창에 보여 주고, 같은 실행에서 재조회할
-            # 수 있도록 미리 생성한다. 이 값은 실제 접수의 외부 식별자로 사용된다.
-            if not test_mode and not str(rows[0].get("주문번호", "") or "").strip():
-                rows[0] = {**rows[0], "주문번호": new_real_order_no()}
-
             receipt_store = None
+            open_submission = None
+            row_fingerprint = None
             if not test_mode:
                 receipt_store = ParcelReceiptStore()
+                # 같은 송장 행으로 보낸 실제 접수 요청 중 결과를 확인하지 못한 기록이 있으면
+                # 새 번호를 만들지 않고 그 주문번호로 먼저 접수 여부를 확인한다(이중 접수 방지).
+                row_fingerprint = parcel_row_fingerprint(rows[0])
+                given_order_no = str(rows[0].get("주문번호", "") or "").strip()
+                open_submission = receipt_store.find_open_submission(
+                    order_no=given_order_no or None,
+                    fingerprint=None if given_order_no else row_fingerprint,
+                )
+                # 빈 주문번호는 실제 접수 전 확인창에 보여 주고, 같은 실행에서 재조회할
+                # 수 있도록 미리 생성한다. 이 값은 실제 접수의 외부 식별자로 사용된다.
+                if not given_order_no:
+                    rows[0] = {**rows[0], "주문번호": (
+                        open_submission.order_no if open_submission else new_real_order_no())}
                 previous = receipt_store.find_by_order_no(rows[0]["주문번호"])
                 if previous:
                     QMessageBox.warning(
@@ -8200,6 +8213,46 @@ class MainWindow(QMainWindow):
                 config = _read_config_values_map(
                     _standalone_open_config_ws(get_authorized_gspread_client()),
                 )
+                previous_result = None
+                if open_submission is not None:
+                    # 결과를 모르는 이전 요청: 같은 주문번호로 이미 접수됐는지 먼저 조회한다.
+                    # 조회 요청 자체가 실패하면(네트워크) 예외로 중단해 다시 접수하지 않는다.
+                    previous_result = lookup_order_receipt(
+                        open_submission.order_no, config, open_submission.request_ymd)
+            finally:
+                QApplication.restoreOverrideCursor()
+
+            if open_submission is not None:
+                if previous_result is not None:
+                    receipt_store.record_real_receipt(previous_result)
+                    receipt_store.complete_submission(open_submission.order_no)
+                    print(f"[우체국 {mode_label}] 이전 요청이 이미 접수돼 있어 이력만 저장 "
+                          f"orderNo={previous_result.order_no}, regiNo={previous_result.regi_no}")
+                    QMessageBox.information(
+                        self,
+                        "우체국 실제 접수 확인",
+                        "이전에 보낸 같은 송장의 접수 요청이 우체국에 이미 접수돼 있었습니다.\n"
+                        "다시 접수하지 않고 접수 이력만 저장했습니다.\n\n"
+                        f"주문번호: {previous_result.order_no}\n"
+                        f"소포신청번호: {previous_result.req_no}\n"
+                        f"등기번호: {previous_result.regi_no}",
+                    )
+                    return
+                if QMessageBox.question(
+                    self,
+                    "우체국 실제 접수 확인",
+                    "이전에 같은 송장으로 보낸 실제 접수 요청의 결과를 우체국에서 찾지 못했습니다.\n\n"
+                    f"주문번호: {open_submission.order_no}\n"
+                    f"요청 시각: {open_submission.created_at}\n\n"
+                    "계약소포 포털에서 이 주문번호가 접수되지 않았는지 확인한 뒤에만 다시 접수하세요.\n"
+                    "같은 주문번호로 다시 접수할까요?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No,
+                ) != QMessageBox.StandardButton.Yes:
+                    return
+
+            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+            try:
                 suggestions = resolve_recipient_address(
                     rows[0].get("수취인 주소", ""),
                     config.get("epost_postcode_api_key", ""),
@@ -8271,6 +8324,9 @@ class MainWindow(QMainWindow):
             if confirm != QMessageBox.StandardButton.Yes:
                 return
 
+            if not test_mode:
+                # 요청 전에 '접수 중'으로 기록한다. 기록하지 못하면 접수하지 않는다.
+                receipt_store.begin_submission(rows[0]["주문번호"], row_fingerprint)
             QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
             try:
                 result = submit_test_order(rows[0], config) if test_mode else submit_real_order(rows[0], config)
@@ -8280,6 +8336,7 @@ class MainWindow(QMainWindow):
             if not test_mode:
                 try:
                     receipt_store.record_real_receipt(result)
+                    receipt_store.complete_submission(result.order_no)
                 except (ReceiptStoreError, OSError) as error:
                     print(f"[우체국 실제 접수] 이력 저장 실패: {error}")
                     QMessageBox.critical(
@@ -8316,6 +8373,16 @@ class MainWindow(QMainWindow):
                     "이 프로그램은 운송장 출력과 네이버 발송처리를 실행하지 않았습니다.\n\n"
                     "등기번호를 로컬 출력 대상 이력에 저장했습니다."
                 ),
+            )
+        except ParcelNetworkError as error:
+            print(f"[우체국 {mode_label}] 요청 실패: {error.message}")
+            QMessageBox.warning(
+                self,
+                f"우체국 {mode_label} 실패",
+                f"우체국 응답을 받지 못해 결과를 알 수 없습니다.\n\n{error}\n\n"
+                + ("" if test_mode else
+                   "실제 접수 요청을 보냈을 수 있습니다. 다시 실행하면 같은 주문번호로 "
+                   "먼저 접수 여부를 확인한 뒤 진행합니다."),
             )
         except ParcelApiError as error:
             print(f"[우체국 {mode_label}] API 실패 {error.code}: {error.message}")

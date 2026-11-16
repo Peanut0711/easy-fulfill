@@ -25,6 +25,21 @@ class PrintCandidate:
     print_status: str
 
 
+@dataclass(frozen=True)
+class SubmissionRecord:
+    """실제 접수 요청을 보내기 전에 남긴 '접수 중' 기록."""
+
+    order_no: str
+    fingerprint: str
+    created_at: str
+    status: str
+
+    @property
+    def request_ymd(self) -> str:
+        """재조회(GetResInfo)에 쓸 접수 요청일(YYYYMMDD)."""
+        return self.created_at[:10].replace("-", "")
+
+
 class ReceiptStoreError(RuntimeError):
     """실제 접수 이력의 저장·중복 검사 오류."""
 
@@ -67,6 +82,68 @@ class ParcelReceiptStore:
                     )
                     """,
                 )
+                # 실제 접수 요청 전에 주문번호를 남겨, 응답·재조회가 실패한 뒤 재시도할 때
+                # 새 번호로 이중 접수하지 않고 같은 번호로 먼저 접수 여부를 확인한다.
+                connection.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS parcel_submissions (
+                        order_no TEXT PRIMARY KEY,
+                        fingerprint TEXT NOT NULL,
+                        created_at TEXT NOT NULL,
+                        status TEXT NOT NULL DEFAULT 'SUBMITTING'
+                    )
+                    """,
+                )
+
+    def begin_submission(self, order_no: str, fingerprint: str) -> None:
+        """실제 접수 요청 직전에 '접수 중'으로 기록한다(이미 있으면 그대로 둔다)."""
+        try:
+            with closing(self._connect()) as connection:
+                with connection:
+                    connection.execute(
+                        """
+                        INSERT OR IGNORE INTO parcel_submissions (order_no, fingerprint, created_at, status)
+                        VALUES (?, ?, ?, 'SUBMITTING')
+                        """,
+                        (order_no, fingerprint, datetime.now().isoformat(timespec="seconds")),
+                    )
+        except sqlite3.Error as error:
+            raise ReceiptStoreError("실제 접수 시작 기록을 저장하지 못했습니다. 접수를 진행하지 않습니다.") from error
+
+    def complete_submission(self, order_no: str) -> None:
+        """접수 결과를 이력에 저장한 뒤 '접수 중' 기록을 닫는다."""
+        try:
+            with closing(self._connect()) as connection:
+                with connection:
+                    connection.execute(
+                        "UPDATE parcel_submissions SET status = 'RECORDED' WHERE order_no = ?", (order_no,))
+        except sqlite3.Error as error:
+            raise ReceiptStoreError("실제 접수 완료 기록을 저장하지 못했습니다.") from error
+
+    def find_open_submission(self, *, order_no: str | None = None,
+                             fingerprint: str | None = None) -> SubmissionRecord | None:
+        """결과를 확인하지 못한 '접수 중' 기록을 주문번호 또는 같은 송장 행 해시로 찾는다."""
+        if order_no:
+            where, value = "order_no = ?", order_no
+        elif fingerprint:
+            where, value = "fingerprint = ?", fingerprint
+        else:
+            return None
+        try:
+            with closing(self._connect()) as connection:
+                row = connection.execute(
+                    f"""
+                    SELECT order_no, fingerprint, created_at, status FROM parcel_submissions
+                    WHERE {where} AND status = 'SUBMITTING'
+                    ORDER BY created_at DESC LIMIT 1
+                    """,
+                    (value,),
+                ).fetchone()
+        except sqlite3.Error as error:
+            raise ReceiptStoreError("실제 접수 시작 기록을 조회하지 못했습니다.") from error
+        if not row:
+            return None
+        return SubmissionRecord(row["order_no"], row["fingerprint"], row["created_at"], row["status"])
 
     def find_by_order_no(self, order_no: str) -> PrintCandidate | None:
         """같은 주문번호의 실제 접수 이력을 찾아 재접수 전 차단에 사용한다."""
