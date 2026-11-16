@@ -9,6 +9,7 @@ from orders.bulk import (
     consolidate_gmarket_orders,
 )
 from orders.invoice import build_invoice_rows
+from orders.gift_event import GiftEvent
 
 
 coupang_columns = {
@@ -63,6 +64,9 @@ assert st11_consolidated["S2"]["주문번호목록"] == ["S2"]
 assert [(row["주문번호"], row["수취인 주소"]) for row in build_invoice_rows("11st", st11_delivery_orders)] == [
     ("S1", "서울"), ("S2", "부산"), ("S3", "서울"),
 ]
+st11_gift = GiftEvent(True, ("11st",), ((4_000, "에코백"),), ((4_000, "에코백"),))
+st11_gift_rows = build_invoice_rows("11st", st11_delivery_orders, gift_event=st11_gift)
+assert [row["주문번호"] for row in st11_gift_rows if row["상품명"].startswith("[에코백] ")] == ["S1"]
 st11_same_number = build_11st_orders(
     pd.DataFrame([
         ["S9", "이", "상품1", "", 1, 1000, "010", "02", "12345", "서울", ""],
@@ -137,6 +141,9 @@ assert gmarket_consolidated["G1"]["총배송비금액"] == 3000.0
 assert [(row["주문번호"], row["수취인 주소"]) for row in build_invoice_rows("gmarket", gmarket_orders)] == [
     ("G1", "서울"), ("G2", "서울2"), ("G3", "서울"),
 ]
+gmarket_gift = GiftEvent(True, ("gmarket",), ((15_000, "에코백"),), ((15_000, "에코백"),))
+gmarket_gift_rows = build_invoice_rows("gmarket", gmarket_orders, gift_event=gmarket_gift)
+assert [row["주문번호"] for row in gmarket_gift_rows if row["상품명"].startswith("[에코백] ")] == ["G1"]
 gmarket_same_number = build_gmarket_orders(
     pd.DataFrame([
         ["G9", "최", "서울", "02", "010", "상품1", "", 1, "", "12345", 1000, "", 0],

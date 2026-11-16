@@ -26,8 +26,20 @@ class GiftEventTests(unittest.TestCase):
         self.assertEqual(self.event.markdown_suffix("naver", 250_000), "")
         self.assertEqual(self.event.markdown_suffix("coupang", float("nan")), "")
 
+    def test_invoice_uses_only_the_selected_tier_label(self):
+        for amount, expected in (
+            (59_999, ""), (60_000, "[펜/커터] "), (100_000, "[에코백] "),
+            (150_000, "[3종세트] "), (250_000, "[4종세트] "),
+        ):
+            with self.subTest(amount=amount):
+                self.assertEqual(self.event.invoice_prefix("coupang", amount), expected)
+        self.assertEqual(self.event.invoice_prefix("naver", 250_000), "")
+        self.assertEqual(replace(self.event, enabled=False).invoice_prefix("coupang", 250_000), "")
+        one_label = replace(self.event, invoice_labels=((60_000, "펜/커터"),))
+        self.assertEqual(one_label.invoice_prefix("coupang", 100_000), "")
+
     def test_tiers_can_be_reordered_and_gift_text_is_escaped(self):
-        event = replace(self.event, tiers=((100_000, "[에코백]*"), (60_000, "볼펜")))
+        event = replace(self.event, tiers=((100_000, "[에코백]*"), (60_000, "볼펜")), invoice_labels=())
         self.assertEqual(event.markdown_suffix("coupang", 100_000), r" · **🎁 사은품: \[에코백\]\***")
         with self.assertRaises(ValueError):
             replace(event, tiers=((60_000, "볼펜"), (60_000, "에코백")))
@@ -39,7 +51,7 @@ class GiftEventTests(unittest.TestCase):
         worksheet.get_all_values.return_value = [["키", "값"]]
         self.assertEqual(read_gift_event(worksheet), (DEFAULT_GIFT_EVENT, ""))
 
-        edited = replace(self.event, tiers=((90_000, "새 사은품"),))
+        edited = replace(self.event, tiers=((90_000, "새 사은품"),), invoice_labels=((90_000, "선물"),))
         save_gift_event(worksheet, edited, "")
         rows = worksheet.append_rows.call_args.args[0]
         self.assertEqual(rows[0][0], GIFT_EVENT_KEY)
@@ -56,6 +68,15 @@ class GiftEventTests(unittest.TestCase):
         self.assertEqual(change["range"], "B2")
         worksheet.get_all_values.return_value[1][1] = change["values"][0][0]
         self.assertEqual(read_gift_event(worksheet)[0], replace(edited, enabled=False))
+
+    def test_reads_shared_setting_created_by_older_app(self):
+        worksheet = Mock()
+        worksheet.get_all_values.return_value = [
+            ["키", "값"], [GIFT_EVENT_KEY, '{"enabled": true, "stores": ["coupang"], "tiers": [[60000, "볼펜"]]}'],
+        ]
+        event, _ = read_gift_event(worksheet)
+        self.assertIn("볼펜", event.markdown_suffix("coupang", 60_000))
+        self.assertEqual(event.invoice_prefix("coupang", 60_000), "")
 
 
 if __name__ == "__main__":

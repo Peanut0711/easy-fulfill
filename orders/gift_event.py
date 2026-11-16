@@ -1,4 +1,4 @@
-"""공유 사은품 행사 설정과 주문별 마크다운 표기."""
+"""공유 사은품 행사 설정과 주문별 마크다운·송장 표기."""
 
 import json
 import math
@@ -12,6 +12,7 @@ GIFT_EVENT_KEY = "order_gift_event"
 GIFT_EVENT_STORES = {
     "naver": "네이버", "coupang": "쿠팡", "gmarket": "지마켓", "11st": "11번가",
 }
+DEFAULT_INVOICE_LABELS = ((60_000, "펜/커터"), (100_000, "에코백"), (150_000, "3종세트"), (250_000, "4종세트"))
 
 
 @dataclass(frozen=True)
@@ -19,6 +20,7 @@ class GiftEvent:
     enabled: bool
     stores: tuple[str, ...]
     tiers: tuple[tuple[int, str], ...]
+    invoice_labels: tuple[tuple[int, str], ...] = ()
 
     def __post_init__(self):
         if type(self.enabled) is not bool or any(store not in GIFT_EVENT_STORES for store in self.stores):
@@ -34,16 +36,33 @@ class GiftEvent:
             amounts.add(minimum)
         if self.enabled and (not self.stores or not self.tiers):
             raise ValueError("이벤트를 켜려면 적용 스토어와 사은품 구간을 추가해 주세요.")
+        for minimum, label in self.invoice_labels:
+            if minimum not in amounts or not isinstance(label, str) or not label.strip() or label.splitlines() != [label]:
+                raise ValueError("송장 표기를 해당 구간에 한 줄로 입력해 주세요.")
         object.__setattr__(self, "tiers", tuple(sorted(self.tiers)))
+        object.__setattr__(self, "invoice_labels", tuple(sorted(self.invoice_labels)))
 
-    def markdown_suffix(self, store: str, order_amount: float) -> str:
+    def _matching_tier(self, store: str, order_amount: float) -> tuple[int, str] | None:
         if not self.enabled or store not in self.stores or not math.isfinite(order_amount):
-            return ""
+            return None
         for minimum, gift in reversed(self.tiers):
             if order_amount >= minimum:
-                safe_gift = re.sub(r"([\\`*_~\[\]<>!&|])", r"\\\1", gift)
-                return f" · **🎁 사은품: {safe_gift}**"
-        return ""
+                return minimum, gift
+        return None
+
+    def markdown_suffix(self, store: str, order_amount: float) -> str:
+        tier = self._matching_tier(store, order_amount)
+        if tier is None:
+            return ""
+        safe_gift = re.sub(r"([\\`*_~\[\]<>!&|])", r"\\\1", tier[1])
+        return f" · **🎁 사은품: {safe_gift}**"
+
+    def invoice_prefix(self, store: str, order_amount: float) -> str:
+        tier = self._matching_tier(store, order_amount)
+        if tier is None:
+            return ""
+        label = dict(self.invoice_labels).get(tier[0], "")
+        return f"[{label}] " if label else ""
 
 
 DEFAULT_GIFT_EVENT = GiftEvent(False, tuple(GIFT_EVENT_STORES), (
@@ -51,7 +70,7 @@ DEFAULT_GIFT_EVENT = GiftEvent(False, tuple(GIFT_EVENT_STORES), (
     (100_000, "에코백"),
     (150_000, "볼펜 + 박스커터 + 에코백"),
     (250_000, "볼펜 + 박스커터 + 에코백 + USB-C 30W 충전기"),
-))
+), DEFAULT_INVOICE_LABELS)
 
 
 def read_gift_event(worksheet) -> tuple[GiftEvent, str]:
@@ -60,14 +79,20 @@ def read_gift_event(worksheet) -> tuple[GiftEvent, str]:
         return DEFAULT_GIFT_EVENT, raw
     try:
         data = json.loads(raw)
-        event = GiftEvent(data["enabled"], tuple(data["stores"]), tuple(tuple(tier) for tier in data["tiers"]))
-    except (KeyError, TypeError, ValueError) as error:
+        event = GiftEvent(
+            data["enabled"], tuple(data["stores"]), tuple(tuple(tier) for tier in data["tiers"]),
+            tuple((int(minimum), label) for minimum, label in data.get("invoice_labels", {}).items()),
+        )
+    except (AttributeError, KeyError, TypeError, ValueError) as error:
         raise ValueError("공유 시트의 사은품 행사 설정 형식을 확인해 주세요.") from error
     return event, raw
 
 
 def save_gift_event(worksheet, event: GiftEvent, original: str) -> None:
-    raw = json.dumps({"enabled": event.enabled, "stores": event.stores, "tiers": event.tiers}, ensure_ascii=False)
+    raw = json.dumps({
+        "enabled": event.enabled, "stores": event.stores, "tiers": event.tiers,
+        "invoice_labels": dict(event.invoice_labels),
+    }, ensure_ascii=False)
     try:
         write_config_values(worksheet, {GIFT_EVENT_KEY: raw}, expected={GIFT_EVENT_KEY: original})
     except ConfigValueChangedError as error:

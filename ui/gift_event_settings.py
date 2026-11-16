@@ -32,7 +32,7 @@ class GiftEventSettingsDialog(QDialog):
         self._original = None
         self._thread = None
         self.setWindowTitle("구매 금액별 사은품 공유 설정")
-        self.resize(640, 420)
+        self.resize(760, 420)
 
         layout = QVBoxLayout(self)
         self._status = QLabel("공유 스프레드시트에서 설정을 읽는 중입니다…")
@@ -51,10 +51,12 @@ class GiftEventSettingsDialog(QDialog):
         stores.addStretch()
         layout.addLayout(stores)
 
-        self._table = QTableWidget(0, 2)
-        self._table.setHorizontalHeaderLabels(["최소 구매 금액 (원)", "지급 사은품"])
+        self._table = QTableWidget(0, 3)
+        self._table.setHorizontalHeaderLabels(["최소 구매 금액 (원)", "지급 사은품", "송장 표기"])
         self._table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         self._table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self._table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self._table.horizontalHeaderItem(2).setToolTip("대괄호는 자동으로 붙습니다. 비워 두면 송장에 표시하지 않습니다.")
         self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         layout.addWidget(self._table)
@@ -80,11 +82,12 @@ class GiftEventSettingsDialog(QDialog):
         layout.addWidget(buttons)
         self._start_sheet_task(lambda: read_gift_event(self._open_worksheet()))
 
-    def _append_tier(self, minimum="", gift=""):
+    def _append_tier(self, minimum="", gift="", invoice_label=""):
         row = self._table.rowCount()
         self._table.insertRow(row)
         self._table.setItem(row, 0, QTableWidgetItem(minimum))
         self._table.setItem(row, 1, QTableWidgetItem(gift))
+        self._table.setItem(row, 2, QTableWidgetItem(invoice_label))
         return row
 
     def _add_tier(self):
@@ -126,8 +129,9 @@ class GiftEventSettingsDialog(QDialog):
             self._enabled.setChecked(event.enabled)
             for store, checkbox in self._stores.items():
                 checkbox.setChecked(store in event.stores)
+            invoice_labels = dict(event.invoice_labels)
             for minimum, gift in event.tiers:
-                self._append_tier(f"{minimum:,}", gift)
+                self._append_tier(f"{minimum:,}", gift, invoice_labels.get(minimum, ""))
             self._set_editable(True)
             self._status.setText("주문 줄의 원 단위 금액으로 충족한 가장 높은 구간을 적용합니다.")
         else:
@@ -136,13 +140,18 @@ class GiftEventSettingsDialog(QDialog):
     def _save_settings(self):
         try:
             tiers = []
+            invoice_labels = []
             for row in range(self._table.rowCount()):
                 amount = self._table.item(row, 0).text().strip()
                 if not re.fullmatch(r"[0-9]+|[0-9]{1,3}(?:,[0-9]{3})+", amount):
                     raise ValueError(f"{row + 1}번째 구간의 최소 구매 금액을 원 단위 정수로 입력해 주세요.")
-                tiers.append((int(amount.replace(",", "")), self._table.item(row, 1).text().strip()))
+                minimum = int(amount.replace(",", ""))
+                tiers.append((minimum, self._table.item(row, 1).text().strip()))
+                invoice_label = self._table.item(row, 2).text().strip()
+                if invoice_label:
+                    invoice_labels.append((minimum, invoice_label))
             stores = tuple(store for store, checkbox in self._stores.items() if checkbox.isChecked())
-            event = GiftEvent(self._enabled.isChecked(), stores, tuple(tiers))
+            event = GiftEvent(self._enabled.isChecked(), stores, tuple(tiers), tuple(invoice_labels))
         except ValueError as error:
             QMessageBox.warning(self, self.windowTitle(), str(error))
             return

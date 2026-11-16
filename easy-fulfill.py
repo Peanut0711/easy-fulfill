@@ -101,6 +101,7 @@ from orders.bulk import (
     build_naver_orders,
     consolidate_11st_orders,
     consolidate_gmarket_orders,
+    work_order_amount,
 )
 from orders.invoice import INVOICE_COLUMNS, build_invoice_rows
 from orders.gift_event import DEFAULT_GIFT_EVENT, read_gift_event
@@ -6980,7 +6981,7 @@ class MainWindow(QMainWindow):
             
             for pattern, info in self.orders.items():
                 # 주문 총액 가져오기
-                total_amount = info.get('주문총액', 0)
+                total_amount = work_order_amount("naver", info)
                 
                 # 만원 단위로 포맷팅 (0.1만 단위로 올림)
                 # 예: 950 -> 0.1만, 61000 -> 6.1만, 63820 -> 6.4만
@@ -7294,7 +7295,7 @@ class MainWindow(QMainWindow):
             
             for order_number, info in self.orders.items():
                 # 주문번호별 결제액 가져오기
-                total_amount = info.get('결제액', 0)
+                total_amount = work_order_amount("coupang", info)
                 
                 # 만원 단위로 포맷팅 (0.1만 단위로 올림)
                 # 예: 950 -> 0.1만, 61000 -> 6.1만, 63820 -> 6.4만
@@ -7480,9 +7481,7 @@ class MainWindow(QMainWindow):
             for info in consolidated_orders.values():
                 customer_name = info['수령인명']
                 # 총판매금액과 총배송비금액 합산
-                total_sale_amount = info.get('총판매금액', 0)
-                total_shipping_amount = info.get('총배송비금액', 0)
-                total_amount = total_sale_amount + total_shipping_amount
+                total_amount = work_order_amount("gmarket", info)
                 
                 # 만원 단위로 포맷팅 (100원 단위 아래는 내림, 소수점 첫째 자리에서도 내림)
                 # 예: 61000 -> 6.1만, 63820 -> 6.3만
@@ -7628,7 +7627,7 @@ class MainWindow(QMainWindow):
             for info in consolidated_orders.values():
                 customer_name = info['수취인명']
                 # 주문금액 합산 (만원 단위 표기, 지마켓과 동일한 내림 규칙)
-                total_amount = info.get('총주문금액', 0)
+                total_amount = work_order_amount("11st", info)
                 amount_in_100 = total_amount // 100  # 100원 단위로 내림
                 amount_in_manwon = amount_in_100 / 100  # 만원 단위로 변환
                 amount_rounded = math.floor(amount_in_manwon * 10) / 10
@@ -7748,7 +7747,7 @@ class MainWindow(QMainWindow):
             print(f"출력 파일: {output_file}")
             
             # 스토어별 orders -> 송장 행 변환은 화면과 독립된 orders.invoice에 둔다.
-            invoice_data = build_invoice_rows(self.store_type, self.orders)
+            invoice_data = build_invoice_rows(self.store_type, self.orders, gift_event=self._order_gift_event)
             # 데이터프레임 생성
             df_invoice = pd.DataFrame(invoice_data, columns=INVOICE_COLUMNS)
             

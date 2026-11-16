@@ -39,6 +39,14 @@ def _quantity(value) -> int:
         return 1
 
 
+def work_order_amount(store_type: str, info: Mapping[str, object]) -> float:
+    """마크다운의 작업 건에 쓰는 원 단위 금액. 지마켓·11번가는 통합된 행을 받는다."""
+    if store_type == "gmarket":
+        return info.get("총판매금액", 0) + info.get("총배송비금액", 0)
+    field = {"naver": "주문총액", "coupang": "결제액", "11st": "총주문금액"}[store_type]
+    return info.get(field, 0)
+
+
 def _shipping_identity(name, address, zipcode, phone, order_number: str) -> tuple[str, ...]:
     """수취 정보가 같은 주문만 묶고, 주소가 없으면 주문별로 분리한다."""
     fields = tuple(" ".join(_text(value).split()) for value in (name, address, zipcode, phone))
