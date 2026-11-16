@@ -8903,9 +8903,9 @@ class MainWindow(QMainWindow):
                 self.invoice_file_path = file_path
                 self._set_status_label(self.ui.label_invoice, filename, ok=True)
                 
-                # 엑셀 파일 읽기
-                df = pd.read_excel(file_path, header=6)  # 7번째 행을 헤더로 사용
-                
+                # 엑셀 파일 읽기(7번째 행을 헤더로 사용). 발송 파일 생성에서 재사용하도록 보관한다.
+                df = self._read_invoice_excel(file_path)
+
                 # 필요한 열 찾기
                 required_columns = {
                     '등기번호': None,
@@ -8989,28 +8989,66 @@ class MainWindow(QMainWindow):
                     "올바르지 않은 파일 형식입니다."
                 )
                 
+    @staticmethod
+    def _invoice_excel_from_bytes(data):
+        """우체국 송장 엑셀(7번째 행 헤더) 내용을 DataFrame으로 읽는다."""
+        return pd.read_excel(BytesIO(data), header=6)
+
+    def _read_invoice_excel(self, file_path):
+        """송장 엑셀을 읽고, 같은 내용으로 발송 파일을 만들 때 재사용하도록 보관한다."""
+        data = Path(file_path).read_bytes()
+        df = self._invoice_excel_from_bytes(data)
+        self._invoice_excel_cache = {
+            "path": os.path.normcase(os.path.abspath(file_path)),
+            "digest": hashlib.sha256(data).digest(),
+            "df": df.copy(),
+        }
+        return df
+
+    def _cached_invoice_excel(self, file_path):
+        """미리보기에서 읽은 송장 데이터가 현재 파일 내용과 같으면 복사본을, 아니면 None을 반환한다.
+
+        같은 경로라도 파일이 교체·수정되었으면 내용 해시가 달라 다시 읽도록 한다.
+        """
+        cache = getattr(self, "_invoice_excel_cache", None)
+        if not cache or not file_path:
+            return None
+        if cache["path"] != os.path.normcase(os.path.abspath(file_path)):
+            return None
+        try:
+            digest = hashlib.sha256(Path(file_path).read_bytes()).digest()
+        except OSError:
+            return None
+        if digest != cache["digest"]:
+            return None
+        return cache["df"].copy()
+
     def generate_invoice_file(self):
         """일괄 발송 파일 생성 메인 메소드"""
         if not self.is_order_file_valid or not self.is_invoice_file_valid:
             QMessageBox.warning(self, "경고", "먼저 유효한 주문서와 송장 파일을 선택해주세요.")
             return
-            
+
         try:
             # 임시 디렉토리 생성
             temp_dir = Path("temp")
             temp_dir.mkdir(exist_ok=True)
-            
+
             # 파일 복사
             temp_order_file = temp_dir / "temp_order.xlsx"
             temp_invoice_file = temp_dir / "temp_invoice.xlsx"
             shutil.copy2(self.selected_file_path, temp_order_file)
             shutil.copy2(self.invoice_file_path, temp_invoice_file)
-            
+            # 미리보기에서 읽은 송장 데이터가 원본과 같으면 엑셀을 다시 읽지 않는다.
+            invoice_df = self._cached_invoice_excel(self.invoice_file_path)
+            if invoice_df is not None:
+                print("✓ 미리보기에서 읽은 송장 데이터를 재사용합니다.")
+
             # 스토어 타입에 따른 처리 분기
             if self.store_type == "naver":
-                self._process_naver_invoice(temp_order_file, temp_invoice_file)
+                self._process_naver_invoice(temp_order_file, temp_invoice_file, invoice_df)
             elif self.store_type == "coupang":
-                self._process_coupang_invoice(temp_order_file, temp_invoice_file)
+                self._process_coupang_invoice(temp_order_file, temp_invoice_file, invoice_df)
             # 생성 결과를 송장 상태줄에 통합 표기(전용 라인 제거됨)
             _inv = os.path.basename(self.invoice_file_path) if self.invoice_file_path else "송장"
             self._set_status_label(
@@ -9032,7 +9070,7 @@ class MainWindow(QMainWindow):
                 f"일괄 발송 파일 생성 중 오류가 발생했습니다.\n\n{error_msg}"
             )
             
-    def _process_naver_invoice(self, temp_order_file, temp_invoice_file):
+    def _process_naver_invoice(self, temp_order_file, temp_invoice_file, invoice_df=None):
         """네이버 스토어 일괄 발송 파일 처리"""
         print("\n[네이버 스토어 일괄 발송 파일 처리 시작]")
         
@@ -9117,8 +9155,9 @@ class MainWindow(QMainWindow):
                 if not delivery_request_col:
                     print("  - 배송방법(구매자 요청) 컬럼 없음")
             
-            # 4. 송장 파일 읽기
-            invoice_df = pd.read_excel(temp_invoice_file, header=6)
+            # 4. 송장 파일 읽기(미리보기에서 읽은 데이터가 있으면 재사용)
+            if invoice_df is None:
+                invoice_df = pd.read_excel(temp_invoice_file, header=6)
             
             # 5. 열 매핑 설정
             column_mapping = {
@@ -9257,7 +9296,7 @@ class MainWindow(QMainWindow):
             print(f"❌ 일괄 발송 파일 처리 중 오류 발생: {error_msg}")
             raise Exception(f"일괄 발송 파일 처리 중 오류가 발생했습니다: {error_msg}")
 
-    def _process_coupang_invoice(self, temp_order_file, temp_invoice_file):
+    def _process_coupang_invoice(self, temp_order_file, temp_invoice_file, invoice_df=None):
         """쿠팡 스토어 일괄 발송 파일 처리"""
         print("\n[쿠팡 스토어 일괄 발송 파일 처리 시작]")
         
@@ -9311,7 +9350,8 @@ class MainWindow(QMainWindow):
             
             # 2. 우체국 송장 파일 읽기
             print("\n[우체국 송장 파일 읽기]")
-            invoice_df = pd.read_excel(temp_invoice_file, header=6)
+            if invoice_df is None:
+                invoice_df = pd.read_excel(temp_invoice_file, header=6)
             
             # 데이터프레임 정보 출력
             print("\n[송장서 데이터프레임 정보]")
