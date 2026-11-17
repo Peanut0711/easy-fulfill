@@ -62,6 +62,7 @@ class NaverApiDispatchTests(unittest.TestCase):
         host._naver_dispatch_api_rows = [dict(row) for row in API_ROWS]
         host.ui = SimpleNamespace(label_invoice=None)
         host._set_status_label = lambda *a, **k: None
+        host._refresh_order_ship_panels = lambda: None
         host.saved = []
         host.tracking = []
         host._save_invoice_file = lambda frame: host.saved.append(frame.copy())

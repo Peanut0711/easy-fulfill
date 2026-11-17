@@ -114,6 +114,9 @@ from orders.gift_event import DEFAULT_GIFT_EVENT, gift_event_from_config_rows, r
 from orders.index_sync import conflict_message as order_index_conflict_message, merge_order_indices
 from orders.matching import CoupangOrderIndex, NaverOrderIndex, normalize_coupang_text
 from ui.gift_event_settings import GiftEventSettingsDialog
+from ui.order_ship_panel import (
+    STAGE_INTAKE, STAGE_INVOICE, STAGE_ORDER, STAGE_RECEIPT, apply_primary, next_stage,
+)
 from ui.order_preview import (
     CODE_MISSING_BACKGROUND, NON_PARCEL_BACKGROUND, PreviewOrder, PreviewProduct,
     setup_preview_view, show_preview, summary_counts,
@@ -3261,6 +3264,9 @@ class MainWindow(QMainWindow):
         # 주문 미리보기: 클립보드용 마크다운(스토어별 처리 함수가 만든 그대로)과 표에 쓰는 행
         self._order_markdown_text = ""
         self._order_preview_rows = []
+        # 주문·발송 진행 단계(다음 동작 버튼 강조): 우체국 접수 엑셀을 만들었는지, 일괄발송 파일까지 만들었는지
+        self._intake_excel_done = False
+        self._ship_batch_done = False
 
         self._tracking_controller = TrackingController(self)
         self._tracking_controller.initialize_runtime()
@@ -5500,6 +5506,51 @@ class MainWindow(QMainWindow):
             legend.setText("&nbsp;&nbsp;&nbsp;".join(parts))
             legend.setVisible(bool(parts))
 
+    def _setup_order_ship_buttons(self):
+        """주문·발송 탭 패널별 버튼 줄: 아이콘·툴팁을 메뉴 동작과 맞추고 연결한다."""
+        specs = (
+            ("pushButton_load_order", self.act_load, "주문 엑셀 불러오기 (Ctrl+O)", None),
+            ("pushButton_copy_order", self.act_copy, "주문 정보를 마크다운으로 복사 (Ctrl+C)", self.act_copy.trigger),
+            ("pushButton_intake_excel", self.act_export,
+             "우체국 접수용 하이제니스 폼 엑셀 만들기 — 메뉴 「송장 출력」과 같음 (Ctrl+E)", self.act_export.trigger),
+            ("pushButton_clear_order", self.act_clear, "주문·송장 정보 초기화 (Ctrl+R)", self.act_clear.trigger),
+            ("pushButton_load_invoice", self.act_load_invoice,
+             "우체국 송장 엑셀 불러오기 — 일괄발송 파일을 자동으로 만듭니다", None),
+            ("pushButton_courier_receipt", self.act_courier_export,
+             "오늘 등록된 송장으로 택배사 접수목록 엑셀 내보내기", self.act_courier_export.trigger),
+        )
+        for name, action, tip, handler in specs:
+            button = getattr(self.ui, name, None)
+            if button is None:
+                continue
+            button.setIcon(action.icon())
+            button.setIconSize(QSize(16, 16))
+            button.setToolTip(tip)
+            if handler is not None:
+                button.clicked.connect(lambda _checked=False, h=handler: h())
+
+    def _refresh_order_ship_panels(self):
+        """주문·발송 탭: 다음에 할 동작 하나만 강조하고, 쓸 수 없는 버튼은 끈다."""
+        if not hasattr(self, "ui"):
+            return
+        has_orders = bool(self.orders) and bool(self.is_order_file_valid)
+        stage = next_stage(
+            has_orders=has_orders,
+            intake_done=self._intake_excel_done,
+            batch_done=self._ship_batch_done,
+        )
+        self._order_ship_stage = stage
+        apply_primary({
+            STAGE_ORDER: getattr(self.ui, "pushButton_load_order", None),
+            STAGE_INTAKE: getattr(self.ui, "pushButton_intake_excel", None),
+            STAGE_INVOICE: getattr(self.ui, "pushButton_load_invoice", None),
+            STAGE_RECEIPT: getattr(self.ui, "pushButton_courier_receipt", None),
+        }, stage)
+        if hasattr(self.ui, "pushButton_copy_order"):
+            self.ui.pushButton_copy_order.setEnabled(bool(self._order_markdown_text))
+        if hasattr(self.ui, "pushButton_intake_excel"):
+            self.ui.pushButton_intake_excel.setEnabled(bool(self.orders))
+
     def copy_to_clipboard(self):
         """불러온 주문의 마크다운(불러올 때 자동 복사한 것과 같은 글)을 클립보드에 복사합니다."""
         try:
@@ -5624,9 +5675,10 @@ class MainWindow(QMainWindow):
         
     def setup_connections(self):
         """버튼과 메뉴 동작을 연결합니다."""        
-        # 주문·발송 탭 버튼 연결
+        # 주문·발송 탭 버튼 연결(패널별 버튼 줄). 메뉴와 같은 동작을 부르고, 메뉴·단축키는 그대로 둔다.
         self.ui.pushButton_load_order.clicked.connect(self.select_excel_file)
         self.ui.pushButton_load_invoice.clicked.connect(self.load_invoice_file)
+        self._setup_order_ship_buttons()
         # 「생성」 버튼/체크박스 제거: 송장 로드 성공 시 자동 생성(상시).
 
         # 환경설정 탭 버튼 연결
@@ -5692,6 +5744,7 @@ class MainWindow(QMainWindow):
         self._reset_idle_logo()
         self._set_status_label(self.ui.filePathLabel, "주문 정보가 없습니다.")
         self._set_status_label(self.ui.label_invoice, "송장 정보가 없습니다.")
+        self._refresh_order_ship_panels()
         if hasattr(self.ui, "tableWidget_tracking"):
             # 마우스 올릴 때 생기는 파란 호버 하이라이트 제거(위험행 색칠·선택은 유지).
             # 프록시 스타일은 파이썬 참조가 사라지면 GC 되므로 self 에 보관한다.
@@ -7360,6 +7413,7 @@ class MainWindow(QMainWindow):
             self._record_loaded_order(path)
         if not ok:
             self.orders = {}  # 실패한 파일로 이전 주문을 내보내지 않도록 비운다.
+        self._refresh_order_ship_panels()
 
     def _continue_order_file_processing_after_index(self):
         """백그라운드 인덱스 동기화 완료 후 로고 표시 + 파일 처리로 이어갑니다."""
@@ -7367,6 +7421,9 @@ class MainWindow(QMainWindow):
         # 새 주문을 처리하기 전에 이전 주문을 비운다(실패해도 이전 주문이 남지 않게).
         self.orders = {}
         self.is_order_file_valid = False
+        # 새 묶음이 시작되므로 우체국 접수 엑셀·발송 파일 진행 표시도 처음으로 돌린다.
+        self._intake_excel_done = False
+        self._ship_batch_done = False
         try:
             # 스토어 이름을 텍스트로 표시(이미지 대신)
             self._set_store_label(self.store_type)
@@ -8417,6 +8474,11 @@ class MainWindow(QMainWindow):
         self._set_status_label(self.ui.label_invoice, "송장 정보가 없습니다.")
         self.ui.plainTextEdit_invoice.setPlainText("")
         
+        # 진행 단계도 처음(주문 불러오기)으로
+        self._intake_excel_done = False
+        self._ship_batch_done = False
+        self._refresh_order_ship_panels()
+
         # 상태바 메시지 업데이트
         self.statusBar().showMessage("모든 정보가 초기화되었습니다.")
 
@@ -8515,6 +8577,11 @@ class MainWindow(QMainWindow):
                 worksheet.set_default_row(20)
 
             print(f"✓ 송장 엑셀 파일이 생성되었습니다.")
+            self._intake_excel_done = True
+            try:
+                self._refresh_order_ship_panels()  # 화면 갱신 문제로 생성 성공이 오류로 바뀌지 않게
+            except Exception as refresh_error:
+                print(f"! 주문·발송 진행 표시 갱신 실패: {refresh_error}")
             print(f"  - 파일 위치: {output_file}")
             print(f"  - 행 수: {len(df_invoice)}")
 
@@ -9799,6 +9866,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "경고", "먼저 유효한 주문서와 송장 파일을 선택해주세요.")
             return
 
+        generated = False
         try:
             # 임시 디렉토리 생성
             temp_dir = Path("temp")
@@ -9831,6 +9899,7 @@ class MainWindow(QMainWindow):
             _inv = os.path.basename(self.invoice_file_path) if self.invoice_file_path else "송장"
             self._set_status_label(
                 self.ui.label_invoice, f"{_inv} · 발송 생성 완료 ✓", ok=True)
+            generated = True
 
         except Exception as e:
             error_msg = str(e)
@@ -9851,6 +9920,10 @@ class MainWindow(QMainWindow):
                 temp_dir.rmdir()  # 다른 파일이 남아 있으면 폴더는 그대로 둔다.
             except OSError:
                 pass
+        if generated:
+            # 진행 표시는 생성이 끝난 뒤에 바꾼다(화면 갱신 문제로 생성 성공이 실패로 바뀌지 않게).
+            self._ship_batch_done = True
+            self._refresh_order_ship_panels()
             
     @staticmethod
     def _naver_api_rows_to_order_frame(rows):

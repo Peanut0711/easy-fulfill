@@ -173,6 +173,50 @@ def run_scenario(name):
                 "mapping": {"501": "C-UNOR4", "502": "C-BB830"}, "coupang_vp": {"501": "9001"},
             }
             load(path)
+        elif name == "flow":
+            # 주문 불러오기 → 우체국 접수 엑셀 → 송장 불러오기(발송 파일) → 접수목록, 버튼 강조와 버튼 동작
+            def stage_snapshot():
+                window.ui.tabWidget.setCurrentIndex(0)
+                app.processEvents()
+                names = ("pushButton_load_order", "pushButton_copy_order", "pushButton_intake_excel",
+                         "pushButton_clear_order", "pushButton_load_invoice", "pushButton_courier_receipt")
+                return {
+                    "stage": window._order_ship_stage,
+                    "primary": [n for n in names if getattr(window.ui, n).property("primaryAction")],
+                    "enabled": {n: getattr(window.ui, n).isEnabled() for n in names},
+                }
+            flow = {"start": stage_snapshot()}
+            path = work / "DeliveryList(2026-11-17)_(0).xlsx"
+            _coupang_frame(pd).to_excel(path, index=False)
+            window._prefetched_order_mapping = {
+                "store_type": "coupang", "ok": True,
+                "mapping": {"501": "C-UNOR4", "502": "C-BB830"}, "coupang_vp": {"501": "9001"},
+            }
+            load(path)
+            flow["loaded"] = stage_snapshot()
+            clipboard.setText("")
+            window.ui.pushButton_copy_order.click()
+            flow["copy_button"] = clipboard.text() == EXPECTED_MARKDOWN["coupang"]
+            with patch.object(QMessageBox, "exec", lambda self: 0):
+                window.ui.pushButton_intake_excel.click()
+            flow["intake_files"] = sorted(p.name.split("_")[0] for p in (work / "output").glob("*.xlsx"))
+            flow["intake"] = stage_snapshot()
+            invoice = work / "1744778498617.xlsx"
+            invoice.write_bytes(b"invoice")
+            window.invoice_file_path = str(invoice)
+            window.is_invoice_file_valid = True
+            with patch.object(app_module.MainWindow, "_process_coupang_invoice",
+                              lambda self, *a, **k: self.clear_list()):
+                window.generate_invoice_file()
+            flow["shipped"] = stage_snapshot()
+            calls = []
+            window._tracking_controller.export_courier_receipt = lambda: calls.append("receipt")
+            window.ui.pushButton_courier_receipt.click()
+            flow["receipt_clicked"] = calls
+            window.ui.pushButton_clear_order.click()
+            flow["cleared"] = stage_snapshot()
+            result["flow"] = flow
+            result["loaded"] = True
         elif name == "gmarket":
             path = work / "발송관리.xlsx"
             _gmarket_frame(pd).to_excel(path, index=False)
@@ -184,6 +228,9 @@ def run_scenario(name):
             with patch.object(app_module, "run_in_background", lambda func, *a, **k: frame.copy()):
                 load(path)
 
+        if name == "flow":
+            print("RESULT " + json.dumps(result, ensure_ascii=False), flush=True)
+            os._exit(0)
         result["auto_copied"] = clipboard.text()
         result["tree"] = _tree_snapshot(window)
         # 메뉴 복사(Ctrl+C 액션)
@@ -273,6 +320,32 @@ class OrderPreviewModelTests(unittest.TestCase):
         self.assertEqual(event.gift_name("naver", 59999), "")
         self.assertEqual(event.gift_name("coupang", 200000), "")
         self.assertIn("볼펜 또는 박스커터", event.markdown_suffix("naver", 61000))
+
+
+class OrderShipStageTests(unittest.TestCase):
+    def test_next_stage(self):
+        sys.path.insert(0, str(ROOT))
+        from ui.order_ship_panel import next_stage
+        self.assertEqual(next_stage(has_orders=False, intake_done=False, batch_done=False), "order")
+        self.assertEqual(next_stage(has_orders=True, intake_done=False, batch_done=False), "intake")
+        self.assertEqual(next_stage(has_orders=True, intake_done=True, batch_done=False), "invoice")
+        # 발송 파일을 만들면 주문 패널은 비워지지만 다음 동작은 접수목록
+        self.assertEqual(next_stage(has_orders=False, intake_done=False, batch_done=True), "receipt")
+
+    def test_buttons_follow_work_order(self):
+        flow = scenario("flow")["flow"]
+        self.assertEqual(flow["start"]["primary"], ["pushButton_load_order"])
+        self.assertFalse(flow["start"]["enabled"]["pushButton_copy_order"])
+        self.assertFalse(flow["start"]["enabled"]["pushButton_intake_excel"])
+        self.assertEqual(flow["loaded"]["primary"], ["pushButton_intake_excel"])
+        self.assertTrue(flow["loaded"]["enabled"]["pushButton_copy_order"])
+        self.assertTrue(flow["copy_button"])
+        self.assertEqual(flow["intake_files"], ["하이제니스 폼"])
+        self.assertEqual(flow["intake"]["primary"], ["pushButton_load_invoice"])
+        self.assertEqual(flow["shipped"]["primary"], ["pushButton_courier_receipt"])
+        self.assertEqual(flow["receipt_clicked"], ["receipt"])
+        self.assertEqual(flow["cleared"]["primary"], ["pushButton_load_order"])
+        self.assertFalse(flow["cleared"]["enabled"]["pushButton_copy_order"])
 
 
 class OrderLoadAndCopyTests(unittest.TestCase):

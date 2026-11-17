@@ -58,6 +58,7 @@ class TempFileCleanupTests(unittest.TestCase):
         host = Host()
         host.ui = SimpleNamespace(label_invoice=None)
         host._set_status_label = lambda *a, **k: None
+        host._refresh_order_ship_panels = lambda: None
         host.saved = []
         host._save_invoice_file = lambda frame: host.saved.append(frame.copy())
         host._enqueue_tracking_registration = lambda records: None

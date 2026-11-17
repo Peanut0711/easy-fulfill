@@ -24,7 +24,7 @@ import threading
 import time
 from datetime import datetime
 
-APP_VERSION = "2026.11.17.6"
+APP_VERSION = "2026.11.17.7"
 MIN_COMPATIBLE_VERSION = "2026.11.17.1"
 
 SPREADSHEET_ID = "1F0l6FMjXvKXAR9WyDvxEWcRvji-TaJbBim_G12TJ2Pw"
