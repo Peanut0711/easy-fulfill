@@ -72,6 +72,7 @@ class WriteGuardTests(unittest.TestCase):
         self.gate = gate()
         self.gate.reset_state()
         self.addCleanup(self.gate.reset_state)
+        self.enterContext(patch.object(self.gate, "APP_VERSION", "0.0.1"))
         self.min_text = [""]
         patcher = patch.object(self.gate, "_read_min_version_text", lambda gc: self.min_text[0])
         patcher.start()
@@ -159,6 +160,7 @@ class StartupCheckTests(unittest.TestCase):
         self.gate = gate()
         self.gate.reset_state()
         self.addCleanup(self.gate.reset_state)
+        self.enterContext(patch.object(self.gate, "APP_VERSION", "0.0.1"))
 
     def run_check(self, config, pcs, when):
         with patch.object(self.gate, "_open_config_ws", lambda gc: config), \
@@ -240,7 +242,7 @@ class StartupCheckTests(unittest.TestCase):
 
     def test_own_older_row_is_not_reported_as_newer(self):
         pcs = FakePcSheet(self.gate.PC_VERSION_HEADERS)
-        pcs.rows.append(["직원@PC1", "2999.1.1.1", ""])  # 이 PC의 예전 기록(다른 폴더에서 실행 등)
+        pcs.rows.append(["직원@PC1", "0.0.2", ""])  # 이 PC의 예전 기록(다른 폴더에서 실행 등)
         result = self.run_check(FakeConfigSheet({}), pcs, datetime(2026, 11, 21))
         self.assertEqual(result["latest"], "")
 
@@ -328,13 +330,11 @@ class StartupNoticeTests(unittest.TestCase):
     def test_blocked_warning_shows_once_even_when_ignoring(self):
         window = self.window({"ignore_version_update_notice": True})
         shown = []
+        window._show_required_update_notice = shown.append
         blocked = {"ok": True, "blocked": True, "minimum": "0.0.2", "version": "0.0.1"}
-        with patch.object(self.app.QMessageBox, "warning", lambda parent, title, text: shown.append((title, text))):
-            window._on_app_version_checked(blocked)
-            window._on_app_version_checked(blocked)
-        self.assertEqual(len(shown), 1)
-        self.assertEqual(shown[0][0], "프로그램 업데이트 필요")
-        self.assertIn("0.0.2", shown[0][1])
+        window._on_app_version_checked(blocked)
+        window._on_app_version_checked(blocked)
+        self.assertEqual(shown, ["0.0.2"])
 
     def test_settings_tab_has_ignore_checkbox_off_by_default(self):
         import xml.etree.ElementTree as ET

@@ -24,19 +24,19 @@ import threading
 import time
 from datetime import datetime
 
-APP_VERSION = "0.0.1"
+APP_VERSION = "0.0.2"
 MIN_COMPATIBLE_VERSION = "2026.11.17.1"
 # 기존 앱도 min_app_version의 숫자 비교만으로 향후 호환성 변경을 감지할 수 있게 한다.
 _VERSION_RESET_PREFIX = (2026, 11, 18, 1)
 
 SOURCETREE_UPDATE_STEPS = (
-    "1. 작업을 마친 뒤 Easy Fulfill을 닫고, 창이 닫힐 때까지 기다리세요.\n"
-    "2. 소스트리(SourceTree)에서 easy-fulfill 저장소를 열고 왼쪽 브랜치에서 main을 선택하세요.\n"
-    "3. 상단의 페치(Fetch)를 누르고 원격 저장소 origin을 선택해 완료를 기다리세요.\n"
-    "4. 상단의 풀(Pull)을 누르고 원격 origin과 브랜치 main을 선택한 뒤 확인을 누르세요.\n"
-    "5. 같은 저장소 폴더의 run.bat을 실행하고 타이틀바의 버전을 확인하세요.\n\n"
-    "로컬 변경이나 충돌로 멈추면 오류 화면을 개발 담당자에게 보내 주세요."
+    ("프로그램 종료", "작업을 마치고 Easy Fulfill을 닫은 뒤 창이 사라질 때까지 기다리세요."),
+    ("소스트리(SourceTree)", "easy-fulfill 저장소를 열고 왼쪽 브랜치에서 main을 선택하세요."),
+    ("페치(Fetch)", "상단에서 클릭하고 원격 origin을 선택한 뒤 완료를 기다리세요."),
+    ("풀(Pull)", "상단에서 클릭하고 원격 origin과 브랜치 main을 선택한 뒤 확인을 누르세요."),
+    ("run.bat 실행", "같은 저장소 폴더에서 실행하고 타이틀바의 버전을 확인하세요."),
 )
+SOURCETREE_UPDATE_ERROR = "로컬 변경이나 충돌로 멈추면 오류 화면을 개발 담당자에게 보내 주세요."
 
 SPREADSHEET_ID = "1F0l6FMjXvKXAR9WyDvxEWcRvji-TaJbBim_G12TJ2Pw"
 CONFIG_SHEET_TITLE = "설정"
@@ -85,10 +85,14 @@ def is_outdated(minimum: str) -> bool:
 
 
 def blocked_message(minimum: str) -> str:
+    steps = "\n".join(
+        f"{number}. {action} — {detail}"
+        for number, (action, detail) in enumerate(SOURCETREE_UPDATE_STEPS, start=1)
+    )
     return (
         f"이 PC의 버전 {APP_VERSION}은 공유 시트가 요구하는 최소 버전 {_minimum_display(minimum)}보다 낮습니다.\n"
         "Google 시트는 읽을 수 있습니다. 공유 데이터를 보호하기 위해 시트 쓰기는 업데이트 후 다시 시작됩니다.\n\n"
-        f"{SOURCETREE_UPDATE_STEPS}"
+        f"{steps}\n\n{SOURCETREE_UPDATE_ERROR}"
     )
 
 

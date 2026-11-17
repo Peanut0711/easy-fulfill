@@ -90,7 +90,7 @@ from tracking.repository import (
 )
 from tracking.controller import TrackingController
 from tracking.workers import TrackingConfigWriteThread, run_tracking_list_worker
-from sheets.version_gate import APP_VERSION, SOURCETREE_UPDATE_STEPS
+from sheets.version_gate import APP_VERSION, SOURCETREE_UPDATE_ERROR, SOURCETREE_UPDATE_STEPS
 from orders.quick import (
     detect_quick_store,
     extract_zip_code,
@@ -4545,8 +4545,7 @@ class MainWindow(QMainWindow):
             # 시트 쓰기가 멈춘 상태라 「새 버전 안내 무시」와 관계없이 실행마다 한 번 알린다.
             if not getattr(self, "_version_blocked_notice_shown", False):
                 self._version_blocked_notice_shown = True
-                from sheets.version_gate import blocked_message
-                QMessageBox.warning(self, "프로그램 업데이트 필요", blocked_message(result.get("minimum", "")))
+                self._show_required_update_notice(result.get("minimum", ""))
             return
         print(f"앱 버전 {result.get('version')} (공유 최소 버전 {result.get('minimum') or '없음'})")
         if result.get("latest"):
@@ -4584,16 +4583,36 @@ class MainWindow(QMainWindow):
         if self._ask_update_notice(latest) == "snooze":
             self.set_app_setting(SETTING_UPDATE_NOTICE_SNOOZED_DAY, today)
 
+    def _version_update_dialog(self, title, icon, heading, status, footer=""):
+        box = QMessageBox(self)
+        box.setIcon(icon)
+        box.setWindowTitle(title)
+        box.setTextFormat(Qt.TextFormat.RichText)
+        box.setText(f'<font size="+1"><b>{heading}</b></font>')
+        steps = "<br>".join(
+            f"{number}. <b>{html.escape(action)}</b> — {html.escape(detail)}"
+            for number, (action, detail) in enumerate(SOURCETREE_UPDATE_STEPS, start=1)
+        )
+        box.setInformativeText(f"<p>{status}</p><p>{steps}</p><p>{SOURCETREE_UPDATE_ERROR}</p>{footer}")
+        return box
+
+    def _show_required_update_notice(self, minimum):
+        box = self._version_update_dialog(
+            "프로그램 업데이트 필요", QMessageBox.Warning,
+            f"시트 쓰기 중지<br>현재 {APP_VERSION} → 최소 버전 {html.escape(minimum)}",
+            "Google 시트 읽기는 가능합니다. <b>업데이트한 뒤 시트에 쓸 수 있습니다.</b>",
+        )
+        box.setStandardButtons(QMessageBox.StandardButton.Ok)
+        box.exec()
+
     def _ask_update_notice(self, latest):
         """새 버전 안내 창. 반환: 'snooze'(오늘 더 이상 묻지 않음) 또는 'close'."""
-        box = QMessageBox(self)
-        box.setIcon(QMessageBox.Information)
-        box.setWindowTitle("새 버전 안내")
-        box.setText(f"다른 PC에서 새 버전({latest})을 쓰고 있습니다. 이 PC는 {APP_VERSION}입니다.")
-        box.setInformativeText(
-            "업데이트 전에도 계속 사용할 수 있습니다.\n\n"
-            f"{SOURCETREE_UPDATE_STEPS}\n\n"
-            "「환경설정」→「프로그램 버전」에서 이 안내를 끌 수 있습니다.")
+        box = self._version_update_dialog(
+            "새 버전 안내", QMessageBox.Information,
+            f"현재 {APP_VERSION} → 새 버전 {html.escape(latest)}",
+            "다른 PC에서 새 버전을 쓰고 있습니다. <b>업데이트 전에도 계속 사용할 수 있습니다.</b>",
+            "<p>「환경설정」→「프로그램 버전」에서 이 안내를 끌 수 있습니다.</p>",
+        )
         snooze = box.addButton("오늘 더 이상 묻지 않음", QMessageBox.ActionRole)
         close = box.addButton("닫기", QMessageBox.RejectRole)
         box.setDefaultButton(close)
