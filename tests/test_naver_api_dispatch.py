@@ -63,6 +63,7 @@ class NaverApiDispatchTests(unittest.TestCase):
         host.ui = SimpleNamespace(label_invoice=None)
         host._set_status_label = lambda *a, **k: None
         host._refresh_order_ship_panels = lambda: None
+        host._mark_ship_batch_done = lambda *a: None
         host.saved = []
         host.tracking = []
         host._save_invoice_file = lambda frame: host.saved.append(frame.copy())

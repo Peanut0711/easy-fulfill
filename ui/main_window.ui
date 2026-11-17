@@ -92,14 +92,37 @@
              <number>0</number>
             </property>
             <item>
-             <widget class="QLabel" name="label_step_order">
-              <property name="styleSheet">
-               <string>font-weight: 600; color: #1a73e8; padding: 2px 0;</string>
+             <layout class="QHBoxLayout" name="horizontalLayout_order_title">
+              <property name="spacing">
+               <number>10</number>
               </property>
-              <property name="text">
-               <string>① 주문 불러오기</string>
-              </property>
-             </widget>
+              <item>
+               <widget class="QLabel" name="label_step_order">
+                <property name="styleSheet">
+                 <string>font-weight: 600; color: #1a73e8; padding: 2px 0;</string>
+                </property>
+                <property name="text">
+                 <string>① 주문 불러오기</string>
+                </property>
+               </widget>
+              </item>
+              <item>
+               <widget class="QLabel" name="label_order_summary">
+                <property name="sizePolicy">
+                 <sizepolicy hsizetype="Ignored" vsizetype="Preferred">
+                  <horstretch>1</horstretch>
+                  <verstretch>0</verstretch>
+                 </sizepolicy>
+                </property>
+                <property name="textFormat">
+                 <enum>Qt::TextFormat::RichText</enum>
+                </property>
+                <property name="text">
+                 <string/>
+                </property>
+               </widget>
+              </item>
+             </layout>
             </item>
             <item>
              <layout class="QHBoxLayout" name="horizontalLayout_order_header">
@@ -354,14 +377,37 @@
              <number>0</number>
             </property>
             <item>
-             <widget class="QLabel" name="label_step_ship">
-              <property name="styleSheet">
-               <string>font-weight: 600; color: #1a73e8; padding: 2px 0;</string>
+             <layout class="QHBoxLayout" name="horizontalLayout_ship_title">
+              <property name="spacing">
+               <number>10</number>
               </property>
-              <property name="text">
-               <string>② 송장·발송 생성</string>
-              </property>
-             </widget>
+              <item>
+               <widget class="QLabel" name="label_step_ship">
+                <property name="styleSheet">
+                 <string>font-weight: 600; color: #1a73e8; padding: 2px 0;</string>
+                </property>
+                <property name="text">
+                 <string>② 송장·발송 생성</string>
+                </property>
+               </widget>
+              </item>
+              <item>
+               <widget class="QLabel" name="label_ship_summary">
+                <property name="sizePolicy">
+                 <sizepolicy hsizetype="Ignored" vsizetype="Preferred">
+                  <horstretch>1</horstretch>
+                  <verstretch>0</verstretch>
+                 </sizepolicy>
+                </property>
+                <property name="textFormat">
+                 <enum>Qt::TextFormat::RichText</enum>
+                </property>
+                <property name="text">
+                 <string/>
+                </property>
+               </widget>
+              </item>
+             </layout>
             </item>
             <item>
              <layout class="QHBoxLayout" name="horizontalLayout_ship_row1">

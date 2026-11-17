@@ -115,7 +115,8 @@ from orders.index_sync import conflict_message as order_index_conflict_message, 
 from orders.matching import CoupangOrderIndex, NaverOrderIndex, normalize_coupang_text
 from ui.gift_event_settings import GiftEventSettingsDialog
 from ui.order_ship_panel import (
-    STAGE_INTAKE, STAGE_INVOICE, STAGE_ORDER, STAGE_RECEIPT, apply_primary, next_stage,
+    STAGE_INTAKE, STAGE_INVOICE, STAGE_ORDER, STAGE_RECEIPT, STORE_NAMES, apply_primary, next_stage,
+    order_summary_html, ship_summary_html, stabilize_widths, store_badge_pixmap,
 )
 from ui.order_preview import (
     CODE_MISSING_BACKGROUND, NON_PARCEL_BACKGROUND, PreviewOrder, PreviewProduct,
@@ -3267,6 +3268,10 @@ class MainWindow(QMainWindow):
         # 주문·발송 진행 단계(다음 동작 버튼 강조): 우체국 접수 엑셀을 만들었는지, 일괄발송 파일까지 만들었는지
         self._intake_excel_done = False
         self._ship_batch_done = False
+        # ①② 제목 옆 요약: 불러온 송장 행 수, 마지막 발송 파일 묶음(스토어, 주문 건수, 매칭 수, 송장 수)
+        self._invoice_row_count = 0
+        self._ship_batch_summary = None
+        self._last_invoice_match = None
 
         self._tracking_controller = TrackingController(self)
         self._tracking_controller.initialize_runtime()
@@ -5528,6 +5533,7 @@ class MainWindow(QMainWindow):
             button.setToolTip(tip)
             if handler is not None:
                 button.clicked.connect(lambda _checked=False, h=handler: h())
+        stabilize_widths(getattr(self.ui, name, None) for name, *_ in specs)
 
     def _refresh_order_ship_panels(self):
         """주문·발송 탭: 다음에 할 동작 하나만 강조하고, 쓸 수 없는 버튼은 끈다."""
@@ -5550,6 +5556,26 @@ class MainWindow(QMainWindow):
             self.ui.pushButton_copy_order.setEnabled(bool(self._order_markdown_text))
         if hasattr(self.ui, "pushButton_intake_excel"):
             self.ui.pushButton_intake_excel.setEnabled(bool(self.orders))
+        if hasattr(self.ui, "label_order_summary"):
+            counts = summary_counts(self._order_preview_rows) if has_orders else None
+            self.ui.label_order_summary.setText(order_summary_html(self.store_type, counts))
+        if hasattr(self.ui, "label_ship_summary"):
+            self.ui.label_ship_summary.setText(ship_summary_html(
+                batch=self._ship_batch_summary if self._ship_batch_done else None,
+                invoice_rows=self._invoice_row_count))
+            batch = self._ship_batch_summary if self._ship_batch_done else None
+            if batch and batch[3] is not None:
+                self.ui.label_ship_summary.setToolTip(
+                    f"송장 {batch[3]}건 중 {batch[2]}건을 주문과 매칭해 일괄발송 파일을 만들었습니다.")
+            else:
+                self.ui.label_ship_summary.setToolTip("")
+
+    def _mark_ship_batch_done(self, store_type, order_count):
+        """일괄발송 파일을 만든 묶음을 ② 요약에 남긴다(① 패널은 생성 뒤 비워진다)."""
+        matched, total = self._last_invoice_match or (None, None)
+        self._ship_batch_summary = (store_type, order_count, matched, total)
+        self._ship_batch_done = True
+        self._refresh_order_ship_panels()
 
     def copy_to_clipboard(self):
         """불러온 주문의 마크다운(불러올 때 자동 복사한 것과 같은 글)을 클립보드에 복사합니다."""
@@ -5596,24 +5622,30 @@ class MainWindow(QMainWindow):
             self._elide_status_label(obj)
         return super().eventFilter(obj, event)
 
-    _STORE_NAMES = {"naver": "네이버", "coupang": "쿠팡",
-                    "gmarket": "지마켓", "11st": "11번가"}
+    _STORE_NAMES = STORE_NAMES
 
     def _set_store_label(self, store_type):
-        """주문 스토어를 텍스트로 표시(이미지 대신). 미로드/미지원이면 옅은 '스토어'."""
+        """주문 스토어를 image/ 폴더의 로고 배지로 표시. 미선택이면 지원 스토어 로고를 흐리게 보여 준다."""
         lbl = getattr(self.ui, "label_logo", None)
         if lbl is None:
             return
         name = self._STORE_NAMES.get(store_type or "", "")
         lbl.clear()  # 이전 픽스맵 제거
         lbl.setFrameShape(QFrame.Shape.NoFrame)  # 버튼처럼 보이던 패널 테두리 제거(라벨로)
-        if name:
-            lbl.setText(name)
-            lbl.setStyleSheet("font-weight: 700; font-size: 12pt; color: #1a73e8;")
-        else:
-            lbl.setText("스토어 미선택")
-            lbl.setStyleSheet("color: #bbbbbb;")
+        lbl.setStyleSheet("")
         lbl.setAlignment(Qt.AlignCenter)
+        try:
+            pixmap = store_badge_pixmap(
+                store_type if name else None, Path("image"), (140, 40), lbl.devicePixelRatioF())
+        except Exception as e:  # 로고를 그리지 못해도 글자로는 보여 준다.
+            print(f"! 스토어 로고 배지 표시 실패: {e}")
+            pixmap = None
+        if pixmap is not None:
+            lbl.setPixmap(pixmap)
+        else:
+            lbl.setText(name or "스토어 미선택")
+        lbl.setToolTip(f"{name} 주문" if name else "스토어 미선택 — 주문 엑셀을 불러오면 해당 스토어가 표시됩니다")
+        lbl.setAccessibleName(name or "스토어 미선택")
 
     def _reset_idle_logo(self):
         """주문 미로드 시 스토어 라벨을 옅은 기본값으로 되돌림."""
@@ -7424,6 +7456,7 @@ class MainWindow(QMainWindow):
         # 새 묶음이 시작되므로 우체국 접수 엑셀·발송 파일 진행 표시도 처음으로 돌린다.
         self._intake_excel_done = False
         self._ship_batch_done = False
+        self._ship_batch_summary = None
         try:
             # 스토어 이름을 텍스트로 표시(이미지 대신)
             self._set_store_label(self.store_type)
@@ -8474,9 +8507,11 @@ class MainWindow(QMainWindow):
         self._set_status_label(self.ui.label_invoice, "송장 정보가 없습니다.")
         self.ui.plainTextEdit_invoice.setPlainText("")
         
-        # 진행 단계도 처음(주문 불러오기)으로
+        # 진행 단계와 요약도 처음(주문 불러오기)으로
         self._intake_excel_done = False
         self._ship_batch_done = False
+        self._ship_batch_summary = None
+        self._invoice_row_count = 0
         self._refresh_order_ship_panels()
 
         # 상태바 메시지 업데이트
@@ -9770,12 +9805,14 @@ class MainWindow(QMainWindow):
                 
                 # 마크다운 형식으로 주문 정보 생성
                 markdown_text = ""
+                invoice_rows = 0
                                 
                 # 각 행을 순회하며 주문 정보 생성
                 for idx, (_, row) in enumerate(df.iterrows(), start=1):
                     # 빈 행 건너뛰기
                     if pd.isna(row[required_columns['등기번호']]):
                         continue
+                    invoice_rows += 1
 
                     # 주문 정보 추가 (인덱스 포함)
                     markdown_text += f"{idx}. {row[required_columns['수취인명']]}\n"
@@ -9794,6 +9831,8 @@ class MainWindow(QMainWindow):
                 self.statusBar().showMessage(f"송장 파일 선택됨: {filename}")
                 print("✓ 송장 파일이 성공적으로 선택되었습니다.")
                 self.is_invoice_file_valid = True  # 파일 처리 성공 시 플래그 설정
+                self._invoice_row_count = invoice_rows
+                self._refresh_order_ship_panels()
 
                 # 하이브리드 추적: 송장 파일의 모든 등기번호를 공유 시트에 등록
                 # (스토어·주문번호는 이후 매칭 시 보강). 실패해도 발송 흐름은 계속.
@@ -9867,6 +9906,10 @@ class MainWindow(QMainWindow):
             return
 
         generated = False
+        # 발송 파일을 만들면 주문 목록이 비워지므로(clear_list) 요약에 쓸 묶음 정보를 먼저 잡아 둔다.
+        batch_store = self.store_type
+        batch_orders = len(getattr(self, "_order_preview_rows", ()) or ())
+        self._last_invoice_match = None
         try:
             # 임시 디렉토리 생성
             temp_dir = Path("temp")
@@ -9922,8 +9965,7 @@ class MainWindow(QMainWindow):
                 pass
         if generated:
             # 진행 표시는 생성이 끝난 뒤에 바꾼다(화면 갱신 문제로 생성 성공이 실패로 바뀌지 않게).
-            self._ship_batch_done = True
-            self._refresh_order_ship_panels()
+            self._mark_ship_batch_done(batch_store, batch_orders)
             
     @staticmethod
     def _naver_api_rows_to_order_frame(rows):
@@ -10091,6 +10133,7 @@ class MainWindow(QMainWindow):
             # 6. 매칭된 주문 정보 출력 및 운송장번호 업데이트
             print("\n[매칭된 주문 정보]")
             matched_count = 0
+            invoice_total = 0  # 등기번호가 있는 송장 행 수(② 요약의 매칭 분모)
             naver_matched_records = []
             naver_invoice_numbers = {}  # 주문서 행 라벨 → 송장번호(같은 행은 나중 송장이 우선)
             # API 발송처리용: (전체 주문번호 ↔ 등기번호) 쌍 — 상품주문번호는 발송 시 API로 해석
@@ -10103,6 +10146,7 @@ class MainWindow(QMainWindow):
                 invoice_number = excel_text(invoice_row[column_mapping['invoice']['등기번호']])
                 if not invoice_number:
                     continue  # 등기번호 없는 행(합계·빈 행)은 매칭하지 않는다(미리보기와 같은 기준).
+                invoice_total += 1
                 invoice_order_number = ''
                 if column_mapping['invoice']['고객 주문번호']:
                     invoice_order_number = _normalize_digits(
@@ -10165,6 +10209,7 @@ class MainWindow(QMainWindow):
             print(f"\n✓ 총 {matched_count}개의 주문이 매칭되었습니다.")
 
             # 7. 결과 파일 저장
+            self._last_invoice_match = (matched_count, invoice_total)
             self._save_invoice_file(order_df)
 
             # 매칭된 건의 스토어·주문번호·수취인명을 공유 추적 시트에 보강
@@ -10371,6 +10416,7 @@ class MainWindow(QMainWindow):
                     print(f"  - {oname} / {ophone}")
             
             # 4. 결과 파일 저장
+            self._last_invoice_match = (matched_count, matched_count + unmatched_invoice)
             self._save_invoice_file(order_df)
 
             # 매칭된 건의 스토어·주문번호·수취인명을 공유 추적 시트에 보강

@@ -181,6 +181,10 @@ def run_scenario(name):
                 names = ("pushButton_load_order", "pushButton_copy_order", "pushButton_intake_excel",
                          "pushButton_clear_order", "pushButton_load_invoice", "pushButton_courier_receipt")
                 return {
+                    "order_summary": window.ui.label_order_summary.text(),
+                    "ship_summary": window.ui.label_ship_summary.text(),
+                    "logo_tip": window.ui.label_logo.toolTip(),
+                    "logo_pixmap": not window.ui.label_logo.pixmap().isNull(),
                     "stage": window._order_ship_stage,
                     "primary": [n for n in names if getattr(window.ui, n).property("primaryAction")],
                     "enabled": {n: getattr(window.ui, n).isEnabled() for n in names},
@@ -201,13 +205,19 @@ def run_scenario(name):
                 window.ui.pushButton_intake_excel.click()
             flow["intake_files"] = sorted(p.name.split("_")[0] for p in (work / "output").glob("*.xlsx"))
             flow["intake"] = stage_snapshot()
+            # 우체국 송장 엑셀(7행 헤더): 최가람은 주문과 맞고, 정다운은 전화번호가 달라 매칭되지 않는다.
             invoice = work / "1744778498617.xlsx"
-            invoice.write_bytes(b"invoice")
-            window.invoice_file_path = str(invoice)
-            window.is_invoice_file_valid = True
-            with patch.object(app_module.MainWindow, "_process_coupang_invoice",
-                              lambda self, *a, **k: self.clear_list()):
-                window.generate_invoice_file()
+            pd.DataFrame([
+                ["6000000000001", "최가람", "010-1212-3434", "010-1212-3434", "서울 마포구 5"],
+                ["6000000000002", "정다운", "010-0000-0000", "010-0000-0000", "광주 북구 6"],
+            ], columns=["등기번호", "수취인명", "수취인 이동통신", "수취인 전화번호", "수취인상세주소"]
+            ).to_excel(invoice, index=False, startrow=6)
+            window._enqueue_tracking_registration = lambda records: None  # 공유 시트에 쓰지 않는다
+            with patch.object(QFileDialog, "getOpenFileName", lambda *a, **k: (str(invoice), "")), \
+                    patch.object(QMessageBox, "exec", lambda self: 0):
+                window.ui.pushButton_load_invoice.click()
+            flow["ship_files"] = sorted(p.name.split("_")[0] + "_" + p.name.split("_")[1]
+                                        for p in (work / "output").glob("일괄발송_*.xlsx"))
             flow["shipped"] = stage_snapshot()
             calls = []
             window._tracking_controller.export_courier_receipt = lambda: calls.append("receipt")
@@ -322,6 +332,39 @@ class OrderPreviewModelTests(unittest.TestCase):
         self.assertIn("볼펜 또는 박스커터", event.markdown_suffix("naver", 61000))
 
 
+class OrderShipSummaryTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        sys.path.insert(0, str(ROOT))
+        from PySide6.QtWidgets import QApplication
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_summaries(self):
+        from ui.order_ship_panel import order_summary_html, ship_summary_html
+        self.assertEqual(order_summary_html("naver", None), "")
+        text = order_summary_html("naver", {"orders": 12, "gifts": 3, "code_missing": 0, "non_parcel": 1})
+        self.assertIn("✓ 네이버 12건 · 사은품 3건", text)
+        self.assertNotIn("코드 없음", text)
+        self.assertIn("송장 매칭 11/12", ship_summary_html(batch=("naver", 12, 11, 12)))
+        self.assertIn("#e65100", ship_summary_html(batch=("naver", 12, 11, 12)))  # 덜 맞으면 주황
+        self.assertIn("#2e7d32", ship_summary_html(batch=("naver", 12, 12, 12)))
+        self.assertIn("송장 5건", ship_summary_html(invoice_rows=5))
+        self.assertEqual(ship_summary_html(), "")
+
+    def test_store_badges(self):
+        from ui.order_ship_panel import store_badge_pixmap
+        image_dir = ROOT / "image"
+        for store in ("naver", "coupang", "gmarket", "11st", None):
+            pixmap = store_badge_pixmap(store, image_dir, (140, 40), 2.0)
+            self.assertFalse(pixmap.isNull(), store)
+            self.assertEqual((pixmap.width(), pixmap.height()), (280, 80))
+        # 미선택 배지는 흐리게(불투명도 35%) 그린다
+        image = store_badge_pixmap(None, image_dir, (140, 40)).toImage()
+        alphas = {image.pixelColor(x, y).alpha() for x in range(0, 140, 3) for y in range(0, 40, 3)}
+        self.assertLess(max(alphas), 120)
+
+
 class OrderShipStageTests(unittest.TestCase):
     def test_next_stage(self):
         sys.path.insert(0, str(ROOT))
@@ -335,6 +378,20 @@ class OrderShipStageTests(unittest.TestCase):
     def test_buttons_follow_work_order(self):
         flow = scenario("flow")["flow"]
         self.assertEqual(flow["start"]["primary"], ["pushButton_load_order"])
+        self.assertEqual(flow["start"]["order_summary"], "")
+        self.assertEqual(flow["start"]["ship_summary"], "")
+        self.assertTrue(flow["start"]["logo_pixmap"])
+        self.assertIn("스토어 미선택", flow["start"]["logo_tip"])
+        self.assertIn("✓ 쿠팡 2건 · 사은품 2건", flow["loaded"]["order_summary"])
+        self.assertIn("코드 없음 1건", flow["loaded"]["order_summary"])
+        self.assertTrue(flow["loaded"]["logo_pixmap"])
+        self.assertEqual(flow["loaded"]["logo_tip"], "쿠팡 주문")
+        self.assertEqual(flow["ship_files"], ["일괄발송_쿠팡"])
+        # 발송 파일을 만들면 ① 패널은 비워지고(기존 동작), 묶음 결과는 ② 요약에 남는다
+        self.assertEqual(flow["shipped"]["order_summary"], "")
+        self.assertIn("✓ 쿠팡 2건", flow["shipped"]["ship_summary"])
+        self.assertIn("송장 매칭 1/2", flow["shipped"]["ship_summary"])
+        self.assertEqual(flow["cleared"]["ship_summary"], "")
         self.assertFalse(flow["start"]["enabled"]["pushButton_copy_order"])
         self.assertFalse(flow["start"]["enabled"]["pushButton_intake_excel"])
         self.assertEqual(flow["loaded"]["primary"], ["pushButton_intake_excel"])
