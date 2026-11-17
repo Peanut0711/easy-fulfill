@@ -114,6 +114,10 @@ from orders.gift_event import DEFAULT_GIFT_EVENT, gift_event_from_config_rows, r
 from orders.index_sync import conflict_message as order_index_conflict_message, merge_order_indices
 from orders.matching import CoupangOrderIndex, NaverOrderIndex, normalize_coupang_text
 from ui.gift_event_settings import GiftEventSettingsDialog
+from ui.order_preview import (
+    CODE_MISSING_BACKGROUND, NON_PARCEL_BACKGROUND, PreviewOrder, PreviewProduct,
+    setup_preview_view, show_preview, summary_counts,
+)
 from shipping.post_parcel import (
     ParcelApiError,
     ParcelNetworkError,
@@ -3254,6 +3258,9 @@ class MainWindow(QMainWindow):
         self._detail_created_product_no = None
         self._document_widget = None
         self._document_widget_mount_attempted = False
+        # 주문 미리보기: 클립보드용 마크다운(스토어별 처리 함수가 만든 그대로)과 표에 쓰는 행
+        self._order_markdown_text = ""
+        self._order_preview_rows = []
 
         self._tracking_controller = TrackingController(self)
         self._tracking_controller.initialize_runtime()
@@ -4440,6 +4447,7 @@ class MainWindow(QMainWindow):
         
         # UI 객체를 인스턴스 변수로 저장
         self.ui = window
+        self._setup_order_preview()
         self._mount_detail_page_tab()
         
         # 메인 윈도우 설정
@@ -5457,16 +5465,50 @@ class MainWindow(QMainWindow):
         self.act_about.triggered.connect(self.show_about)
         m_help.addAction(self.act_about)
 
+    def _setup_order_preview(self):
+        """주문 미리보기 표(펼치면 상품 목록)를 준비한다."""
+        view = getattr(self.ui, "treeView_order_preview", None)
+        if view is None:
+            return
+        setup_preview_view(view, copy_callback=self.copy_to_clipboard)
+        legend = getattr(self.ui, "label_order_legend", None)
+        if legend is not None:
+            legend.setVisible(False)
+
+    def _show_order_preview(self, markdown_text, rows):
+        """주문 미리보기를 갱신한다. markdown_text는 복사(Ctrl+C)에 그대로 쓰고, rows는 표에 보여 준다."""
+        self._order_markdown_text = markdown_text or ""
+        self._order_preview_rows = list(rows or [])
+        view = getattr(self.ui, "treeView_order_preview", None)
+        if view is not None:
+            show_preview(view, self._order_preview_rows)
+        stack = getattr(self.ui, "stackedWidget_order_preview", None)
+        if stack is not None:
+            stack.setCurrentIndex(1 if self._order_preview_rows else 0)
+        legend = getattr(self.ui, "label_order_legend", None)
+        if legend is not None:
+            counts = summary_counts(self._order_preview_rows)
+            parts = []
+            if counts["code_missing"]:
+                parts.append(
+                    f'<span style="background:{CODE_MISSING_BACKGROUND};">&nbsp;&nbsp;&nbsp;&nbsp;</span>'
+                    f' 상품코드 매칭 실패 {counts["code_missing"]}건')
+            if counts["non_parcel"]:
+                parts.append(
+                    f'<span style="background:{NON_PARCEL_BACKGROUND};">&nbsp;&nbsp;&nbsp;&nbsp;</span>'
+                    f' 택배 외 배송 {counts["non_parcel"]}건')
+            legend.setText("&nbsp;&nbsp;&nbsp;".join(parts))
+            legend.setVisible(bool(parts))
+
     def copy_to_clipboard(self):
-        """plainTextEdit의 내용을 클립보드에 복사합니다."""
+        """불러온 주문의 마크다운(불러올 때 자동 복사한 것과 같은 글)을 클립보드에 복사합니다."""
         try:
-            if hasattr(self.ui, 'plainTextEdit'):
-                text = self.ui.plainTextEdit.toPlainText()
-                clipboard = QApplication.clipboard()
-                clipboard.setText(text)
-                self.statusBar().showMessage("텍스트가 클립보드에 복사되었습니다.", 2000)
-            else:
-                QMessageBox.warning(self, "오류", "plainTextEdit 위젯이 존재하지 않습니다.")
+            text = self._order_markdown_text
+            if not text:
+                self.statusBar().showMessage("복사할 주문 정보가 없습니다.", 2000)
+                return
+            QApplication.clipboard().setText(text)
+            self.statusBar().showMessage("주문 정보가 클립보드에 복사되었습니다.", 2000)
         except Exception as e:
             QMessageBox.warning(self, "오류", f"복사 중 오류가 발생했습니다: {str(e)}")
         
@@ -7599,9 +7641,11 @@ class MainWindow(QMainWindow):
                     self.current_idx_naver = 1
                     self.ui.lineEdit_idx_naver.setText(str(self.current_idx_naver))
             
+            preview_rows = []
             for pattern, info in self.orders.items():
                 # 주문 총액 가져오기
                 total_amount = work_order_amount("naver", info)
+                order_no = self.current_idx_naver
                 
                 # 만원 단위로 포맷팅 (0.1만 단위로 올림)
                 # 예: 950 -> 0.1만, 61000 -> 6.1만, 63820 -> 6.4만
@@ -7633,9 +7677,19 @@ class MainWindow(QMainWindow):
                     markdown_text += f"▶ [{product_code}]**[ {quantity} 개 ]** - {name_for_md} ( 옵션 : {option} )\n"
                 
                 markdown_text += "\n"  # 주문 간 구분을 위한 빈 줄
+                preview_rows.append(PreviewOrder(
+                    number=order_no, recipient=info['수취인명'], amount=total_amount,
+                    amount_text=formatted_amount,
+                    gift=self._order_gift_event.gift_name("naver", total_amount),
+                    delivery=info['배송방법'],
+                    products=tuple(
+                        PreviewProduct(p['상품코드'], p['수량'], p['상품명'], p['옵션'])
+                        for p in info['상품목록']),
+                    check_codes=True,
+                ))
             
-            # plainTextEdit에 마크다운 텍스트 표시
-            self.ui.plainTextEdit.setPlainText(markdown_text)
+            # 미리보기 표와 복사용 마크다운 갱신
+            self._show_order_preview(markdown_text, preview_rows)
             
             # 클립보드에 자동 복사
             clipboard = QApplication.clipboard()
@@ -7920,9 +7974,11 @@ class MainWindow(QMainWindow):
                     self.current_idx_coupang = 1
                     self.ui.lineEdit_idx_coupang.setText(str(self.current_idx_coupang))
             
+            preview_rows = []
             for order_number, info in self.orders.items():
                 # 주문번호별 결제액 가져오기
                 total_amount = work_order_amount("coupang", info)
+                order_no = self.current_idx_coupang
                 
                 # 만원 단위로 포맷팅 (0.1만 단위로 올림)
                 # 예: 950 -> 0.1만, 61000 -> 6.1만, 63820 -> 6.4만
@@ -7948,9 +8004,19 @@ class MainWindow(QMainWindow):
                     markdown_text += f"▶ [{product_code}]**[ {quantity} 개 ]** - {name_for_md} ( 옵션 : {option} )\n"
                 
                 markdown_text += "\n"
+                preview_rows.append(PreviewOrder(
+                    number=order_no, recipient=info['수취인이름'], amount=total_amount,
+                    amount_text=formatted_amount,
+                    gift=self._order_gift_event.gift_name("coupang", total_amount),
+                    delivery="",
+                    products=tuple(
+                        PreviewProduct(p['상품코드'], p['수량'], p['상품명'], p['옵션'])
+                        for p in info['상품목록']),
+                    check_codes=True,
+                ))
             
-            # plainTextEdit에 마크다운 텍스트 표시
-            self.ui.plainTextEdit.setPlainText(markdown_text)
+            # 미리보기 표와 복사용 마크다운 갱신
+            self._show_order_preview(markdown_text, preview_rows)
             
             # 클립보드에 자동 복사
             clipboard = QApplication.clipboard()
@@ -8106,8 +8172,10 @@ class MainWindow(QMainWindow):
                     self.current_idx_gmarket = 1
                     self.ui.lineEdit_idx_gmarket.setText(str(self.current_idx_gmarket))
             
+            preview_rows = []
             for info in consolidated_orders.values():
                 customer_name = info['수령인명']
+                order_no = self.current_idx_gmarket
                 # 총판매금액과 총배송비금액 합산
                 total_amount = work_order_amount("gmarket", info)
                 
@@ -8142,9 +8210,19 @@ class MainWindow(QMainWindow):
                         markdown_text += f"  (추가구성 : {additional_config})\n"
                 
                 markdown_text += "\n"
+                preview_rows.append(PreviewOrder(
+                    number=order_no, recipient=customer_name, amount=total_amount,
+                    amount_text=formatted_amount,
+                    gift=self._order_gift_event.gift_name("gmarket", total_amount),
+                    delivery="",
+                    products=tuple(
+                        PreviewProduct("PASS", p['수량'], p['상품명'], p['옵션'], p.get('추가구성', '') or '')
+                        for p in info['상품목록']),
+                    check_codes=False,
+                ))
             
-            # plainTextEdit에 마크다운 텍스트 표시
-            self.ui.plainTextEdit.setPlainText(markdown_text)
+            # 미리보기 표와 복사용 마크다운 갱신
+            self._show_order_preview(markdown_text, preview_rows)
             
             # 클립보드에 자동 복사
             clipboard = QApplication.clipboard()
@@ -8253,8 +8331,10 @@ class MainWindow(QMainWindow):
                     self.current_idx_11st = 1
                     self.ui.lineEdit_idx_11st.setText(str(self.current_idx_11st))
 
+            preview_rows = []
             for info in consolidated_orders.values():
                 customer_name = info['수취인명']
+                order_no = self.current_idx_11st
                 # 주문금액 합산 (만원 단위 표기, 지마켓과 동일한 내림 규칙)
                 total_amount = work_order_amount("11st", info)
                 amount_in_100 = total_amount // 100  # 100원 단위로 내림
@@ -8277,9 +8357,19 @@ class MainWindow(QMainWindow):
                     markdown_text += f"▶ [{product_code}]**[ {quantity} 개 ]** - {product_name} ( 옵션 : {option} )\n"
 
                 markdown_text += "\n"
+                preview_rows.append(PreviewOrder(
+                    number=order_no, recipient=customer_name, amount=total_amount,
+                    amount_text=formatted_amount,
+                    gift=self._order_gift_event.gift_name("11st", total_amount),
+                    delivery="",
+                    products=tuple(
+                        PreviewProduct("PASS", p['수량'], p['상품명'], p['옵션'])
+                        for p in info['상품목록']),
+                    check_codes=False,
+                ))
 
-            # plainTextEdit에 마크다운 텍스트 표시
-            self.ui.plainTextEdit.setPlainText(markdown_text)
+            # 미리보기 표와 복사용 마크다운 갱신
+            self._show_order_preview(markdown_text, preview_rows)
 
             # 클립보드에 자동 복사
             clipboard = QApplication.clipboard()
@@ -8318,7 +8408,7 @@ class MainWindow(QMainWindow):
         
         # UI 요소 초기화
         self._set_status_label(self.ui.filePathLabel, "주문 정보가 없습니다.")
-        self.ui.plainTextEdit.setPlainText("")
+        self._show_order_preview("", [])
 
         # 로고 초기화(앱 로고로)
         self._reset_idle_logo()

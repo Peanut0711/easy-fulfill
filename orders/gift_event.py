@@ -50,6 +50,11 @@ class GiftEvent:
                 return minimum, gift
         return None
 
+    def gift_name(self, store: str, order_amount: float) -> str:
+        """주문 금액에 맞는 사은품 이름(해당 없으면 빈 문자열). 미리보기 표의 사은품 열에 쓴다."""
+        tier = self._matching_tier(store, order_amount)
+        return tier[1] if tier is not None else ""
+
     def markdown_suffix(self, store: str, order_amount: float) -> str:
         tier = self._matching_tier(store, order_amount)
         if tier is None:

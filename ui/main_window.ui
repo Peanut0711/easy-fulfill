@@ -195,28 +195,87 @@
              </layout>
             </item>
             <item>
-             <widget class="QPlainTextEdit" name="plainTextEdit">
+             <widget class="QStackedWidget" name="stackedWidget_order_preview">
               <property name="sizePolicy">
                <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
                 <horstretch>0</horstretch>
                 <verstretch>0</verstretch>
                </sizepolicy>
               </property>
-              <property name="font">
-               <font>
-                <family>맑은 고딕</family>
-                <pointsize>8</pointsize>
-               </font>
+              <property name="currentIndex">
+               <number>0</number>
               </property>
-              <property name="frameShape">
-               <enum>QFrame::Shape::StyledPanel</enum>
-              </property>
-              <property name="frameShadow">
-               <enum>QFrame::Shadow::Plain</enum>
-              </property>
-              <property name="placeholderText">
-               <string>주문 엑셀을 불러오면 여기에 주문 미리보기가 표시됩니다.</string>
-              </property>
+              <widget class="QWidget" name="page_order_empty">
+               <layout class="QVBoxLayout" name="verticalLayout_order_empty">
+                <property name="leftMargin">
+                 <number>0</number>
+                </property>
+                <property name="topMargin">
+                 <number>0</number>
+                </property>
+                <property name="rightMargin">
+                 <number>0</number>
+                </property>
+                <property name="bottomMargin">
+                 <number>0</number>
+                </property>
+                <item>
+                 <widget class="QLabel" name="label_order_empty">
+                  <property name="frameShape">
+                   <enum>QFrame::Shape::StyledPanel</enum>
+                  </property>
+                  <property name="styleSheet">
+                   <string>color: #9e9e9e; background: palette(base);</string>
+                  </property>
+                  <property name="text">
+                   <string>주문 엑셀을 불러오면 여기에 주문 미리보기가 표시됩니다.</string>
+                  </property>
+                  <property name="alignment">
+                   <set>Qt::AlignmentFlag::AlignCenter</set>
+                  </property>
+                  <property name="wordWrap">
+                   <bool>true</bool>
+                  </property>
+                 </widget>
+                </item>
+               </layout>
+              </widget>
+              <widget class="QWidget" name="page_order_table">
+               <layout class="QVBoxLayout" name="verticalLayout_order_table">
+                <property name="spacing">
+                 <number>4</number>
+                </property>
+                <property name="leftMargin">
+                 <number>0</number>
+                </property>
+                <property name="topMargin">
+                 <number>0</number>
+                </property>
+                <property name="rightMargin">
+                 <number>0</number>
+                </property>
+                <property name="bottomMargin">
+                 <number>0</number>
+                </property>
+                <item>
+                 <widget class="QTreeView" name="treeView_order_preview">
+                  <property name="alternatingRowColors">
+                   <bool>false</bool>
+                  </property>
+                 </widget>
+                </item>
+                <item>
+                 <widget class="QLabel" name="label_order_legend">
+                  <property name="styleSheet">
+                   <string>color: #666666;</string>
+                  </property>
+                  <property name="text">
+                   <string/>
+                  </property>
+                 </widget>
+                </item>
+               </layout>
+              </widget>
              </widget>
             </item>
            </layout>
