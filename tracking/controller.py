@@ -277,12 +277,21 @@ class TrackingController(QObject):
         elif chosen == act_management:
             self._change_tracking_management([regino], manual_stop)
 
+    def _set_tracking_count_text(self, text, detail="", error=False):
+        """표 위 건수 라벨은 한 줄만 쓴다. 여러 줄 오류 원문은 툴팁에 둔다
+        (그대로 넣으면 라벨 높이를 넘어 위아래가 잘려 보인다)."""
+        label = getattr(self.ui, "label_tracking_count", None)
+        if label is None:
+            return
+        label.setStyleSheet("color:#c0392b;" if error else "")
+        label.setText(text)
+        label.setToolTip(detail)
+
     def _load_tracking_list(self):
         """현재 목록 모드에 필요한 송장추적 행만 백그라운드로 읽어온다."""
         if gspread is None or self._tracking_list_thread is not None:
             return
-        if hasattr(self.ui, "label_tracking_count"):
-            self.ui.label_tracking_count.setText("목록 불러오는 중…")
+        self._set_tracking_count_text("목록 불러오는 중…")
         self._set_tracking_table_loading(True)
         mode = "배송중"
         if hasattr(self.ui, "comboBox_tracking_filter"):
@@ -298,8 +307,11 @@ class TrackingController(QObject):
         if not payload.get("ok"):
             error = str(payload.get("error", "") or "unknown error")
             print(f"! Tracking list load failed: {error}")
-            if hasattr(self.ui, "label_tracking_count"):
-                self.ui.label_tracking_count.setText(f"목록 불러오기 실패: {error}")
+            first = next((line.strip() for line in error.splitlines() if line.strip()), error)
+            more = " …" if len(error.strip().splitlines()) > 1 else ""
+            self._set_tracking_count_text(
+                f"목록 불러오기 실패: {first}{more}", detail=error, error=True
+            )
             self._set_tracking_table_loading(False)
             return
         self._tracking_list_values = payload.get("values", []) or []
@@ -463,6 +475,7 @@ class TrackingController(QObject):
             else:
                 self.ui.label_tracking_count.setStyleSheet("")
             self.ui.label_tracking_count.setText(txt)
+            self.ui.label_tracking_count.setToolTip("")
 
     @staticmethod
     def _parse_event_dt(s):

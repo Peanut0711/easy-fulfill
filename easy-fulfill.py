@@ -19,7 +19,8 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QFileDialog, QMessageB
                                QProgressBar, QProgressDialog, QFrame, QGraphicsOpacityEffect, QListWidget,
                               QAbstractItemView, QGroupBox, QCheckBox, QSpinBox, QMenu,
                               QStyle, QProxyStyle, QPlainTextEdit, QFormLayout,
-                              QSplitter, QTextEdit, QComboBox, QDoubleSpinBox, QColorDialog)
+                              QSplitter, QTextEdit, QComboBox, QDoubleSpinBox, QColorDialog,
+                              QScrollArea, QGridLayout)
 from PySide6.QtUiTools import QUiLoader
 from PySide6.QtCore import (
     QFile,
@@ -6611,8 +6612,7 @@ class MainWindow(QMainWindow):
 
     def _refresh_quick_excel_manual_ui(self):
         """수동 모드일 때만 이름·전화·주소 입력란을 표시합니다.
-        퀵엑셀 그룹은 단건 송장 탭에 상시 인라인으로 붙어 있고, 내부 위젯이 절대좌표라
-        그룹 크기를 모드에 맞춰 고정해 레이아웃이 이에 맞춰지게 한다."""
+        그룹 크기는 _mount_quick_excel_inline이 붙인 격자 레이아웃이 맞춘다."""
         if not hasattr(self.ui, "comboBox_store_select"):
             return
         manual = self.ui.comboBox_store_select.currentText().strip() == "수동"
@@ -6621,18 +6621,65 @@ class MainWindow(QMainWindow):
         if hasattr(self.ui, "label_gift_3"):
             self.ui.label_gift_3.setVisible(not manual)
 
-        gb = getattr(self.ui, "groupBox", None)
-        if gb is not None:
-            gb.setFixedSize(341, 278 if manual else 102)
-
     def _mount_quick_excel_inline(self):
         """퀵엑셀 그룹(.ui의 절대좌표 groupBox)을 단건 송장 탭에 상시 인라인으로 삽입."""
         gb = getattr(self.ui, "groupBox", None)
         lay = getattr(self.ui, "verticalLayout_quick_excel", None)
         if gb is None or lay is None:
             return
+        self._apply_quick_excel_grid_layout(gb)
         # 하단 세로 스페이서 바로 앞(마지막 위젯 자리)에 넣는다.
         lay.insertWidget(max(lay.count() - 1, 0), gb, 0, Qt.AlignmentFlag.AlignLeft)
+
+    def _apply_quick_excel_grid_layout(self, gb):
+        """.ui의 절대좌표 배치를 격자 레이아웃으로 바꾼다.
+        절대좌표에서는 버튼이 그룹 테두리 밖으로 나오고, 모드마다 그룹 크기를 손으로 맞춰야 했다."""
+        if gb.layout() is not None:
+            return
+        grid = QGridLayout(gb)
+        grid.setContentsMargins(12, 12, 12, 12)
+        grid.setHorizontalSpacing(8)
+        grid.setVerticalSpacing(6)
+        grid.setColumnStretch(1, 1)
+
+        def w(name):
+            return getattr(self.ui, name, None)
+
+        def put(name, row, col, row_span=1, col_span=1):
+            widget = w(name)
+            if widget is not None:
+                widget.setMinimumSize(0, 0)
+                widget.setMaximumSize(16777215, 16777215)
+                grid.addWidget(widget, row, col, row_span, col_span)
+
+        # 1행: 스토어 선택 · 생성 · 초기화
+        put("label_store_select", 0, 0)
+        put("comboBox_store_select", 0, 1)
+        put("pushButton_quick_excel_gen", 0, 2)
+        put("pushButton_quick_excel_reset", 0, 3)
+        # 2행: 클립보드 안내(수동 모드가 아닐 때만 표시)
+        put("label_gift_3", 1, 0, 1, 4)
+        if w("label_gift_3") is not None:
+            w("label_gift_3").setWordWrap(True)
+        # 수동 입력란(수동 모드에서만 표시)
+        put("label_quick_manual_name", 2, 0)
+        put("lineEdit_quick_manual_name", 2, 1, 1, 3)
+        put("label_quick_manual_phone", 3, 0)
+        put("lineEdit_quick_manual_phone", 3, 1, 1, 3)
+        put("label_quick_manual_postcode", 4, 0)
+        put("lineEdit_quick_manual_postcode", 4, 1)
+        if w("lineEdit_quick_manual_postcode") is not None:
+            w("lineEdit_quick_manual_postcode").setMaximumWidth(120)
+        put("pushButton_quick_manual_address_search", 4, 2, 1, 2)
+        put("label_quick_manual_address", 5, 0)
+        put("lineEdit_quick_manual_address", 5, 1)
+        put("pushButton_quick_manual_postcode_lookup", 5, 2, 1, 2)
+        put("label_quick_manual_detail", 6, 0)
+        put("lineEdit_quick_manual_detail", 6, 1, 1, 3)
+        put("label_quick_manual_product", 7, 0)
+        put("lineEdit_quick_manual_product", 7, 1, 1, 3)
+        gb.setMinimumWidth(380)
+        gb.setMaximumWidth(520)
 
     def _mount_document_widget(self):
         """문서 탭 첫 진입 때 위젯을 장착하고 실패하면 탭 안에 오류를 표시한다."""
@@ -6653,7 +6700,15 @@ class MainWindow(QMainWindow):
                 base_dir=Path(__file__).resolve().parent,
                 parent=self,
             )
-            layout.addWidget(self._document_widget)
+            # 문서 화면의 최소 높이(약 770px)가 창보다 크면 첫 진입 때 창이 커지거나
+            # 표와 「계산 요약」이 겹쳐 그려진다. 스크롤 영역에 넣어 창 크기를 유지한다.
+            scroll = QScrollArea()
+            scroll.setObjectName("scrollArea_documents")
+            scroll.setWidgetResizable(True)
+            scroll.setFrameShape(QFrame.Shape.NoFrame)
+            scroll.setWidget(self._document_widget)
+            layout.setContentsMargins(6, 6, 6, 6)
+            layout.addWidget(scroll)
         except Exception as exc:
             self._document_widget = None
             error = QLabel(

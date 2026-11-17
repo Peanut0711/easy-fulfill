@@ -5,7 +5,7 @@ from __future__ import annotations
 from decimal import Decimal
 from pathlib import Path
 
-from PySide6.QtCore import QDate, QThread, QUrl, Qt, Signal
+from PySide6.QtCore import QDate, QSize, QThread, QUrl, Qt, Signal
 from PySide6.QtGui import QColor, QDesktopServices
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -55,6 +55,24 @@ COL_PRICE = 5
 ROLE_API_PRICE = Qt.ItemDataRole.UserRole + 1
 ROLE_ORDER_GROSS_AMOUNT = Qt.ItemDataRole.UserRole + 2
 SMARTSTORE_PRODUCT_URL_TEMPLATE = "https://smartstore.naver.com/higenis/products/{product_no}"
+
+
+def first_line(text) -> str:
+    """여러 줄 오류 문구의 첫 줄만 돌려준다(나머지가 있으면 '…'를 붙인다)."""
+    lines = [line.strip() for line in str(text or "").splitlines() if line.strip()]
+    if not lines:
+        return ""
+    return lines[0] + (" …" if len(lines) > 1 else "")
+
+
+class ItemTable(QTableWidget):
+    """품목 표. 적정 높이를 최소 높이로 낮춘다.
+    문서 탭은 스크롤 영역 안에 있고, 스크롤 영역은 적정 높이로 스크롤바 여부를 정한다.
+    표는 남는 공간을 늘려 채우므로 실제 보이는 크기는 줄지 않는다."""
+
+    def sizeHint(self):
+        hint = super().sizeHint()
+        return QSize(hint.width(), max(self.minimumHeight(), 0))
 
 
 class ProductSearchThread(QThread):
@@ -241,10 +259,16 @@ class QuotationStatementWidget(QWidget):
         self._build_ui()
         self.add_item_row()
 
+    def _set_search_status(self, text, detail=""):
+        """상품 찾기 상태는 한 줄로 보여 주고 여러 줄 오류 원문은 툴팁에 둔다.
+        여러 줄이 그대로 들어가면 라벨이 입력칸 영역을 침범해 겹쳐 그려진다."""
+        self.search_status.setText(text)
+        self.search_status.setToolTip(detail)
+
     def _build_ui(self):
         root = QVBoxLayout(self)
         root.setContentsMargins(4, 4, 4, 4)
-        root.setSpacing(10)
+        root.setSpacing(8)
 
         info_group = QGroupBox("문서 기본정보")
         info_layout = QHBoxLayout(info_group)
@@ -301,6 +325,10 @@ class QuotationStatementWidget(QWidget):
         search_layout.addLayout(search_row)
         self.search_status = QLabel("API를 사용하지 않아도 아래 표에 상품명과 가격을 직접 입력할 수 있습니다.")
         self.search_status.setWordWrap(True)
+        # 줄바꿈 라벨이 세로 가운데 정렬이면 높이가 모자랄 때 위아래가 함께 잘린다.
+        # 두 줄 높이를 확보하고 위쪽에 붙인다.
+        self.search_status.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        self.search_status.setMinimumHeight(self.search_status.fontMetrics().lineSpacing() * 2 + 4)
         search_layout.addWidget(self.search_status)
         search_layout.addStretch(1)
         info_layout.addWidget(self.product_search_widget, 2)
@@ -360,7 +388,7 @@ class QuotationStatementWidget(QWidget):
         item_header.addWidget(self.delete_button)
         root.addLayout(item_header)
 
-        self.table = QTableWidget(0, 6)
+        self.table = ItemTable(0, 6)
         self.table.setHorizontalHeaderLabels(
             ["상태", "API 상품명 (확인용)", "문서용 상품명", "규격", "수량", "VAT포함 단가"]
         )
@@ -383,7 +411,7 @@ class QuotationStatementWidget(QWidget):
         header.setSectionResizeMode(COL_QUANTITY, QHeaderView.ResizeMode.ResizeToContents)
         self.table.setColumnWidth(COL_DOCUMENT_NAME, 240)
         self.table.setColumnWidth(COL_SPEC, 120)
-        self.table.setMinimumHeight(260)
+        self.table.setMinimumHeight(120)
         root.addWidget(self.table, 1)
 
         summary_group = QGroupBox("계산 요약")
@@ -737,7 +765,7 @@ class QuotationStatementWidget(QWidget):
             return
         if self._prefetch_thread and self._prefetch_thread.isRunning():
             self._pending_search = (query, row)
-            self.search_status.setText("상품 목록을 준비 중입니다. 완료되면 검색합니다…")
+            self._set_search_status("상품 목록을 준비 중입니다. 완료되면 검색합니다…")
             return
         if self._search_thread and self._search_thread.isRunning():
             return
@@ -750,7 +778,7 @@ class QuotationStatementWidget(QWidget):
         if self._prefetch_complete or (self._prefetch_thread and self._prefetch_thread.isRunning()):
             return
         self._prefetch_result = None
-        self.search_status.setText("스마트스토어 상품 목록을 준비하고 있습니다…")
+        self._set_search_status("스마트스토어 상품 목록을 준비하고 있습니다…")
         self._prefetch_thread = ProductSearchThread(self._product_search_worker, "", self)
         self._prefetch_thread.result_ready.connect(self._on_prefetch_result)
         self._prefetch_thread.finished.connect(self._on_prefetch_finished)
@@ -759,7 +787,7 @@ class QuotationStatementWidget(QWidget):
     def _start_product_search(self, query, row):
         self._search_target_row = row
         self.search_button.setEnabled(False)
-        self.search_status.setText("스마트스토어 상품을 조회하고 있습니다…")
+        self._set_search_status("스마트스토어 상품을 조회하고 있습니다…")
         self._search_thread = ProductSearchThread(self._product_search_worker, query, self)
         self._search_thread.result_ready.connect(lambda result: self._on_search_result(query, result))
         self._search_thread.finished.connect(lambda: self.search_button.setEnabled(True))
@@ -773,13 +801,15 @@ class QuotationStatementWidget(QWidget):
         self._prefetch_thread = None
         if not result.get("ok"):
             self._pending_search = None
-            self.search_status.setText(
-                f"상품 목록 준비 실패: {result.get('error', '알 수 없는 오류')} — 수동 입력은 가능합니다."
+            error = result.get("error", "알 수 없는 오류")
+            self._set_search_status(
+                f"상품 목록 준비 실패: {first_line(error)} — 수동 입력은 가능합니다.",
+                detail=str(error),
             )
             return
         count = int(result.get("count") or 0)
         self._prefetch_complete = True
-        self.search_status.setText(f"스마트스토어 상품 {count:,}개 준비 완료")
+        self._set_search_status(f"스마트스토어 상품 {count:,}개 준비 완료")
         pending = self._pending_search
         self._pending_search = None
         if pending:
@@ -788,13 +818,16 @@ class QuotationStatementWidget(QWidget):
     def _on_search_result(self, query, result):
         if not result.get("ok"):
             error = result.get("error") or "알 수 없는 오류"
-            self.search_status.setText(f"상품 API 조회 실패: {error} — 수동 입력은 계속 사용할 수 있습니다.")
+            self._set_search_status(
+                f"상품 API 조회 실패: {first_line(error)} — 수동 입력은 계속 사용할 수 있습니다.",
+                detail=str(error),
+            )
             return
         products = result.get("products") or []
         if not products:
-            self.search_status.setText("일치하는 상품이 없습니다. 검색어를 줄이거나 수동으로 입력해주세요.")
+            self._set_search_status("일치하는 상품이 없습니다. 검색어를 줄이거나 수동으로 입력해주세요.")
             return
-        self.search_status.setText(f"검색 결과 {len(products)}건 — 적용 전까지 기존 입력은 유지됩니다.")
+        self._set_search_status(f"검색 결과 {len(products)}건 — 적용 전까지 기존 입력은 유지됩니다.")
         dialog = ProductChoiceDialog(products, query, self)
         if dialog.exec() != QDialog.DialogCode.Accepted or not dialog.selected_product:
             return
@@ -935,7 +968,7 @@ class QuotationStatementWidget(QWidget):
         self.search_edit.clear()
         self.naver_order_id_edit.clear()
         self.coupang_order_id_edit.clear()
-        self.search_status.setText("API를 사용하지 않아도 아래 표에 상품명과 가격을 직접 입력할 수 있습니다.")
+        self._set_search_status("API를 사용하지 않아도 아래 표에 상품명과 가격을 직접 입력할 수 있습니다.")
         self.negotiated_check.setChecked(False)
         self.free_shipping_check.setChecked(False)
         self.discount_mode_combo.setCurrentIndex(0)
