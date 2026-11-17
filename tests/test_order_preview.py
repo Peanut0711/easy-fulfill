@@ -2,7 +2,7 @@
 
 - 표: 행 수, 펼친 상품 줄, 매칭 실패·택배 외 배송 행 색, 사은품 열
 - 복사: 불러올 때 자동 복사, 메뉴 복사(Ctrl+C), 표에 초점이 있을 때 Ctrl+C 모두
-  금액 옆의 고정 사은품 표기를 포함해 같은 마크다운이어야 한다.
+  금액 옆의 사은품 표기를 포함해 같은 마크다운이어야 한다.
 """
 
 import json
@@ -17,26 +17,26 @@ from pathlib import Path
 ROOT = Path(os.environ.get("EF_TEST_ROOT") or Path(__file__).resolve().parents[1])
 GIFT_TIERS = ((60000, "볼펜 또는 박스커터"), (100000, "에코백"))
 
-# 표로 바꾸기 전의 클립보드 글에서 주문 첫 줄의 사은품 표기만 고정 문구로 바꾼 견본.
+# 주문 첫 줄의 사은품 표기에 지급 사은품을 붙인 클립보드 견본.
 EXPECTED_MARKDOWN = {
     "naver": (
-        "[ ] 1.홍길동 - 6.1만 · **🎁 사은품**\n"
+        "[ ] 1.홍길동 - 6.1만 · **🎁 사은품: 볼펜 또는 박스커터**\n"
         "▶ [A-ESP32S3]**[ 2 개 ]** - [ESP32-S3 DevKitC-1](https://smartstore.naver.com/higenis/products/111) ( 옵션 : N16R8 )\n"
         "▶ [C-USBC1M]**[ 1 개 ]** - [USB-C 케이블 1m](https://smartstore.naver.com/higenis/products/112) ( 옵션 : 없음 )\n"
         "\n"
         "[ ] 2.김철수 - 3.2만\n"
         "▶ [        ]**[ 1 개 ]** - [STM32 Nucleo-F401RE](https://smartstore.naver.com/higenis/products/999) ( 옵션 : 없음 )\n"
         "\n"
-        "[ ] 3.이영희 - 12.8만 · **🎁 사은품** **(직접전달)**\n"
+        "[ ] 3.이영희 - 12.8만 · **🎁 사은품: 에코백** **(직접전달)**\n"
         "▶ [L-TDS3P]**[ 1 개 ]** - [LilyGo T-Display S3](https://smartstore.naver.com/higenis/products/113) ( 옵션 : Pro )\n"
         "\n"
     ),
     "coupang": (
-        "[ ] 1.최가람 - 6.1만 · **🎁 사은품**\n"
+        "[ ] 1.최가람 - 6.1만 · **🎁 사은품: 볼펜 또는 박스커터**\n"
         "▶ [C-UNOR4]**[ 1 개 ]** - [아두이노 우노 R4](https://www.coupang.com/vp/products/9001) ( 옵션 : WiFi )\n"
         "▶ [C-BB830]**[ 2 개 ]** - 브레드보드 830 ( 옵션 :  )\n"
         "\n"
-        "[ ] 2.정다운 - 13.5만 · **🎁 사은품**\n"
+        "[ ] 2.정다운 - 13.5만 · **🎁 사은품: 에코백**\n"
         "▶ []**[ 1 개 ]** - 라즈베리파이 5 8GB ( 옵션 :  )\n"
         "\n"
     ),
@@ -45,12 +45,12 @@ EXPECTED_MARKDOWN = {
         "▶ [PASS]**[ 3 개 ]** - ESP32 DevKit V1 ( 옵션 : 없음 )\n"
         "  (추가구성 : 핀헤더 추가)\n"
         "\n"
-        "[ ] 2.김유진 - 6.0만 · **🎁 사은품**\n"
+        "[ ] 2.김유진 - 6.0만 · **🎁 사은품: 볼펜 또는 박스커터**\n"
         "▶ [PASS]**[ 1 개 ]** - ESP32 DevKit V1 ( 옵션 : 없음 )\n"
         "\n"
     ),
     "11st": (
-        "[ ] 1.오세훈 - 6.6만 · **🎁 사은품**\n"
+        "[ ] 1.오세훈 - 6.6만 · **🎁 사은품: 볼펜 또는 박스커터**\n"
         "▶ [PASS]**[ 2 개 ]** - STM32 블루필 ( 옵션 : 없음 )\n"
         "\n"
     ),
@@ -395,13 +395,13 @@ class OrderPreviewModelTests(unittest.TestCase):
         self.assertEqual([model.index(2, c).data() for c in range(6)], ["3", "홍길동", "6.1만", "에코백", "방문수령", "1"])
         self.assertIn("매칭 실패", model.item(1, 1).toolTip())
 
-    def test_preview_keeps_gift_name_and_markdown_uses_fixed_label(self):
+    def test_preview_and_markdown_use_gift_name(self):
         from orders.gift_event import GiftEvent
         event = GiftEvent(True, ("naver",), GIFT_TIERS)
         self.assertEqual(event.gift_name("naver", 61000), "볼펜 또는 박스커터")
         self.assertEqual(event.gift_name("naver", 59999), "")
         self.assertEqual(event.gift_name("coupang", 200000), "")
-        self.assertEqual(event.markdown_suffix("naver", 61000), " · **🎁 사은품**")
+        self.assertEqual(event.markdown_suffix("naver", 61000), " · **🎁 사은품: 볼펜 또는 박스커터**")
 
 
 class OrderShipSummaryTests(unittest.TestCase):

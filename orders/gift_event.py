@@ -2,6 +2,7 @@
 
 import json
 import math
+import re
 from dataclasses import dataclass
 
 from tracking.repository import ConfigValueChangedError, config_values_map_from_rows, write_config_values
@@ -55,7 +56,11 @@ class GiftEvent:
         return tier[1] if tier is not None else ""
 
     def markdown_suffix(self, store: str, order_amount: float) -> str:
-        return " · **🎁 사은품**" if self._matching_tier(store, order_amount) is not None else ""
+        gift = self.gift_name(store, order_amount)
+        if not gift:
+            return ""
+        safe_gift = re.sub(r"([\\`*_~\[\]<>!&|])", r"\\\1", gift)
+        return f" · **🎁 사은품: {safe_gift}**"
 
     def invoice_prefix(self, store: str, order_amount: float) -> str:
         tier = self._matching_tier(store, order_amount)

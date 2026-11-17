@@ -20,7 +20,7 @@ class GiftEventTests(unittest.TestCase):
         ):
             with self.subTest(amount=amount):
                 self.assertEqual(self.event.gift_name("coupang", amount), expected)
-                self.assertEqual(self.event.markdown_suffix("coupang", amount), " · **🎁 사은품**")
+                self.assertEqual(self.event.markdown_suffix("coupang", amount), f" · **🎁 사은품: {expected}**")
 
     def test_disabled_unselected_and_missing_amount(self):
         self.assertEqual(DEFAULT_GIFT_EVENT.markdown_suffix("coupang", 250_000), "")
@@ -42,6 +42,7 @@ class GiftEventTests(unittest.TestCase):
     def test_tiers_can_be_reordered_and_gift_text_is_preserved_for_preview(self):
         event = replace(self.event, tiers=((100_000, "[에코백]*"), (60_000, "볼펜")), invoice_labels=())
         self.assertEqual(event.gift_name("coupang", 100_000), "[에코백]*")
+        self.assertEqual(event.markdown_suffix("coupang", 100_000), r" · **🎁 사은품: \[에코백\]\***")
         with self.assertRaises(ValueError):
             replace(event, tiers=((60_000, "볼펜"), (60_000, "에코백")))
         with self.assertRaises(ValueError):
@@ -87,8 +88,8 @@ class GiftEventTests(unittest.TestCase):
             ["order_gift_markdown", '{"60000": "사은품1", "100000": ""}'],
         ]
         event, _ = read_gift_event(worksheet)
-        self.assertEqual(event.markdown_suffix("coupang", 60_000), " · **🎁 사은품**")
-        self.assertEqual(event.markdown_suffix("coupang", 100_000), " · **🎁 사은품**")
+        self.assertEqual(event.markdown_suffix("coupang", 60_000), " · **🎁 사은품: 볼펜**")
+        self.assertEqual(event.markdown_suffix("coupang", 100_000), " · **🎁 사은품: 에코백**")
 
 
 if __name__ == "__main__":
