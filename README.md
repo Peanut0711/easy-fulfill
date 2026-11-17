@@ -2,6 +2,8 @@
 
 오픈마켓(스마트스토어, 쿠팡 등)에서 주문한 제품 리스트 엑셀 파일을 입력받아, 작업자가 출고를 쉽게 할 수 있도록 작업지시서와 송장 양식을 자동 생성하는 Python GUI 프로그램입니다.
 
+[버전 이력](docs/app-version-update-guide.md#버전-이력) · [소스트리 업데이트 방법](docs/app-version-update-guide.md#업데이트하는-방법-각-pc)
+
 ## 요구사항
 
 - Python 3.12.2

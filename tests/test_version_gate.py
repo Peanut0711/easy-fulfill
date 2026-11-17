@@ -93,9 +93,20 @@ class WriteGuardTests(unittest.TestCase):
         self.assertEqual(client.http_client.calls, [("get", "values")])  # 쓰기 요청은 나가지 않음
 
     def test_writes_allowed_when_app_is_current(self):
-        self.min_text[0] = self.gate.APP_VERSION
+        self.min_text[0] = "2026.11.17.1"
         client = self.guarded()
         self.assertEqual(client.http_client.request("post", "values:append"), "response")
+
+    def test_encoded_minimum_blocks_outdated_app_and_shows_display_version(self):
+        self.min_text[0] = "2026.11.18.1.0.0.2"
+        client = self.guarded()
+        with self.assertRaises(self.gate.AppVersionBlockedError) as raised:
+            client.http_client.request("put", "values")
+        message = str(raised.exception)
+        self.assertIn("최소 버전 0.0.2", message)
+        self.assertLess(message.index("페치(Fetch)"), message.index("풀(Pull)"))
+        self.assertNotIn(self.min_text[0], message)
+        self.assertEqual(client.http_client.calls, [])
 
     def test_minimum_is_rechecked_and_other_pc_raise_takes_effect(self):
         now = [100.0]
@@ -166,10 +177,43 @@ class StartupCheckTests(unittest.TestCase):
         self.assertEqual(pcs.rows[1][2], "2026-11-17 13:00:00")
 
     def test_does_not_lower_a_higher_minimum(self):
-        config = FakeConfigSheet({self.gate.CONFIG_KEY_MIN_APP_VERSION: self.gate.APP_VERSION})
-        with patch.object(self.gate, "MIN_COMPATIBLE_VERSION", "2000.1.1.1"):
-            self.run_check(config, FakePcSheet(self.gate.PC_VERSION_HEADERS), datetime(2026, 11, 17))
-        self.assertEqual(config.value(self.gate.CONFIG_KEY_MIN_APP_VERSION), self.gate.APP_VERSION)
+        key = self.gate.CONFIG_KEY_MIN_APP_VERSION
+        config = FakeConfigSheet({key: "2026.11.17.12"})
+        self.run_check(config, FakePcSheet(self.gate.PC_VERSION_HEADERS), datetime(2026, 11, 18))
+        self.assertEqual(config.value(key), "2026.11.17.12")
+        self.assertEqual(config.writes, 0)
+
+    def test_raised_minimum_blocks_both_date_and_older_three_part_releases(self):
+        key = self.gate.CONFIG_KEY_MIN_APP_VERSION
+        config = FakeConfigSheet({key: "2026.11.17.1"})
+        pcs = FakePcSheet(self.gate.PC_VERSION_HEADERS)
+        when = datetime(2026, 11, 18)
+        with patch.object(self.gate, "APP_VERSION", "0.0.2"), \
+                patch.object(self.gate, "MIN_COMPATIBLE_VERSION", "0.0.2"):
+            result = self.run_check(config, pcs, when)
+        self.assertFalse(result["blocked"])
+        self.assertEqual(result["minimum"], "0.0.2")
+        self.assertGreater(self.gate.parse_version(config.value(key)), (2026, 11, 17, 12))
+        blocked = self.run_check(config, pcs, when)
+        self.assertTrue(blocked["blocked"])
+        self.assertEqual(blocked["minimum"], "0.0.2")
+        self.assertEqual(pcs.writes, 1)
+
+    def test_minimum_changed_during_startup_is_checked_before_pc_write(self):
+        key = self.gate.CONFIG_KEY_MIN_APP_VERSION
+        config = FakeConfigSheet({})
+        pcs = FakePcSheet(self.gate.PC_VERSION_HEADERS)
+
+        def raise_minimum_first(*args, **kwargs):
+            from tracking.repository import ConfigValueChangedError
+            config.rows.append([key, "2026.11.18.1.0.0.2"])
+            raise ConfigValueChangedError(key)
+
+        with patch("tracking.repository.write_config_values", side_effect=raise_minimum_first):
+            result = self.run_check(config, pcs, datetime(2026, 11, 18))
+        self.assertTrue(result["blocked"])
+        self.assertEqual(result["minimum"], "0.0.2")
+        self.assertEqual(pcs.writes, 0)
 
     def test_outdated_app_reports_blocked_and_writes_nothing(self):
         config = FakeConfigSheet({self.gate.CONFIG_KEY_MIN_APP_VERSION: "2999.1.1.1"})
@@ -182,18 +226,17 @@ class StartupCheckTests(unittest.TestCase):
 
 
     def test_reports_newer_version_used_by_other_pc(self):
-        config = FakeConfigSheet({})
+        config = FakeConfigSheet({self.gate.CONFIG_KEY_MIN_APP_VERSION: "2026.11.17.1"})
         pcs = FakePcSheet(self.gate.PC_VERSION_HEADERS)
-        pcs.rows += [["직원@PC2", "2026.11.20.1", "2026-11-20 09:00:00"],
-                     ["직원@PC3", "2026.11.18.2", "2026-11-18 09:00:00"],
-                     ["직원@PC4", "엉뚱한값", ""]]
-        with patch.object(self.gate, "APP_VERSION", "2026.11.17.1"), \
-                patch.object(self.gate, "MIN_COMPATIBLE_VERSION", "2026.11.17.1"):
-            result = self.run_check(config, pcs, datetime(2026, 11, 21))
-            self.assertEqual(result["latest"], "2026.11.20.1")
-            pcs.rows[1][1] = "2026.11.10.1"  # 다른 PC가 모두 더 낮거나 같으면 안내 없음
-            pcs.rows[2][1] = "2026.11.17.1"
-            self.assertEqual(self.run_check(config, pcs, datetime(2026, 11, 21))["latest"], "")
+        pcs.rows += [["직원@PC2", "0.0.9", ""],
+                     ["직원@PC3", "0.0.10", ""],
+                     ["직원@PC4", "2026.11.17.12", ""],
+                     ["직원@PC5", "엉뚱한값", ""]]
+        when = datetime(2026, 11, 18)
+        result = self.run_check(config, pcs, when)
+        self.assertEqual(result["latest"], "0.0.10")
+        pcs.rows[1][1] = pcs.rows[2][1] = "0.0.1"
+        self.assertEqual(self.run_check(config, pcs, when)["latest"], "")
 
     def test_own_older_row_is_not_reported_as_newer(self):
         pcs = FakePcSheet(self.gate.PC_VERSION_HEADERS)
@@ -239,8 +282,8 @@ class StartupNoticeTests(unittest.TestCase):
         return window
 
     def newer(self):
-        return {"ok": True, "blocked": False, "minimum": "2026.11.17.1", "version": "2026.11.17.1",
-                "latest": "2026.11.20.1"}
+        return {"ok": True, "blocked": False, "minimum": "2026.11.17.1", "version": "0.0.1",
+                "latest": "0.0.2"}
 
     def today(self, text):
         return patch("sheets.version_gate.today_text", lambda: text)
@@ -250,12 +293,12 @@ class StartupNoticeTests(unittest.TestCase):
         with self.today("2026-11-21"):
             window._on_app_version_checked(self.newer())
             window._on_app_version_checked(self.newer())  # 1시간 뒤 다시 확인
-        self.assertEqual(window.asked, ["2026.11.20.1"])
-        self.assertIn("2026.11.20.1", window.ui.label_app_version.text)
+        self.assertEqual(window.asked, ["0.0.2"])
+        self.assertIn("0.0.2", window.ui.label_app_version.text)
         with self.today("2026-11-21"):
             restarted = self.window(window.settings)
             restarted._on_app_version_checked(self.newer())  # 다시 실행하면 다시 안내
-        self.assertEqual(restarted.asked, ["2026.11.20.1"])
+        self.assertEqual(restarted.asked, ["0.0.2"])
 
     def test_snooze_today_survives_restart_until_tomorrow(self):
         window = self.window(answer="snooze")
@@ -263,12 +306,12 @@ class StartupNoticeTests(unittest.TestCase):
             window._on_app_version_checked(self.newer())
             restarted = self.window(window.settings)
             restarted._on_app_version_checked(self.newer())
-        self.assertEqual(window.asked, ["2026.11.20.1"])
+        self.assertEqual(window.asked, ["0.0.2"])
         self.assertEqual(restarted.asked, [])  # 오늘은 다시 묻지 않음
         with self.today("2026-11-22"):
             tomorrow = self.window(window.settings)
             tomorrow._on_app_version_checked(self.newer())
-        self.assertEqual(tomorrow.asked, ["2026.11.20.1"])
+        self.assertEqual(tomorrow.asked, ["0.0.2"])
 
     def test_ignore_option_suppresses_notice(self):
         window = self.window()
@@ -276,22 +319,22 @@ class StartupNoticeTests(unittest.TestCase):
         with self.today("2026-11-21"):
             window._on_app_version_checked(self.newer())
         self.assertEqual(window.asked, [])
-        self.assertIn("2026.11.20.1", window.ui.label_app_version.text)  # 버전 표시는 그대로
+        self.assertIn("0.0.2", window.ui.label_app_version.text)
         window._on_ignore_version_update_toggled(False)
         with self.today("2026-11-21"):
             window._on_app_version_checked(self.newer())
-        self.assertEqual(window.asked, ["2026.11.20.1"])
+        self.assertEqual(window.asked, ["0.0.2"])
 
     def test_blocked_warning_shows_once_even_when_ignoring(self):
         window = self.window({"ignore_version_update_notice": True})
         shown = []
-        blocked = {"ok": True, "blocked": True, "minimum": "2999.1.1.1", "version": "2026.11.17.1"}
+        blocked = {"ok": True, "blocked": True, "minimum": "0.0.2", "version": "0.0.1"}
         with patch.object(self.app.QMessageBox, "warning", lambda parent, title, text: shown.append((title, text))):
             window._on_app_version_checked(blocked)
             window._on_app_version_checked(blocked)
         self.assertEqual(len(shown), 1)
         self.assertEqual(shown[0][0], "프로그램 업데이트 필요")
-        self.assertIn("2999.1.1.1", shown[0][1])
+        self.assertIn("0.0.2", shown[0][1])
 
     def test_settings_tab_has_ignore_checkbox_off_by_default(self):
         import xml.etree.ElementTree as ET

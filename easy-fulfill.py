@@ -90,6 +90,7 @@ from tracking.repository import (
 )
 from tracking.controller import TrackingController
 from tracking.workers import TrackingConfigWriteThread, run_tracking_list_worker
+from sheets.version_gate import APP_VERSION, SOURCETREE_UPDATE_STEPS
 from orders.quick import (
     detect_quick_store,
     extract_zip_code,
@@ -4474,7 +4475,7 @@ class MainWindow(QMainWindow):
         self.setup_menubar()
         
         self.setStatusBar(window.statusbar)
-        self.setWindowTitle(window.windowTitle())
+        self.setWindowTitle(f"{window.windowTitle()} · v{APP_VERSION}")
         self.resize(window.size())
         self._order_ship_splitter_initialized = False
 
@@ -4535,6 +4536,9 @@ class MainWindow(QMainWindow):
     def _on_app_version_checked(self, result):
         if not result.get("ok"):
             print(f"! 앱 버전 확인 실패: {result.get('error')}")
+            label = getattr(self.ui, "label_app_version", None)
+            if label is not None and not getattr(self, "_version_blocked_notice_shown", False):
+                label.setText(f"현재 버전 {APP_VERSION} · 공유 시트 버전 확인 실패")
             return
         self._update_app_version_label(result)
         if result.get("blocked"):
@@ -4552,14 +4556,13 @@ class MainWindow(QMainWindow):
         label = getattr(self.ui, "label_app_version", None)
         if label is None:
             return
-        from sheets.version_gate import APP_VERSION
         text = f"현재 버전 {result.get('version') or APP_VERSION}"
         if result.get("blocked"):
-            text += f" · 공유 최소 버전 {result.get('minimum')}보다 낮아 시트 쓰기가 멈췄습니다. 소스트리에서 Pull 하세요."
+            text += f" · 공유 최소 버전 {result.get('minimum')} 필요 (시트 쓰기 중지)"
         elif result.get("latest"):
-            text += f" · 새 버전 {result['latest']} 있음 (소스트리에서 Pull 후 다시 실행)"
+            text += f" · 새 버전 {result['latest']} 확인 (소스트리에서 Fetch → Pull 후 다시 실행)"
         else:
-            text += " · 최신"
+            text += " · 공유 시트에 새 버전 기록 없음"
         label.setText(text)
 
     def _maybe_show_update_notice(self, latest):
@@ -4583,14 +4586,14 @@ class MainWindow(QMainWindow):
 
     def _ask_update_notice(self, latest):
         """새 버전 안내 창. 반환: 'snooze'(오늘 더 이상 묻지 않음) 또는 'close'."""
-        from sheets.version_gate import APP_VERSION
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Information)
         box.setWindowTitle("새 버전 안내")
         box.setText(f"다른 PC에서 새 버전({latest})을 쓰고 있습니다. 이 PC는 {APP_VERSION}입니다.")
         box.setInformativeText(
-            "소스트리에서 Pull 한 뒤 프로그램을 다시 실행하면 업데이트됩니다.\n"
-            "지금은 그대로 계속 쓸 수 있습니다. 「환경설정」→「프로그램 버전」에서 이 안내를 끌 수 있습니다.")
+            "업데이트 전에도 계속 사용할 수 있습니다.\n\n"
+            f"{SOURCETREE_UPDATE_STEPS}\n\n"
+            "「환경설정」→「프로그램 버전」에서 이 안내를 끌 수 있습니다.")
         snooze = box.addButton("오늘 더 이상 묻지 않음", QMessageBox.ActionRole)
         close = box.addButton("닫기", QMessageBox.RejectRole)
         box.setDefaultButton(close)
@@ -5755,7 +5758,7 @@ class MainWindow(QMainWindow):
         self.ui.pushButton_gift_event_settings.clicked.connect(self._open_gift_event_settings)
         # 프로그램 버전: 현재 버전 표시와 「새 버전 안내 무시」(이 PC 설정, 기본 꺼짐)
         if hasattr(self.ui, "checkBox_ignore_version_update"):
-            from sheets.version_gate import APP_VERSION, SETTING_IGNORE_UPDATE_NOTICE
+            from sheets.version_gate import SETTING_IGNORE_UPDATE_NOTICE
             box = self.ui.checkBox_ignore_version_update
             box.setChecked(bool(self.get_app_setting(SETTING_IGNORE_UPDATE_NOTICE, False)))
             box.toggled.connect(self._on_ignore_version_update_toggled)
@@ -8565,7 +8568,7 @@ class MainWindow(QMainWindow):
             self,
             "프로그램 정보",
             "Easy Fulfill - 주문 처리 시스템\n\n"
-            "Version 1.0.0\n"
+            f"버전 {APP_VERSION}\n"
             "Copyright © 2024\n\n"
             "오픈마켓 주문 처리를 위한 자동 생성 프로그램입니다."
         )

@@ -6,7 +6,7 @@
 - 공유 「설정」 탭의 ``min_app_version`` 값보다 이 앱의 APP_VERSION이 낮으면, Google 클라이언트의
   모든 쓰기 요청(GET이 아닌 요청)을 보내기 전에 AppVersionBlockedError로 막는다(읽기는 허용).
   최소 버전은 MIN_VERSION_RECHECK_SECONDS마다 다시 읽어, 실행 중에 다른 PC가 올린 값도 반영한다.
-  최소 버전을 읽지 못하면(네트워크 오류 등) 쓰기를 막지 않는다.
+  최소 버전을 다시 읽지 못하면 마지막 확인값을 유지한다. 확인한 값이 없으면 쓰기를 허용한다.
 - 시작할 때와 실행 중 1시간마다(startup_check) 공유 최소 버전이 이 앱의 MIN_COMPATIBLE_VERSION보다
   낮으면 그 값으로 올리고(낮추지는 않는다), 「PC버전」 탭에 PC·버전·마지막 확인 시각을 기록한다.
   다른 PC가 더 새 버전을 쓰고 있으면 그 버전을 알려 화면이 「새 버전 안내」를 띄우게 한다
@@ -24,8 +24,19 @@ import threading
 import time
 from datetime import datetime
 
-APP_VERSION = "2026.11.17.12"
+APP_VERSION = "0.0.1"
 MIN_COMPATIBLE_VERSION = "2026.11.17.1"
+# 기존 앱도 min_app_version의 숫자 비교만으로 향후 호환성 변경을 감지할 수 있게 한다.
+_VERSION_RESET_PREFIX = (2026, 11, 18, 1)
+
+SOURCETREE_UPDATE_STEPS = (
+    "1. 작업을 마친 뒤 Easy Fulfill을 닫고, 창이 닫힐 때까지 기다리세요.\n"
+    "2. 소스트리(SourceTree)에서 easy-fulfill 저장소를 열고 왼쪽 브랜치에서 main을 선택하세요.\n"
+    "3. 상단의 페치(Fetch)를 누르고 원격 저장소 origin을 선택해 완료를 기다리세요.\n"
+    "4. 상단의 풀(Pull)을 누르고 원격 origin과 브랜치 main을 선택한 뒤 확인을 누르세요.\n"
+    "5. 같은 저장소 폴더의 run.bat을 실행하고 타이틀바의 버전을 확인하세요.\n\n"
+    "로컬 변경이나 충돌로 멈추면 오류 화면을 개발 담당자에게 보내 주세요."
+)
 
 SPREADSHEET_ID = "1F0l6FMjXvKXAR9WyDvxEWcRvji-TaJbBim_G12TJ2Pw"
 CONFIG_SHEET_TITLE = "설정"
@@ -51,20 +62,34 @@ class AppVersionBlockedError(RuntimeError):
 
 def parse_version(text) -> tuple[int, ...] | None:
     parts = str(text or "").strip().split(".")
-    if not parts or not all(part.isdigit() for part in parts):
+    if not all(part.isascii() and part.isdecimal() for part in parts):
         return None
     return tuple(int(part) for part in parts)
 
 
+def _version_order(text: str) -> tuple[int, ...]:
+    parts = parse_version(text) or ()
+    return (*_VERSION_RESET_PREFIX, *parts) if len(parts) == 3 else parts
+
+
+def _minimum_display(minimum: str) -> str:
+    parts = parse_version(minimum)
+    prefix_length = len(_VERSION_RESET_PREFIX)
+    if parts and len(parts) == prefix_length + 3 and parts[:prefix_length] == _VERSION_RESET_PREFIX:
+        return ".".join(map(str, parts[prefix_length:]))
+    return minimum
+
+
 def is_outdated(minimum: str) -> bool:
-    required = parse_version(minimum)
-    return required is not None and parse_version(APP_VERSION) < required
+    return _version_order(APP_VERSION) < _version_order(minimum)
 
 
 def blocked_message(minimum: str) -> str:
-    return (f"이 PC의 프로그램(버전 {APP_VERSION})이 공유 시트가 요구하는 최소 버전({minimum})보다 낮아 "
-            "Google 시트에 쓰지 않았습니다. 다른 PC의 데이터를 예전 방식으로 덮어쓰지 않도록 막은 것입니다. "
-            "프로그램을 최신 버전으로 업데이트한 뒤 다시 실행해 주세요.")
+    return (
+        f"이 PC의 버전 {APP_VERSION}은 공유 시트가 요구하는 최소 버전 {_minimum_display(minimum)}보다 낮습니다.\n"
+        "Google 시트는 읽을 수 있습니다. 공유 데이터를 보호하기 위해 시트 쓰기는 업데이트 후 다시 시작됩니다.\n\n"
+        f"{SOURCETREE_UPDATE_STEPS}"
+    )
 
 
 def reset_state() -> None:
@@ -93,7 +118,7 @@ def _current_minimum(gc) -> str:
         try:
             _state["minimum"] = _read_min_version_text(gc)
         except Exception as error:
-            print(f"! 공유 최소 버전 확인 실패(쓰기는 막지 않음): {error}")
+            print(f"! 공유 최소 버전 확인 실패(마지막 확인값 유지): {error}")
         finally:
             _local.bypass = False
         _state["checked_at"] = _monotonic()
@@ -143,21 +168,21 @@ def startup_check(gc, actor: str, now: datetime | None = None) -> dict:
 
     config_ws = _open_config_ws(gc)
     minimum = config_values_map_from_rows(config_ws.get_all_values()).get(CONFIG_KEY_MIN_APP_VERSION, "")
-    if is_outdated(minimum):
-        with _lock:
-            _state.update(minimum=minimum, checked_at=_monotonic())
-        return {"blocked": True, "minimum": minimum, "version": APP_VERSION}
-
-    current = parse_version(minimum)
-    if current is None or current < parse_version(MIN_COMPATIBLE_VERSION):
-        try:
-            write_config_values(config_ws, {CONFIG_KEY_MIN_APP_VERSION: MIN_COMPATIBLE_VERSION},
-                                expected={CONFIG_KEY_MIN_APP_VERSION: minimum})
-            minimum = MIN_COMPATIBLE_VERSION
-        except ConfigValueChangedError:
-            pass  # 다른 PC가 먼저 바꿨다. 다음 확인 때 그 값을 읽는다.
     with _lock:
         _state.update(minimum=minimum, checked_at=_monotonic())
+    required = _version_order(MIN_COMPATIBLE_VERSION)
+    if not is_outdated(minimum) and _version_order(minimum) < required:
+        shared_minimum = ".".join(map(str, required))
+        try:
+            write_config_values(config_ws, {CONFIG_KEY_MIN_APP_VERSION: shared_minimum},
+                                expected={CONFIG_KEY_MIN_APP_VERSION: minimum})
+            minimum = shared_minimum
+        except ConfigValueChangedError:
+            minimum = config_values_map_from_rows(config_ws.get_all_values()).get(CONFIG_KEY_MIN_APP_VERSION, "")
+        with _lock:
+            _state.update(minimum=minimum, checked_at=_monotonic())
+    if is_outdated(minimum):
+        return {"blocked": True, "minimum": _minimum_display(minimum), "version": APP_VERSION}
 
     stamp = (now or datetime.now()).strftime("%Y-%m-%d %H:%M:%S")
     pc_ws = _open_pc_version_ws(gc)
@@ -169,7 +194,7 @@ def startup_check(gc, actor: str, now: datetime | None = None) -> dict:
             break
     else:
         pc_ws.append_rows([[actor, APP_VERSION, stamp]], value_input_option="RAW")
-    return {"blocked": False, "minimum": minimum, "version": APP_VERSION,
+    return {"blocked": False, "minimum": _minimum_display(minimum), "version": APP_VERSION,
             "latest": newest_other_version(rows, actor)}
 
 
@@ -180,7 +205,8 @@ def newest_other_version(rows, actor: str) -> str:
         if not row or row[0].strip() == actor or len(row) < 2:
             continue
         parsed = parse_version(row[1])
-        if parsed is not None and parsed > best:
+        # 날짜형 기록은 전환 전 PC의 실행 기록이다.
+        if parsed is not None and len(parsed) == len(best) and parsed > best:
             best_text, best = row[1].strip(), parsed
     return best_text
 
