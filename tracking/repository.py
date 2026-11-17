@@ -95,10 +95,7 @@ class ConfigValueChangedError(ValueError):
     """설정을 읽은 이후 공유 시트 값이 변경되었다."""
 
 
-def write_config_values(
-    worksheet, updates: Mapping[str, object], *,
-    expected: Mapping[str, str] | None = None, atomic: bool = False,
-) -> None:
+def write_config_values(worksheet, updates: Mapping[str, object], *, expected: Mapping[str, str] | None = None) -> None:
     """설정 시트의 키/값을 현재 행에 갱신하거나 새 행으로 추가한다."""
     key_to_row = {}
     current = {}
@@ -115,35 +112,13 @@ def write_config_values(
     batch_updates = []
     for key, value in pairs:
         if key in key_to_row:
-            batch_updates.append((key_to_row[key], value))
+            batch_updates.append({"range": f"B{key_to_row[key]}", "values": [[value]]})
         else:
             new_rows.append([key, value])
-    if atomic and new_rows and batch_updates:
-        # 값 추가와 갱신을 한 요청으로 보내 중간까지만 반영되는 것을 피한다.
-        def row_data(values):
-            return {"values": [{"userEnteredValue": {"stringValue": value}} for value in values]}
-
-        requests = [
-            {"updateCells": {
-                "start": {"sheetId": worksheet.id, "rowIndex": row - 1, "columnIndex": 1},
-                "rows": [row_data([value])],
-                "fields": "userEnteredValue",
-            }}
-            for row, value in batch_updates
-        ]
-        requests.append({"appendCells": {
-            "sheetId": worksheet.id,
-            "rows": [row_data(values) for values in new_rows],
-            "fields": "userEnteredValue",
-        }})
-        worksheet.spreadsheet.batch_update({"requests": requests})
-        return
     if new_rows:
         worksheet.append_rows(new_rows, value_input_option="RAW")
     if batch_updates:
-        worksheet.batch_update([
-            {"range": f"B{row}", "values": [[value]]} for row, value in batch_updates
-        ], value_input_option="RAW")
+        worksheet.batch_update(batch_updates, value_input_option="RAW")
 
 
 def read_tracking_column(worksheet, column: str, last_row: int) -> list[list[str]]:
