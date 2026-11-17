@@ -9,6 +9,7 @@ from tracking.repository import ConfigValueChangedError, config_values_map_from_
 
 
 GIFT_EVENT_KEY = "order_gift_event"
+GIFT_MARKDOWN_KEY = "order_gift_markdown"
 GIFT_EVENT_STORES = {
     "naver": "네이버", "coupang": "쿠팡", "gmarket": "지마켓", "11st": "11번가",
 }
@@ -21,6 +22,7 @@ class GiftEvent:
     stores: tuple[str, ...]
     tiers: tuple[tuple[int, str], ...]
     invoice_labels: tuple[tuple[int, str], ...] = ()
+    markdown_labels: tuple[tuple[int, str], ...] = ()
 
     def __post_init__(self):
         if type(self.enabled) is not bool or any(store not in GIFT_EVENT_STORES for store in self.stores):
@@ -39,8 +41,14 @@ class GiftEvent:
         for minimum, label in self.invoice_labels:
             if minimum not in amounts or not isinstance(label, str) or not label.strip() or label.splitlines() != [label]:
                 raise ValueError("송장 표기를 해당 구간에 한 줄로 입력해 주세요.")
+        for minimum, label in self.markdown_labels:
+            if minimum not in amounts or not isinstance(label, str) or (
+                label and (not label.strip() or label.splitlines() != [label])
+            ):
+                raise ValueError("마크다운 문구를 해당 구간에 한 줄로 입력해 주세요.")
         object.__setattr__(self, "tiers", tuple(sorted(self.tiers)))
         object.__setattr__(self, "invoice_labels", tuple(sorted(self.invoice_labels)))
+        object.__setattr__(self, "markdown_labels", tuple(sorted(self.markdown_labels)))
 
     def _matching_tier(self, store: str, order_amount: float) -> tuple[int, str] | None:
         if not self.enabled or store not in self.stores or not math.isfinite(order_amount):
@@ -59,8 +67,10 @@ class GiftEvent:
         tier = self._matching_tier(store, order_amount)
         if tier is None:
             return ""
-        safe_gift = re.sub(r"([\\`*_~\[\]<>!&|])", r"\\\1", tier[1])
-        return f" · **🎁 사은품: {safe_gift}**"
+        minimum, gift = tier
+        label = dict(self.markdown_labels).get(minimum, f"사은품: {gift}")
+        safe_label = re.sub(r"([\\`*_~\[\]<>!&|])", r"\\\1", label)
+        return f" · **🎁 {safe_label}**" if safe_label else " · **🎁**"
 
     def invoice_prefix(self, store: str, order_amount: float) -> str:
         tier = self._matching_tier(store, order_amount)
@@ -78,32 +88,48 @@ DEFAULT_GIFT_EVENT = GiftEvent(False, tuple(GIFT_EVENT_STORES), (
 ), DEFAULT_INVOICE_LABELS)
 
 
-def read_gift_event(worksheet) -> tuple[GiftEvent, str]:
+def read_gift_event(worksheet) -> tuple[GiftEvent, dict[str, str]]:
     return gift_event_from_config_rows(worksheet.get_all_values())
 
 
-def gift_event_from_config_rows(rows) -> tuple[GiftEvent, str]:
+def gift_event_from_config_rows(rows) -> tuple[GiftEvent, dict[str, str]]:
     """이미 읽은 공유 설정 시트 값(헤더 포함)에서 사은품 행사 설정을 해석한다."""
-    raw = config_values_map_from_rows(rows).get(GIFT_EVENT_KEY, "")
+    config = config_values_map_from_rows(rows)
+    revision = {key: config.get(key, "") for key in (GIFT_EVENT_KEY, GIFT_MARKDOWN_KEY)}
+    raw = revision[GIFT_EVENT_KEY]
     if not raw:
-        return DEFAULT_GIFT_EVENT, raw
+        return DEFAULT_GIFT_EVENT, revision
     try:
         data = json.loads(raw)
+        tiers = tuple(tuple(tier) for tier in data["tiers"])
+        active_amounts = {minimum for minimum, _ in tiers}
+        markdown_labels = json.loads(revision[GIFT_MARKDOWN_KEY] or "{}")
         event = GiftEvent(
-            data["enabled"], tuple(data["stores"]), tuple(tuple(tier) for tier in data["tiers"]),
+            data["enabled"], tuple(data["stores"]), tiers,
             tuple((int(minimum), label) for minimum, label in data.get("invoice_labels", {}).items()),
+            # 구버전 앱에서 삭제한 금액의 문구는 건너뛴다.
+            tuple((int(minimum), label) for minimum, label in markdown_labels.items()
+                  if int(minimum) in active_amounts),
         )
     except (AttributeError, KeyError, TypeError, ValueError) as error:
         raise ValueError("공유 시트의 사은품 행사 설정 형식을 확인해 주세요.") from error
-    return event, raw
+    return event, revision
 
 
-def save_gift_event(worksheet, event: GiftEvent, original: str) -> None:
+def save_gift_event(worksheet, event: GiftEvent, original: dict[str, str]) -> None:
     raw = json.dumps({
         "enabled": event.enabled, "stores": event.stores, "tiers": event.tiers,
         "invoice_labels": dict(event.invoice_labels),
     }, ensure_ascii=False)
+    updates = {}
+    if raw != original[GIFT_EVENT_KEY]:
+        updates[GIFT_EVENT_KEY] = raw
+    # 기존 앱이 행사 설정을 저장해도 마크다운 문구는 별도 키에 남는다.
+    if event.markdown_labels or original[GIFT_MARKDOWN_KEY]:
+        markdown = json.dumps(dict(event.markdown_labels), ensure_ascii=False)
+        if markdown != original[GIFT_MARKDOWN_KEY]:
+            updates[GIFT_MARKDOWN_KEY] = markdown
     try:
-        write_config_values(worksheet, {GIFT_EVENT_KEY: raw}, expected={GIFT_EVENT_KEY: original})
+        write_config_values(worksheet, updates, expected=original, atomic=True)
     except ConfigValueChangedError as error:
         raise ValueError("다른 작업자가 행사 설정을 변경했습니다. 공유 설정을 다시 연 뒤 수정해 주세요.") from error
