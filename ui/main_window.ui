@@ -186,7 +186,7 @@
                  </font>
                 </property>
                 <property name="text">
-                 <string>주문 정보가 없습니다.</string>
+                 <string>주문 엑셀을 끌어다 놓으세요</string>
                 </property>
                 <property name="alignment">
                  <set>Qt::AlignmentFlag::AlignCenter</set>
@@ -304,7 +304,7 @@
                    <string>color: #9e9e9e; background: palette(base);</string>
                   </property>
                   <property name="text">
-                   <string>주문 엑셀을 불러오면 여기에 주문 미리보기가 표시됩니다.</string>
+                   <string>주문 엑셀을 불러오거나 이 패널에 끌어다 놓으면 여기에 주문 미리보기가 표시됩니다.</string>
                   </property>
                   <property name="alignment">
                    <set>Qt::AlignmentFlag::AlignCenter</set>
@@ -445,7 +445,7 @@
                  </sizepolicy>
                 </property>
                 <property name="text">
-                 <string>송장 정보가 없습니다.</string>
+                 <string>송장 엑셀을 끌어다 놓으세요</string>
                 </property>
                 <property name="alignment">
                  <set>Qt::AlignmentFlag::AlignCenter</set>
@@ -521,7 +521,7 @@
                <enum>QFrame::Shadow::Plain</enum>
               </property>
               <property name="placeholderText">
-               <string>송장을 불러오거나 일괄 발송을 생성하면 여기에 표시됩니다.</string>
+               <string>송장 엑셀을 불러오거나 이 패널에 끌어다 놓으면 여기에 표시되고, 일괄 발송 파일이 만들어집니다.</string>
               </property>
              </widget>
             </item>

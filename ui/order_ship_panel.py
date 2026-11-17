@@ -9,8 +9,9 @@ from __future__ import annotations
 from html import escape
 from pathlib import Path
 
-from PySide6.QtCore import QRectF, Qt
+from PySide6.QtCore import QEvent, QObject, QRectF, Qt, QTimer
 from PySide6.QtGui import QColor, QFont, QPainter, QPen, QPixmap
+from PySide6.QtWidgets import QLabel
 
 STAGE_ORDER = "order"        # 주문을 불러올 차례
 STAGE_INTAKE = "intake"      # 우체국 접수 엑셀을 만들 차례
@@ -116,6 +117,89 @@ def store_badge_pixmap(store_type, image_dir, size, dpr=1.0):
                 draw_text(store, rect, 8)
     painter.end()
     return canvas
+
+
+EXCEL_SUFFIXES = (".xlsx", ".xls")
+DROP_ZONE_STYLE = "border: 1px dashed #b7bec8; border-radius: 4px;"
+DROP_OVERLAY_STYLE = (
+    "QLabel { background: rgba(232, 240, 254, 225); color: #1a73e8; font-weight: 600;"
+    " border: 2px dashed #1a73e8; border-radius: 6px; }"
+)
+
+
+def excel_paths_from_mime(mime) -> list:
+    """끌어온 내용에서 로컬 엑셀 파일 경로만 고른다."""
+    if mime is None or not mime.hasUrls():
+        return []
+    paths = []
+    for url in mime.urls():
+        if url.isLocalFile():
+            path = url.toLocalFile()
+            if path.lower().endswith(EXCEL_SUFFIXES):
+                paths.append(path)
+    return paths
+
+
+class FileDropTarget(QObject):
+    """패널 위젯에 엑셀 파일 끌어다 놓기를 붙인다.
+
+    엑셀 파일 한 개만 받는다. 끌어오는 동안 패널 위에 안내 덮개를 보이고, 놓으면 이벤트 처리가 끝난 뒤
+    on_drop(경로)를 부른다(놓는 순간 확인 창을 띄우면 탐색기 끌기가 그동안 멈추기 때문).
+    """
+
+    def __init__(self, panel, on_drop, hint_text):
+        super().__init__(panel)
+        self._panel = panel
+        self._on_drop = on_drop
+        self._overlay = QLabel(hint_text, panel)
+        self._overlay.setObjectName(f"{panel.objectName()}_drop_overlay")
+        self._overlay.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._overlay.setWordWrap(True)
+        self._overlay.setStyleSheet(DROP_OVERLAY_STYLE)
+        self._overlay.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self._overlay.hide()
+        panel.setAcceptDrops(True)
+        panel.installEventFilter(self)
+
+    @property
+    def overlay(self):
+        return self._overlay
+
+    def _show_overlay(self, show):
+        if show:
+            self._overlay.setGeometry(self._panel.rect())
+            self._overlay.raise_()
+            self._overlay.show()
+        else:
+            self._overlay.hide()
+
+    def eventFilter(self, obj, event):
+        if obj is not self._panel:
+            return False
+        kind = event.type()
+        if kind in (QEvent.Type.DragEnter, QEvent.Type.DragMove):
+            if len(excel_paths_from_mime(event.mimeData())) == 1:
+                event.acceptProposedAction()
+                self._show_overlay(True)
+            else:
+                event.ignore()
+            return True
+        if kind == QEvent.Type.DragLeave:
+            self._show_overlay(False)
+            return True
+        if kind == QEvent.Type.Drop:
+            self._show_overlay(False)
+            paths = excel_paths_from_mime(event.mimeData())
+            if len(paths) != 1:
+                event.ignore()
+                return True
+            event.acceptProposedAction()
+            path = paths[0]
+            QTimer.singleShot(0, lambda: self._on_drop(path))
+            return True
+        if kind == QEvent.Type.Resize and self._overlay.isVisible():
+            self._overlay.setGeometry(self._panel.rect())
+        return False
 
 
 def next_stage(*, has_orders: bool, intake_done: bool, batch_done: bool) -> str:

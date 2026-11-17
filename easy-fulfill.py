@@ -117,7 +117,11 @@ from ui.gift_event_settings import GiftEventSettingsDialog
 from ui.order_ship_panel import (
     STAGE_INTAKE, STAGE_INVOICE, STAGE_ORDER, STAGE_RECEIPT, STORE_NAMES, apply_primary, next_stage,
     order_summary_html, ship_summary_html, stabilize_widths, store_badge_pixmap,
+    DROP_ZONE_STYLE, FileDropTarget,
 )
+
+ORDER_IDLE_TEXT = "주문 엑셀을 끌어다 놓으세요"
+INVOICE_IDLE_TEXT = "송장 엑셀을 끌어다 놓으세요"
 from ui.order_preview import (
     CODE_MISSING_BACKGROUND, NON_PARCEL_BACKGROUND, PreviewOrder, PreviewProduct,
     setup_preview_view, show_preview, summary_counts,
@@ -5535,6 +5539,38 @@ class MainWindow(QMainWindow):
                 button.clicked.connect(lambda _checked=False, h=handler: h())
         stabilize_widths(getattr(self.ui, name, None) for name, *_ in specs)
 
+    def _setup_order_ship_drop_targets(self):
+        """주문·발송 패널에 엑셀 끌어다 놓기를 붙인다(파일 대화상자 없이 같은 검증으로 불러오기)."""
+        order_panel = getattr(self.ui, "widget_order_panel", None)
+        ship_panel = getattr(self.ui, "widget_ship_panel", None)
+        if order_panel is not None:
+            self._order_drop_target = FileDropTarget(
+                order_panel, self._on_order_file_dropped, "여기에 놓으면 주문 엑셀을 불러옵니다")
+        if ship_panel is not None:
+            self._invoice_drop_target = FileDropTarget(
+                ship_panel, self._on_invoice_file_dropped, "여기에 놓으면 우체국 송장 엑셀을 불러옵니다")
+        # 송장 미리보기 글 상자가 파일 경로를 글자로 받아 넣지 않게 하고, 놓기는 패널이 받는다.
+        if hasattr(self.ui, "plainTextEdit_invoice"):
+            self.ui.plainTextEdit_invoice.setAcceptDrops(False)
+
+    def _order_ship_busy(self):
+        overlay = getattr(self, "_busy_overlay", None)
+        return overlay is not None and overlay.isVisible()
+
+    def _on_order_file_dropped(self, file_path):
+        if self._order_ship_busy():
+            self.statusBar().showMessage("처리 중입니다. 끝난 뒤 다시 놓아 주세요.", 3000)
+            return
+        print(f"\n[주문 엑셀 끌어다 놓기] {file_path}")
+        self._load_order_file(file_path)
+
+    def _on_invoice_file_dropped(self, file_path):
+        if self._order_ship_busy():
+            self.statusBar().showMessage("처리 중입니다. 끝난 뒤 다시 놓아 주세요.", 3000)
+            return
+        print(f"\n[송장 엑셀 끌어다 놓기] {file_path}")
+        self._load_invoice_path(file_path)
+
     def _refresh_order_ship_panels(self):
         """주문·발송 탭: 다음에 할 동작 하나만 강조하고, 쓸 수 없는 버튼은 끈다."""
         if not hasattr(self, "ui"):
@@ -5596,8 +5632,9 @@ class MainWindow(QMainWindow):
             return
         label.setProperty("_full_text", text)
         label.setAlignment(Qt.AlignCenter)
+        # 파일 상태 칸은 끌어다 놓을 수 있는 곳임을 점선 테두리로 보여 준다.
         label.setStyleSheet(
-            "color: #2e7d32; font-weight: 600;" if ok else "color: #888888;")
+            ("color: #2e7d32; font-weight: 600;" if ok else "color: #888888;") + DROP_ZONE_STYLE)
         # 리사이즈 시 다시 줄이도록 이벤트 필터 1회 등록
         if not hasattr(self, "_elide_labels"):
             self._elide_labels = set()
@@ -5711,6 +5748,7 @@ class MainWindow(QMainWindow):
         self.ui.pushButton_load_order.clicked.connect(self.select_excel_file)
         self.ui.pushButton_load_invoice.clicked.connect(self.load_invoice_file)
         self._setup_order_ship_buttons()
+        self._setup_order_ship_drop_targets()
         # 「생성」 버튼/체크박스 제거: 송장 로드 성공 시 자동 생성(상시).
 
         # 환경설정 탭 버튼 연결
@@ -5774,8 +5812,8 @@ class MainWindow(QMainWindow):
         self._build_admin_tracking_settings()
         # 주문·발송 탭 초기 상태: 앱 로고 + 회색 상태 텍스트 + 생성 버튼 비활성
         self._reset_idle_logo()
-        self._set_status_label(self.ui.filePathLabel, "주문 정보가 없습니다.")
-        self._set_status_label(self.ui.label_invoice, "송장 정보가 없습니다.")
+        self._set_status_label(self.ui.filePathLabel, ORDER_IDLE_TEXT)
+        self._set_status_label(self.ui.label_invoice, INVOICE_IDLE_TEXT)
         self._refresh_order_ship_panels()
         if hasattr(self.ui, "tableWidget_tracking"):
             # 마우스 올릴 때 생기는 파란 호버 하이라이트 제거(위험행 색칠·선택은 유지).
@@ -7381,60 +7419,64 @@ class MainWindow(QMainWindow):
         "Excel Files (*.xlsx *.xls)"
         )                
         if file_path:
-            print(f"\n[파일 선택됨] 경로: {file_path}")
-            filename = os.path.basename(file_path)
-            
-            # 스토어 종류는 확인 질문을 통과한 뒤에 바꾼다(취소하면 기존 주문 상태 유지).
-            is_valid, store_type = self.is_valid_filename(filename)
-
-            if is_valid:
-                # 중복 로드 차단: 오늘 이미 불러온 동일 파일이면 확인(기본 취소).
-                # 실수로 같은 주문을 또 불러와 인덱스가 중복으로 올라가는 것을 방지.
-                if self._is_duplicate_order_file(file_path):
-                    if QMessageBox.question(
-                        self, "중복 불러오기 확인",
-                        f"이미 오늘 불러온 주문 파일입니다:\n{filename}\n\n"
-                        "다시 불러오면 주문번호 인덱스가 또 올라갑니다. 계속할까요?",
-                    ) != QMessageBox.StandardButton.Yes:
-                        self.statusBar().showMessage("중복 파일 — 불러오기 취소")
-                        print("⏭ 중복 파일로 불러오기를 취소했습니다.")
-                        return
-                self.store_type = store_type
-                # '오늘 불러온 파일' 기록은 처리에 성공한 뒤 남긴다(_finish_order_processing).
-                self._pending_loaded_order_path = file_path
-                self._naver_order_source = "file"
-                self._naver_dispatch_api_rows = None  # 엑셀 주문서로 바꾸면 API 주문 행은 쓰지 않는다.
-                self.selected_file_path = file_path
-                self._set_status_label(self.ui.filePathLabel, filename, ok=True)
-                self.statusBar().showMessage(f"파일 선택됨: {filename}")
-                print("✓ 파일이 성공적으로 선택되었습니다.")
-
-                self._show_busy_processing_overlay(
-                    "주문 정보를 불러오는 중…",
-                    "스프레드시트와 엑셀을 처리하고 있습니다. 잠시만 기다려 주세요.",
-                )
-                QApplication.processEvents()
-
-                # 인덱스 동기화를 백그라운드로 수행한 뒤(UI 비차단) 파일 처리로 이어감.
-                self._begin_order_index_read(
-                    interactive=False,
-                    on_applied=self._continue_order_file_processing_after_index,
-                    defer_if_busy=True,
-                )
-            else:
-                # 잘못 고른 파일은 거절만 하고, 이미 불러온 주문 상태는 그대로 둔다.
-                QMessageBox.warning(
-                    self,
-                    "잘못된 파일명",
-                    "올바른 파일명 형식이 아닙니다.\n\n"
-                    "네이버 스토어: 스마트스토어_전체주문발주발송관리_YYYYMMDD_HHMM.xlsx\n"
-                    "쿠팡 스토어: DeliveryList(YYYY-MM-DD)_(0).xlsx"
-                )
-                self.statusBar().showMessage("잘못된 파일명 — 기존 주문 정보를 유지합니다.")
-                print("❌ 파일 선택이 취소되었습니다.")
+            self._load_order_file(file_path)
         else:
             # 파일 선택 창을 취소해도 이미 불러온 주문 상태는 그대로 둔다.
             print("\n[알림] 파일 선택이 취소되었습니다.")
+
+    def _load_order_file(self, file_path):
+        """주문 엑셀 경로를 검증하고 불러온다(파일 대화상자·끌어다 놓기 공통)."""
+        print(f"\n[파일 선택됨] 경로: {file_path}")
+        filename = os.path.basename(file_path)
+        
+        # 스토어 종류는 확인 질문을 통과한 뒤에 바꾼다(취소하면 기존 주문 상태 유지).
+        is_valid, store_type = self.is_valid_filename(filename)
+        
+        if is_valid:
+            # 중복 로드 차단: 오늘 이미 불러온 동일 파일이면 확인(기본 취소).
+            # 실수로 같은 주문을 또 불러와 인덱스가 중복으로 올라가는 것을 방지.
+            if self._is_duplicate_order_file(file_path):
+                if QMessageBox.question(
+                    self, "중복 불러오기 확인",
+                    f"이미 오늘 불러온 주문 파일입니다:\n{filename}\n\n"
+                    "다시 불러오면 주문번호 인덱스가 또 올라갑니다. 계속할까요?",
+                ) != QMessageBox.StandardButton.Yes:
+                    self.statusBar().showMessage("중복 파일 — 불러오기 취소")
+                    print("⏭ 중복 파일로 불러오기를 취소했습니다.")
+                    return
+            self.store_type = store_type
+            # '오늘 불러온 파일' 기록은 처리에 성공한 뒤 남긴다(_finish_order_processing).
+            self._pending_loaded_order_path = file_path
+            self._naver_order_source = "file"
+            self._naver_dispatch_api_rows = None  # 엑셀 주문서로 바꾸면 API 주문 행은 쓰지 않는다.
+            self.selected_file_path = file_path
+            self._set_status_label(self.ui.filePathLabel, filename, ok=True)
+            self.statusBar().showMessage(f"파일 선택됨: {filename}")
+            print("✓ 파일이 성공적으로 선택되었습니다.")
+        
+            self._show_busy_processing_overlay(
+                "주문 정보를 불러오는 중…",
+                "스프레드시트와 엑셀을 처리하고 있습니다. 잠시만 기다려 주세요.",
+            )
+            QApplication.processEvents()
+        
+            # 인덱스 동기화를 백그라운드로 수행한 뒤(UI 비차단) 파일 처리로 이어감.
+            self._begin_order_index_read(
+                interactive=False,
+                on_applied=self._continue_order_file_processing_after_index,
+                defer_if_busy=True,
+            )
+        else:
+            # 잘못 고른 파일은 거절만 하고, 이미 불러온 주문 상태는 그대로 둔다.
+            QMessageBox.warning(
+                self,
+                "잘못된 파일명",
+                "올바른 파일명 형식이 아닙니다.\n\n"
+                "네이버 스토어: 스마트스토어_전체주문발주발송관리_YYYYMMDD_HHMM.xlsx\n"
+                "쿠팡 스토어: DeliveryList(YYYY-MM-DD)_(0).xlsx"
+            )
+            self.statusBar().showMessage("잘못된 파일명 — 기존 주문 정보를 유지합니다.")
+            print("❌ 파일 선택이 취소되었습니다.")
 
     def _finish_order_processing(self, ok):
         """주문 처리 결과를 반영한다. 성공한 경우에만 유효로 표시하고 '오늘 불러온 파일'로 기록한다."""
@@ -8497,14 +8539,14 @@ class MainWindow(QMainWindow):
         self.store_type = None
         
         # UI 요소 초기화
-        self._set_status_label(self.ui.filePathLabel, "주문 정보가 없습니다.")
+        self._set_status_label(self.ui.filePathLabel, ORDER_IDLE_TEXT)
         self._show_order_preview("", [])
 
         # 로고 초기화(앱 로고로)
         self._reset_idle_logo()
 
         # 송장 미리보기(주문·발송 탭) 텍스트 초기화
-        self._set_status_label(self.ui.label_invoice, "송장 정보가 없습니다.")
+        self._set_status_label(self.ui.label_invoice, INVOICE_IDLE_TEXT)
         self.ui.plainTextEdit_invoice.setPlainText("")
         
         # 진행 단계와 요약도 처음(주문 불러오기)으로
@@ -9744,126 +9786,130 @@ class MainWindow(QMainWindow):
         "Excel Files (*.xlsx *.xls)"
         )                
         if file_path:
-            try:
-                # plainTextEdit_invoice 초기화
-                self.ui.plainTextEdit_invoice.setPlainText("")
-                
-                print(f"\n[파일 선택됨] 경로: {file_path}")
-                filename = os.path.basename(file_path)
-                
-                # 파일명 검증
-                if not filename.endswith('.xlsx'):
-                    self.is_invoice_file_valid = False
-                    QMessageBox.warning(self, "오류", "파일 확장자가 .xlsx가 아닙니다.")
-                    return
-                    
-                # 파일명에서 확장자를 제외한 부분 추출
-                base_name = filename[:-5]  # .xlsx를 제외
-                
-                # 13자리 숫자 검증
-                if len(base_name) < 13 or not base_name[:13].isdigit():
-                    self.is_invoice_file_valid = False
-                    QMessageBox.warning(
-                        self,
-                        "오류",
-                        "파일명이 올바른 형식이 아닙니다.\n"
-                        "파일명은 13자리 숫자로 시작해야 합니다.\n"
-                        "예: 1744778498617.xlsx 또는 1744171918081 (1).xlsx"
-                    )
-                    return
-                
-                self.invoice_file_path = file_path
-                self._set_status_label(self.ui.label_invoice, filename, ok=True)
-                
-                # 엑셀 파일 읽기(7번째 행을 헤더로 사용). 발송 파일 생성에서 재사용하도록 보관한다.
-                df = self._read_invoice_excel(file_path)
+            self._load_invoice_path(file_path)
 
-                # 필요한 열 찾기
-                required_columns = {
-                    '등기번호': None,
-                    '수취인명': None,
-                    '수취인 이동통신': None,
-                    '수취인상세주소': None
-                }
-                
-                # 열 이름 매칭
-                for col in df.columns:
-                    col_str = str(col).strip()
-                    for key in required_columns.keys():
-                        # if col_str == key:  # 정확히 일치하는 경우에만 매칭
-                        if col_str.replace(' ', '') == key.replace(' ', ''):  # 공백 제거 후 비교
-                            required_columns[key] = col
-                            print(f"✓ '{key}' 열을 찾았습니다: {col}")
-                
-                # 필수 열이 모두 있는지 확인
-                missing_columns = [key for key, value in required_columns.items() if value is None]
-                if missing_columns:
-                    self.is_invoice_file_valid = False
-                    print(f"❌ 다음 열을 찾을 수 없습니다: {', '.join(missing_columns)}")
-                    QMessageBox.warning(self, "오류", f"다음 열을 찾을 수 없습니다:\n{', '.join(missing_columns)}")
-                    return
-                
-                # 마크다운 형식으로 주문 정보 생성
-                markdown_text = ""
-                invoice_rows = 0
-                                
-                # 각 행을 순회하며 주문 정보 생성
-                for idx, (_, row) in enumerate(df.iterrows(), start=1):
-                    # 빈 행 건너뛰기
-                    if pd.isna(row[required_columns['등기번호']]):
-                        continue
-                    invoice_rows += 1
+    def _load_invoice_path(self, file_path):
+        """우체국 송장 엑셀 경로를 검증하고 불러온다(파일 대화상자·끌어다 놓기 공통)."""
+        try:
+            # plainTextEdit_invoice 초기화
+            self.ui.plainTextEdit_invoice.setPlainText("")
 
-                    # 주문 정보 추가 (인덱스 포함)
-                    markdown_text += f"{idx}. {row[required_columns['수취인명']]}\n"
-                    markdown_text += f"  송장번호: {excel_text(row[required_columns['등기번호']])}\n"
-                    markdown_text += f"  이동통신: {excel_text(row[required_columns['수취인 이동통신']])}\n"
-                    markdown_text += f"  주소: {row[required_columns['수취인상세주소']]}\n\n"
+            print(f"\n[파일 선택됨] 경로: {file_path}")
+            filename = os.path.basename(file_path)
 
-                
-                # plainTextEdit_invoice 마크다운 텍스트 표시
-                self.ui.plainTextEdit_invoice.setPlainText(markdown_text)
-                
-                # 클립보드에 자동 복사
-                clipboard = QApplication.clipboard()
-                clipboard.setText(markdown_text)
-                
-                self.statusBar().showMessage(f"송장 파일 선택됨: {filename}")
-                print("✓ 송장 파일이 성공적으로 선택되었습니다.")
-                self.is_invoice_file_valid = True  # 파일 처리 성공 시 플래그 설정
-                self._invoice_row_count = invoice_rows
-                self._refresh_order_ship_panels()
-
-                # 하이브리드 추적: 송장 파일의 모든 등기번호를 공유 시트에 등록
-                # (스토어·주문번호는 이후 매칭 시 보강). 실패해도 발송 흐름은 계속.
-                try:
-                    reg_records = []
-                    for _, r in df.iterrows():
-                        tno = _normalize_tracking_no(r[required_columns['등기번호']])
-                        if not tno:
-                            continue
-                        rname = r[required_columns['수취인명']]
-                        rname = "" if pd.isna(rname) else str(rname).strip()
-                        reg_records.append({
-                            "등기번호": tno, "스토어": "", "주문번호": "", "수취인명": rname,
-                        })
-                    self._enqueue_tracking_registration(reg_records)
-                except Exception as e:
-                    print(f"! 송장추적 등록(전체 등기번호) 준비 중 오류: {e}")
-
-                # 일괄 발송 파일 자동 생성(상시). 주문 미로드 시엔 generate_invoice_file이 안내.
-                self.generate_invoice_file()
-                
-            except Exception as e:
+            # 파일명 검증
+            if not filename.endswith('.xlsx'):
                 self.is_invoice_file_valid = False
-                error_msg = str(e)
-                print(f"❌ 엑셀 파일 처리 중 오류 발생: {error_msg}")
-                # 사용자에게는 간단한 메시지만 표시
+                QMessageBox.warning(self, "오류", "파일 확장자가 .xlsx가 아닙니다.")
+                return
+
+            # 파일명에서 확장자를 제외한 부분 추출
+            base_name = filename[:-5]  # .xlsx를 제외
+
+            # 13자리 숫자 검증
+            if len(base_name) < 13 or not base_name[:13].isdigit():
+                self.is_invoice_file_valid = False
                 QMessageBox.warning(
                     self,
                     "오류",
-                    "올바르지 않은 파일 형식입니다."
+                    "파일명이 올바른 형식이 아닙니다.\n"
+                    "파일명은 13자리 숫자로 시작해야 합니다.\n"
+                    "예: 1744778498617.xlsx 또는 1744171918081 (1).xlsx"
                 )
+                return
+
+            self.invoice_file_path = file_path
+            self._set_status_label(self.ui.label_invoice, filename, ok=True)
+
+            # 엑셀 파일 읽기(7번째 행을 헤더로 사용). 발송 파일 생성에서 재사용하도록 보관한다.
+            df = self._read_invoice_excel(file_path)
+
+            # 필요한 열 찾기
+            required_columns = {
+                '등기번호': None,
+                '수취인명': None,
+                '수취인 이동통신': None,
+                '수취인상세주소': None
+            }
+
+            # 열 이름 매칭
+            for col in df.columns:
+                col_str = str(col).strip()
+                for key in required_columns.keys():
+                    # if col_str == key:  # 정확히 일치하는 경우에만 매칭
+                    if col_str.replace(' ', '') == key.replace(' ', ''):  # 공백 제거 후 비교
+                        required_columns[key] = col
+                        print(f"✓ '{key}' 열을 찾았습니다: {col}")
+
+            # 필수 열이 모두 있는지 확인
+            missing_columns = [key for key, value in required_columns.items() if value is None]
+            if missing_columns:
+                self.is_invoice_file_valid = False
+                print(f"❌ 다음 열을 찾을 수 없습니다: {', '.join(missing_columns)}")
+                QMessageBox.warning(self, "오류", f"다음 열을 찾을 수 없습니다:\n{', '.join(missing_columns)}")
+                return
+
+            # 마크다운 형식으로 주문 정보 생성
+            markdown_text = ""
+            invoice_rows = 0
+
+            # 각 행을 순회하며 주문 정보 생성
+            for idx, (_, row) in enumerate(df.iterrows(), start=1):
+                # 빈 행 건너뛰기
+                if pd.isna(row[required_columns['등기번호']]):
+                    continue
+                invoice_rows += 1
+
+                # 주문 정보 추가 (인덱스 포함)
+                markdown_text += f"{idx}. {row[required_columns['수취인명']]}\n"
+                markdown_text += f"  송장번호: {excel_text(row[required_columns['등기번호']])}\n"
+                markdown_text += f"  이동통신: {excel_text(row[required_columns['수취인 이동통신']])}\n"
+                markdown_text += f"  주소: {row[required_columns['수취인상세주소']]}\n\n"
+
+
+            # plainTextEdit_invoice 마크다운 텍스트 표시
+            self.ui.plainTextEdit_invoice.setPlainText(markdown_text)
+
+            # 클립보드에 자동 복사
+            clipboard = QApplication.clipboard()
+            clipboard.setText(markdown_text)
+
+            self.statusBar().showMessage(f"송장 파일 선택됨: {filename}")
+            print("✓ 송장 파일이 성공적으로 선택되었습니다.")
+            self.is_invoice_file_valid = True  # 파일 처리 성공 시 플래그 설정
+            self._invoice_row_count = invoice_rows
+            self._refresh_order_ship_panels()
+
+            # 하이브리드 추적: 송장 파일의 모든 등기번호를 공유 시트에 등록
+            # (스토어·주문번호는 이후 매칭 시 보강). 실패해도 발송 흐름은 계속.
+            try:
+                reg_records = []
+                for _, r in df.iterrows():
+                    tno = _normalize_tracking_no(r[required_columns['등기번호']])
+                    if not tno:
+                        continue
+                    rname = r[required_columns['수취인명']]
+                    rname = "" if pd.isna(rname) else str(rname).strip()
+                    reg_records.append({
+                        "등기번호": tno, "스토어": "", "주문번호": "", "수취인명": rname,
+                    })
+                self._enqueue_tracking_registration(reg_records)
+            except Exception as e:
+                print(f"! 송장추적 등록(전체 등기번호) 준비 중 오류: {e}")
+
+            # 일괄 발송 파일 자동 생성(상시). 주문 미로드 시엔 generate_invoice_file이 안내.
+            self.generate_invoice_file()
+
+        except Exception as e:
+            self.is_invoice_file_valid = False
+            error_msg = str(e)
+            print(f"❌ 엑셀 파일 처리 중 오류 발생: {error_msg}")
+            # 사용자에게는 간단한 메시지만 표시
+            QMessageBox.warning(
+                self,
+                "오류",
+                "올바르지 않은 파일 형식입니다."
+            )
                 
     @staticmethod
     def _invoice_excel_from_bytes(data):

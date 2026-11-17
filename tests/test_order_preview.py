@@ -227,6 +227,74 @@ def run_scenario(name):
             flow["cleared"] = stage_snapshot()
             result["flow"] = flow
             result["loaded"] = True
+        elif name == "drop":
+            # 파일 대화상자 없이 패널에 끌어다 놓아 불러오기
+            from PySide6.QtCore import QMimeData, QPoint, QPointF, QUrl
+            from PySide6.QtGui import QDragEnterEvent, QDragLeaveEvent, QDropEvent
+            warnings = []
+            QMessageBox.warning.side_effect = lambda *a, **k: warnings.append(a[1] if len(a) > 1 else "")
+
+            def mime(*paths):
+                data = QMimeData()
+                data.setUrls([QUrl.fromLocalFile(str(p)) for p in paths])
+                return data
+
+            def enter(panel, data):
+                event = QDragEnterEvent(QPoint(20, 20), Qt.DropAction.CopyAction, data,
+                                        Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
+                QApplication.sendEvent(panel, event)
+                return event.isAccepted()
+
+            def drop(panel, data):
+                accepted = enter(panel, data)
+                event = QDropEvent(QPointF(20, 20), Qt.DropAction.CopyAction, data,
+                                   Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
+                QApplication.sendEvent(panel, event)
+                return accepted and event.isAccepted()
+
+            window.ui.tabWidget.setCurrentIndex(0)
+            order_panel, ship_panel = window.ui.widget_order_panel, window.ui.widget_ship_panel
+            order_file = work / "DeliveryList(2026-11-17)_(0).xlsx"
+            _coupang_frame(pd).to_excel(order_file, index=False)
+            other = work / "메모.txt"
+            other.write_text("x", encoding="utf-8")
+            drops = {
+                "two_files": enter(order_panel, mime(order_file, order_file)),
+                "not_excel": enter(order_panel, mime(other)),
+                "one_excel": enter(order_panel, mime(order_file)),
+                "overlay_shown": window._order_drop_target.overlay.isVisible(),
+            }
+            QApplication.sendEvent(order_panel, QDragLeaveEvent())
+            drops["overlay_after_leave"] = window._order_drop_target.overlay.isVisible()
+            drops["invoice_text_accepts_drops"] = window.ui.plainTextEdit_invoice.acceptDrops()
+            window._prefetched_order_mapping = {
+                "store_type": "coupang", "ok": True,
+                "mapping": {"501": "C-UNOR4", "502": "C-BB830"}, "coupang_vp": {"501": "9001"},
+            }
+            drops["order_drop_accepted"] = drop(order_panel, mime(order_file))
+            drops["overlay_after_drop"] = window._order_drop_target.overlay.isVisible()
+            result["loaded"] = _pump(app, lambda: window.is_order_file_valid)
+            drops["store"] = window.store_type
+            drops["file_label"] = window.ui.filePathLabel.property("_full_text")
+            # 송장 엑셀을 ① 패널에 잘못 놓으면 파일명 검사에서 거절되고 불러온 주문은 그대로
+            invoice = work / "1744778498617.xlsx"
+            pd.DataFrame([
+                ["6000000000001", "최가람", "010-1212-3434", "010-1212-3434", "서울 마포구 5"],
+                ["6000000000002", "정다운", "010-5656-7878", "010-5656-7878", "광주 북구 6"],
+            ], columns=["등기번호", "수취인명", "수취인 이동통신", "수취인 전화번호", "수취인상세주소"]
+            ).to_excel(invoice, index=False, startrow=6)
+            drop(order_panel, mime(invoice))
+            _pump(app, lambda: bool(warnings), timeout=3)
+            drops["wrong_panel_warning"] = warnings[:]
+            drops["orders_kept"] = [window.store_type, window.is_order_file_valid, len(window.orders)]
+            # ② 패널에 송장을 놓으면 일괄발송 파일까지 만들어진다
+            window._enqueue_tracking_registration = lambda records: None  # 공유 시트에 쓰지 않는다
+            with patch.object(QMessageBox, "exec", lambda self: 0):
+                drops["invoice_drop_accepted"] = drop(ship_panel, mime(invoice))
+                _pump(app, lambda: window._ship_batch_done, timeout=10)
+            drops["ship_summary"] = window.ui.label_ship_summary.text()
+            drops["ship_files"] = len(list((work / "output").glob("일괄발송_쿠팡_*.xlsx")))
+            result["drops"] = drops
         elif name == "gmarket":
             path = work / "발송관리.xlsx"
             _gmarket_frame(pd).to_excel(path, index=False)
@@ -238,7 +306,7 @@ def run_scenario(name):
             with patch.object(app_module, "run_in_background", lambda func, *a, **k: frame.copy()):
                 load(path)
 
-        if name == "flow":
+        if name in ("flow", "drop"):
             print("RESULT " + json.dumps(result, ensure_ascii=False), flush=True)
             os._exit(0)
         result["auto_copied"] = clipboard.text()
@@ -403,6 +471,28 @@ class OrderShipStageTests(unittest.TestCase):
         self.assertEqual(flow["receipt_clicked"], ["receipt"])
         self.assertEqual(flow["cleared"]["primary"], ["pushButton_load_order"])
         self.assertFalse(flow["cleared"]["enabled"]["pushButton_copy_order"])
+
+
+class FileDropTests(unittest.TestCase):
+    def test_drop_excel_on_panels(self):
+        result = scenario("drop")
+        drops = result["drops"]
+        self.assertFalse(drops["two_files"])
+        self.assertFalse(drops["not_excel"])
+        self.assertTrue(drops["one_excel"])
+        self.assertTrue(drops["overlay_shown"])
+        self.assertFalse(drops["overlay_after_leave"])
+        self.assertFalse(drops["invoice_text_accepts_drops"])
+        self.assertTrue(drops["order_drop_accepted"])
+        self.assertFalse(drops["overlay_after_drop"])
+        self.assertTrue(result["loaded"])
+        self.assertEqual(drops["store"], "coupang")
+        self.assertEqual(drops["file_label"], "DeliveryList(2026-11-17)_(0).xlsx")
+        self.assertEqual(drops["wrong_panel_warning"], ["잘못된 파일명"])
+        self.assertEqual(drops["orders_kept"], ["coupang", True, 2])
+        self.assertTrue(drops["invoice_drop_accepted"])
+        self.assertIn("송장 매칭 2/2", drops["ship_summary"])
+        self.assertEqual(drops["ship_files"], 1)
 
 
 class OrderLoadAndCopyTests(unittest.TestCase):
