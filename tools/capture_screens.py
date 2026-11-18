@@ -366,6 +366,12 @@ def _worker(scale, out_dir, platform, groups):
             # 막힌 네트워크로 실패하는 목록 읽기와 탭 진입 때의 건수 갱신이 경쟁해 건수 문구가 매번 달라진다.
             # 읽기를 하지 않아 빈 목록(처음 실행한 PC와 같은 상태)으로 고정한다.
             main_window_cls._load_tracking_list = lambda self: None
+        try:  # 컨트롤러가 직접 부르는 경로(탭 진입·필터·주기 갱신)도 막는다
+            import tracking.controller as tracking_controller
+
+            tracking_controller.TrackingController._load_tracking_list = lambda self: None
+        except Exception as exc:
+            errors.append(f"배송추적 목록 고정 실패: {exc}")
 
         window = main_window_cls()
         window_holder.append(window)

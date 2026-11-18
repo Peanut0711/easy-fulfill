@@ -124,8 +124,8 @@
 |---|---|---|---|
 | 0 기준선 | 완료 | `78b0992` | 캡처 84장(3배율 × 28), 같은 커밋 3회 캡처 모두 같음. 기준 캡처 `captures/base-78b0992` |
 | 1-1 안 쓰는 생성 파일 삭제 | 완료 | `8c5a939` | `ui/main_window.py`, `ui/main_window_ui.py`. 캡처 84장 기준과 같음 |
-| 1-2a 공통 틀(메뉴바·상태바·알림 띠·오버레이·단축키) 믹스인 | 완료 | (이 줄을 고친 커밋) | `ui/main/chrome.py` `ChromeMixin`(메서드 25개, `EXTRA_SHORTCUT_HELP`, 시작 진행 상수, `CircularBusySpinner`). `easy-fulfill.py` 11,649→10,899줄. 테스트가 `vars(MainWindow)`로 메서드를 꺼내던 곳은 믹스인까지 찾는 `main_window_members`로 바꿈. 캡처 84장 기준과 같음 |
-| 1-2b 시작·종료·창 위치 믹스인 | 대기 | | `ui/main/startup.py` |
+| 1-2a 공통 틀(메뉴바·상태바·알림 띠·오버레이·단축키) 믹스인 | 완료 | `9b8b320` | `ui/main/chrome.py` `ChromeMixin`(메서드 25개, `EXTRA_SHORTCUT_HELP`, 시작 진행 상수, `CircularBusySpinner`). `easy-fulfill.py` 11,649→10,899줄. 테스트가 `vars(MainWindow)`로 메서드를 꺼내던 곳은 믹스인까지 찾는 `main_window_members`로 바꿈. 캡처 84장 기준과 같음 |
+| 1-2b 시작·종료·창 위치 믹스인 | 완료 | (이 줄을 고친 커밋) | `ui/main/startup.py` `StartupMixin`(화면 불러오기, 창 위치, 이 PC 앱 설정, 버전 확인·업데이트 안내, 닫을 때 시트 쓰기 마무리, 메서드 21개). `easy-fulfill.py`에 남는 전역은 `host(self).이름`으로 실행 시점에 찾는다(R2). `easy-fulfill.py` 10,899→10,536줄. 캡처 도구가 배송추적 컨트롤러의 목록 읽기도 막도록 고침(그전에는 가끔 실패 문구가 찍혀 1장이 달랐음). 캡처 84장 기준과 같음 |
 | 1-2c 설정 탭 믹스인 | 대기 | | `ui/main/settings.py` |
 | 1-2d 상세페이지 탭 믹스인 | 대기 | | `ui/main/detail_page.py` |
 | 1-2e 단건 송장·문서 만들기 탭 믹스인 | 대기 | | `ui/main/quick_invoice.py`, `ui/main/documents.py` |
@@ -153,6 +153,7 @@
 | # | 하위 작업 | 질문 | 권장안으로 진행한 내용 | 결정 |
 |---|---|---|---|---|
 | R1 | 1-2 | 화면 코드를 나누는 방식. 이전 [기능 분리 계획](easy-fulfill-refactoring-plan.md)은 `tracking/controller.py`처럼 탭별 컨트롤러 객체(위임 메서드)를 목표로 한다 | 이번에는 `MainWindow` 믹스인으로 옮기기만 한다. 메서드 이름과 `self.…`가 그대로라 테스트·위임이 바뀌지 않고 「모양·동작 그대로」를 캡처로 검증할 수 있다. 컨트롤러로 바꾸는 일은 기능 분리 계획에서 따로 한다 | |
+| R2 | 1-2b | 믹스인으로 옮긴 코드가 `easy-fulfill.py`에 남은 전역(작업 스레드 클래스, `gspread`, 상수)을 어떻게 쓸지 | `ui/main/__init__.py` `host(self)`가 `MainWindow.__init__.__globals__`(그 모듈의 전역 dict)를 돌려주고 `host(self).OrderIndexWriteThread`처럼 읽는다. 옮기기 전과 같은 값을 쓰고, 테스트의 `patch.object(app_module, …)`도 그대로 통한다. 작업 스레드를 도메인 모듈로 옮기면(기능 분리 계획) 직접 import로 바꾼다 | |
 
 ## 버전 이력 초안
 
