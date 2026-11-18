@@ -1118,7 +1118,7 @@ class TrackingController(QObject):
         """저장된 우체국 인증키의 유효성을 백그라운드로 확인해 상태 텍스트만 갱신합니다."""
         key = self._get_kpost_regkey()
         if not key:
-            self._set_key_status_text("인증키: 미설정 — 「키 변경」으로 등록하세요.")
+            self._set_key_status_text("인증키: 미설정")
             return
         if gspread is None:
             self._set_key_status_text("인증키: 설정됨 (오프라인 — 유효성 미확인)")
@@ -1190,7 +1190,7 @@ class TrackingController(QObject):
             if valid:
                 self._set_key_status_text("인증키: 유효함 ✓")
             else:
-                self._set_key_status_text("인증키: 확인 실패 — 「키 변경」으로 다시 등록")
+                self._set_key_status_text("인증키: 확인 실패 — 「변경」으로 다시 등록")
 
     def _commit_kpost_regkey(self, key):
         """검증된 우체국 regkey 를 로컬과 공유 「설정」 탭에 저장합니다."""
@@ -1284,6 +1284,9 @@ class TrackingController(QObject):
                 except (TypeError, ValueError):
                     pass
         # 공유 설정 수신 후 상태 텍스트·정체기준·알림시간대·자동새로고침·표 갱신
+        apply_keys = getattr(self.host, "_apply_shared_key_registration", None)
+        if apply_keys is not None:
+            apply_keys(payload.get("shared_keys") if payload.get("ok") else None)
         self._refresh_key_status()
         self._refresh_slack_status()
         self._sync_stale_threshold_spinboxes()

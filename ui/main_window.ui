@@ -1241,19 +1241,19 @@
                   </widget>
                  </item>
                  <item>
-                  <widget class="QPushButton" name="pushButton_google_disconnect">
+                  <widget class="QPushButton" name="pushButton_google_open_oauth_folder">
                    <property name="text">
-                    <string>연결 해제</string>
-                   </property>
-                   <property name="toolTip">
-                    <string>이 PC의 token.json만 삭제합니다. (계정 비밀번호 변경과는 별개)</string>
+                    <string>인증 폴더 열기</string>
                    </property>
                   </widget>
                  </item>
                  <item>
-                  <widget class="QPushButton" name="pushButton_google_open_oauth_folder">
+                  <widget class="QPushButton" name="pushButton_google_open_sheet">
                    <property name="text">
-                    <string>인증 폴더 열기</string>
+                    <string>공유 시트 열기</string>
+                   </property>
+                   <property name="toolTip">
+                    <string>공유 데이터베이스 Google 시트를 브라우저로 엽니다(바로가기 메뉴 「데이터베이스 시트」, Ctrl+D와 같음).</string>
                    </property>
                   </widget>
                  </item>
@@ -1269,6 +1269,16 @@
                     </size>
                    </property>
                   </spacer>
+                 </item>
+                 <item>
+                  <widget class="QPushButton" name="pushButton_google_disconnect">
+                   <property name="text">
+                    <string>연결 해제</string>
+                   </property>
+                   <property name="toolTip">
+                    <string>이 PC의 token.json만 삭제합니다. (계정 비밀번호 변경과는 별개)</string>
+                   </property>
+                  </widget>
                  </item>
                 </layout>
                </item>
@@ -1299,74 +1309,113 @@
               <property name="title">
                <string>API 키 · 전원 공유</string>
               </property>
-              <layout class="QVBoxLayout" name="verticalLayout_api_keys">
-               <item>
-                <widget class="QLabel" name="label_settings_api_status">
+              <layout class="QGridLayout" name="gridLayout_api_keys" columnstretch="0,1,0">
+               <property name="horizontalSpacing"><number>12</number></property>
+               <item row="0" column="0">
+                <widget class="QLabel" name="label_api_name_kpost">
                  <property name="text">
-                  <string>상태 확인 중…</string>
+                  <string>우체국 종추적</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="0" column="1">
+                <widget class="QLabel" name="label_api_status_kpost">
+                 <property name="text">
+                  <string>확인 중…</string>
                  </property>
                  <property name="wordWrap">
                   <bool>true</bool>
                  </property>
-                 <property name="styleSheet">
-                  <string>color: #888;</string>
+                </widget>
+               </item>
+               <item row="0" column="2">
+                <widget class="QPushButton" name="pushButton_cfg_kpost_key">
+                 <property name="text">
+                  <string>변경</string>
+                 </property>
+                 <property name="toolTip">
+                  <string>공유 우체국 국내우편물 종추적 인증키를 등록하거나 변경합니다.</string>
                  </property>
                 </widget>
                </item>
-               <item>
-                <layout class="QHBoxLayout" name="horizontalLayout_api_keys">
-                 <item>
-                  <widget class="QPushButton" name="pushButton_cfg_kpost_key">
-                   <property name="text">
-                    <string>우체국 종추적 키</string>
-                   </property>
-                   <property name="toolTip">
-                    <string>공유 우체국 국내우편물 종추적 인증키를 등록하거나 변경합니다.</string>
-                   </property>
-                  </widget>
-                 </item>
-                 <item>
-                  <widget class="QPushButton" name="pushButton_cfg_naver_key">
-                   <property name="text">
-                    <string>네이버 키</string>
-                   </property>
-                   <property name="toolTip">
-                    <string>네이버 커머스API client_id/secret 입력(검증 후 전원 공유).</string>
-                   </property>
-                  </widget>
-                 </item>
-                 <item>
-                  <widget class="QPushButton" name="pushButton_cfg_coupang_key">
-                   <property name="text">
-                    <string>쿠팡 키</string>
-                   </property>
-                   <property name="toolTip">
-                    <string>쿠팡 WING OpenAPI vendorId/accessKey/secretKey 입력(검증 후 전원 공유).</string>
-                   </property>
-                  </widget>
-                 </item>
-                 <item>
-                  <spacer name="horizontalSpacer_api_keys">
-                   <property name="orientation">
-                    <enum>Qt::Orientation::Horizontal</enum>
-                   </property>
-                   <property name="sizeHint" stdset="0">
-                    <size>
-                     <width>10</width>
-                     <height>20</height>
-                    </size>
-                   </property>
-                  </spacer>
-                 </item>
-                </layout>
+               <item row="1" column="0">
+                <widget class="QLabel" name="label_api_name_postcode">
+                 <property name="text">
+                  <string>우체국 주소 검색</string>
+                 </property>
+                </widget>
                </item>
-               <item alignment="Qt::AlignLeft">
+               <item row="1" column="1">
+                <widget class="QLabel" name="label_api_status_postcode">
+                 <property name="text">
+                  <string>확인 중…</string>
+                 </property>
+                 <property name="wordWrap">
+                  <bool>true</bool>
+                 </property>
+                </widget>
+               </item>
+               <item row="1" column="2">
                 <widget class="QPushButton" name="pushButton_cfg_kpost_postcode_key">
                  <property name="text">
-                  <string>주소 검색용 우편번호 API 키</string>
+                  <string>변경</string>
                  </property>
                  <property name="toolTip">
-                  <string>단건 송장의 주소 검색과 우편번호 조회에 사용할 우체국 인증키를 공유 시트에 등록합니다.</string>
+                  <string>단건 송장의 주소 검색과 우편번호 조회에 사용할 우체국 인증키를 공유 시트에 등록합니다. 비어 있으면 종추적 키로 조회합니다.</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="2" column="0">
+                <widget class="QLabel" name="label_api_name_naver">
+                 <property name="text">
+                  <string>네이버 커머스</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="2" column="1">
+                <widget class="QLabel" name="label_api_status_naver">
+                 <property name="text">
+                  <string>확인 중…</string>
+                 </property>
+                 <property name="wordWrap">
+                  <bool>true</bool>
+                 </property>
+                </widget>
+               </item>
+               <item row="2" column="2">
+                <widget class="QPushButton" name="pushButton_cfg_naver_key">
+                 <property name="text">
+                  <string>변경</string>
+                 </property>
+                 <property name="toolTip">
+                  <string>네이버 커머스API client_id/secret 입력(검증 후 전원 공유).</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="3" column="0">
+                <widget class="QLabel" name="label_api_name_coupang">
+                 <property name="text">
+                  <string>쿠팡 WING</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="3" column="1">
+                <widget class="QLabel" name="label_api_status_coupang">
+                 <property name="text">
+                  <string>확인 중…</string>
+                 </property>
+                 <property name="wordWrap">
+                  <bool>true</bool>
+                 </property>
+                </widget>
+               </item>
+               <item row="3" column="2">
+                <widget class="QPushButton" name="pushButton_cfg_coupang_key">
+                 <property name="text">
+                  <string>변경</string>
+                 </property>
+                 <property name="toolTip">
+                  <string>쿠팡 WING OpenAPI vendorId/accessKey/secretKey 입력(검증 후 전원 공유).</string>
                  </property>
                 </widget>
                </item>

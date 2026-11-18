@@ -64,6 +64,12 @@ CONFIG_KEY_DIGEST_DATE = "digest_last_date"
 CONFIG_KEY_DIGEST_SIG = "digest_last_sig"
 CONFIG_KEY_AUTO_REFRESH_MIN = "tracking_auto_refresh_min"
 CONFIG_KEY_LAST_AUTO_REFRESH = "tracking_last_auto_refresh"
+# 「설정 › 연동 › API 키」 행에 등록 여부만 보이는 공유 키. 값은 화면에 넘기지 않는다.
+SHARED_API_KEY_FIELDS = {
+    "postcode": ("kpost_postcode_regkey",),
+    "naver": ("naver_client_id", "naver_client_secret"),
+    "coupang": ("coupang_vendor_id", "coupang_access_key", "coupang_secret_key"),
+}
 KPOST_PICKUP_HOUR = 18
 KPOST_TRACKING_REQUEST_DELAY_SEC = 0.1
 
@@ -566,6 +572,11 @@ def run_tracking_config_read_worker():
             "inquiry_work_start": cfg.get(CONFIG_KEY_INQUIRY_WORK_START, ""),
             "inquiry_work_end": cfg.get(CONFIG_KEY_INQUIRY_WORK_END, ""),
             "auto_refresh_min": cfg.get(CONFIG_KEY_AUTO_REFRESH_MIN, ""),
+            # 같은 읽기 결과로 공유 키 등록 여부만 넘긴다(시트 읽기를 늘리지 않음).
+            "shared_keys": {
+                name: all(str(cfg.get(field, "") or "").strip() for field in fields)
+                for name, fields in SHARED_API_KEY_FIELDS.items()
+            },
         }
     except Exception as e:
         return {"ok": False, "error": str(e)}

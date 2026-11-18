@@ -3338,6 +3338,9 @@ class MainWindow(QMainWindow):
         # 「설정 › 연동」 Google 상태: 토큰 파일 기준 종류와, 실행 중 시트 작업에서 난 인증 오류.
         self._google_auth_kind = ""
         self._google_auth_runtime_error = ""
+        # 「설정 › 연동 › API 키」의 주소 검색·네이버·쿠팡 행 상태: key → (kind, text, detail)
+        self._shared_key_status = {}
+        self._shared_keys_known = False  # 공유 「설정」 탭을 한 번이라도 읽었는지
         # 네이버 문의 알림(상품문의·고객문의 → 슬랙). 토글은 PC별(app_settings).
         self._naver_inquiry_thread = None
         self._naver_creds_validate_thread = None
@@ -3564,18 +3567,72 @@ class MainWindow(QMainWindow):
             self._dlg_key_status.setText(f"인증키: {self._key_status_text}")
         if self._dlg_slack_status is not None:
             self._dlg_slack_status.setText(f"슬랙 알림: {self._slack_status_text}")
-        if hasattr(self.ui, "label_settings_api_status"):
-            self.ui.label_settings_api_status.setText(
-                f"우체국 종추적: {self._key_status_short()}  ·  "
-                f"문의 키: {self._naver_inquiry_status_text}"
-            )
         label_slack = getattr(self.ui, "label_slack_webhook_status", None)
         if label_slack is not None:
             if "설정됨" in self._slack_status_text:
                 set_status(label_slack, "ok", "설정됨")
             else:
                 set_status(label_slack, "warn", "미설정 — 위험 알림·문의 알림을 보내지 않습니다")
+        self._update_api_key_rows()
         self._update_settings_nav_badges()
+
+    # 「설정 › 연동 › API 키」 행: key → (상태 라벨, 버튼)
+    API_KEY_ROWS = {
+        "kpost": ("label_api_status_kpost", "pushButton_cfg_kpost_key"),
+        "postcode": ("label_api_status_postcode", "pushButton_cfg_kpost_postcode_key"),
+        "naver": ("label_api_status_naver", "pushButton_cfg_naver_key"),
+        "coupang": ("label_api_status_coupang", "pushButton_cfg_coupang_key"),
+    }
+
+    def _api_key_row_status(self, key):
+        """키 행 상태 ``(kind, text, detail)``. 종추적은 기존 키 확인 결과, 나머지는 공유 「설정」 탭에
+        값이 있는지(시작할 때 이미 읽은 값)와 이 PC에서 방금 한 검증 결과로 정한다."""
+        if key == "kpost":
+            text = self._key_status_text.replace("✓", "").replace("  ", " ").strip()
+            return self._key_status_kind(), text, ""
+        return getattr(self, "_shared_key_status", {}).get(key, ("idle", "확인 중…", ""))
+
+    def _update_api_key_rows(self, keys=None):
+        if getattr(self, "ui", None) is None:  # 화면을 만들기 전(또는 화면 없는 테스트)
+            return
+        for key, (label_name, button_name) in self.API_KEY_ROWS.items():
+            if keys is not None and key not in keys:
+                continue
+            kind, text, detail = self._api_key_row_status(key)
+            label = getattr(self.ui, label_name, None)
+            if label is not None:
+                set_status(label, kind, text, detail)
+            button = getattr(self.ui, button_name, None)
+            if button is not None:
+                button.setText("등록" if text.startswith("미설정") else "변경")
+
+    def _shared_key_status_store(self):
+        if "_shared_key_status" not in self.__dict__:
+            self._shared_key_status = {}
+        return self._shared_key_status
+
+    def _set_shared_key_status(self, key, kind, text, detail=""):
+        self._shared_key_status_store()[key] = (kind, text, detail)
+        self._update_api_key_rows((key,))
+
+    def _apply_shared_key_registration(self, registered):
+        """공유 「설정」 탭을 읽은 결과(키별 값 유무)를 키 행에 반영한다. ``None``이면 읽기 실패."""
+        self._shared_key_status_store()
+        if registered is not None:
+            self._shared_keys_known = True
+        for key in ("postcode", "naver", "coupang"):
+            if registered is None:
+                if self._shared_key_status.get(key, ("idle",))[0] == "idle":
+                    self._shared_key_status[key] = ("idle", "확인 못 함 (공유 시트를 읽지 못함)", "")
+                continue
+            if registered.get(key):
+                self._shared_key_status[key] = ("ok", "등록됨", "")
+            elif key == "postcode" and str(self.get_app_setting("kpost_regkey", "") or "").strip():
+                self._shared_key_status[key] = (
+                    "warn", "미설정 — 종추적 키로 조회", "주소 검색 전용 키가 없어 종추적 키로 우편번호를 조회합니다.")
+            else:
+                self._shared_key_status[key] = ("warn", "미설정", "")
+        self._update_api_key_rows(("postcode", "naver", "coupang"))
 
     def _key_status_kind(self):
         """우체국 종추적 키 상태 문구를 상태 종류(ok·warn·error·idle)로 바꾼다."""
@@ -3891,9 +3948,6 @@ class MainWindow(QMainWindow):
             set_status(self._dlg_naver_status, self._naver_inquiry_status_kind,
                        self._naver_inquiry_status_text,
                        getattr(self, "_naver_inquiry_status_detail", ""))
-        # 설정 탭 API키 상태 줄에도 문의 키 상태를 반영
-        if hasattr(self.ui, "label_settings_api_status"):
-            self._update_status_displays()
 
     def _on_naver_creds_edit_clicked(self):
         """관리자용: client_id/secret 을 입력받아 토큰 발급으로 검증 후 공유 시트에 저장."""
@@ -3925,7 +3979,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "키 설정", "client_secret 이 비어 있습니다.")
             return
         self._naver_pending_creds = (cid, csec)
-        self._set_naver_inquiry_status("키 검증 중…", "idle")
+        self._set_shared_key_status("naver", "idle", "검증 중…")
         thread = NaverCredsValidateThread(cid, csec, self)
         self._naver_creds_validate_thread = thread
         thread.result_ready.connect(self._on_naver_creds_validated)
@@ -3945,12 +3999,12 @@ class MainWindow(QMainWindow):
                 f"이 client_id/secret 으로 토큰 발급에 실패했습니다.\n\n{err}\n\n"
                 "키를 다시 확인해 주세요. (저장하지 않았습니다)",
             )
-            self._set_naver_inquiry_status("키 검증 실패 — 저장 안 함", "error")
+            self._set_shared_key_status("naver", "error", "입력한 키 검증 실패 — 저장하지 않음", str(err))
             return
         # 검증 통과 → 공유 「설정」 탭에 저장(전원 적용)
         self._tracking_controller.queue_tracking_config_write(
             {CONFIG_KEY_NAVER_CLIENT_ID: cid, CONFIG_KEY_NAVER_CLIENT_SECRET: csec})
-        self._set_naver_inquiry_status("네이버 키 유효함 (저장됨 · 전원 적용)", "ok")
+        self._set_shared_key_status("naver", "ok", "등록됨 (확인함 · 전원 적용)")
 
     def _on_coupang_creds_edit_clicked(self):
         """관리자용: 쿠팡 vendorId/accessKey/secretKey 를 입력받아 1회 조회로 검증 후 저장."""
@@ -3994,7 +4048,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "키 설정", "secretKey 가 비어 있습니다.")
             return
         self._coupang_pending_creds = (vid, ak, sk)
-        self._set_naver_inquiry_status("쿠팡 키 검증 중…", "idle")
+        self._set_shared_key_status("coupang", "idle", "검증 중…")
         thread = CoupangCredsValidateThread(vid, ak, sk, self)
         self._coupang_creds_validate_thread = thread
         thread.result_ready.connect(self._on_coupang_creds_validated)
@@ -4014,7 +4068,7 @@ class MainWindow(QMainWindow):
                 f"이 쿠팡 키로 문의 조회에 실패했습니다.\n\n{err}\n\n"
                 "vendorId/accessKey/secretKey 를 다시 확인해 주세요. (저장하지 않았습니다)",
             )
-            self._set_naver_inquiry_status("쿠팡 키 검증 실패 — 저장 안 함", "error")
+            self._set_shared_key_status("coupang", "error", "입력한 키 검증 실패 — 저장하지 않음", str(err))
             return
         # 검증 통과 → 공유 「설정」 탭에 저장(전원 적용)
         self._tracking_controller.queue_tracking_config_write({
@@ -4022,7 +4076,7 @@ class MainWindow(QMainWindow):
             CONFIG_KEY_COUPANG_ACCESS_KEY: ak,
             CONFIG_KEY_COUPANG_SECRET_KEY: sk,
         })
-        self._set_naver_inquiry_status("쿠팡 키 유효함 (저장됨 · 전원 적용)", "ok")
+        self._set_shared_key_status("coupang", "ok", "등록됨 (확인함 · 전원 적용)")
 
     def read_app_settings(self):
         """database/app_settings.json 전체를 한 번 읽어 dict로 반환합니다.
@@ -5983,6 +6037,11 @@ class MainWindow(QMainWindow):
             self.ui.pushButton_google_reauth.clicked.connect(self._on_google_reauth_clicked)
         if hasattr(self.ui, "pushButton_google_disconnect"):
             self.ui.pushButton_google_disconnect.clicked.connect(self._on_google_disconnect_clicked)
+            # 로그인 정보를 지우는 동작이라 위험 버튼 모양으로 오른쪽 끝에 둔다(.ui에서 여백 뒤).
+            set_button_role(self.ui.pushButton_google_disconnect, "danger")
+        if hasattr(self.ui, "pushButton_google_open_sheet"):
+            # 바로가기 메뉴 「데이터베이스 시트」(Ctrl+D)와 같은 동작
+            self.ui.pushButton_google_open_sheet.clicked.connect(lambda: self.act_db.trigger())
         if hasattr(self.ui, "pushButton_google_open_oauth_folder"):
             self.ui.pushButton_google_open_oauth_folder.clicked.connect(
                 self._on_google_open_oauth_folder_clicked
@@ -6448,6 +6507,10 @@ class MainWindow(QMainWindow):
         label = getattr(self.ui, "label_google_auth_status", None)
         if label is not None:
             set_status(label, kind, text, detail)
+        tip = getattr(self.ui, "label_google_auth_tip", None)
+        if tip is not None:
+            # 「연결 해제 후 재인증」 안내는 인증 오류일 때만 보인다.
+            tip.setVisible(kind == "error")
         self._update_settings_nav_badges()
 
     def _mark_google_auth_runtime_error(self, err_text):
@@ -6528,6 +6591,12 @@ class MainWindow(QMainWindow):
         name = page.objectName() if page is not None else ""
         if name == "scrollArea_settings_integration":
             self._refresh_google_auth_status_ui()
+            settings_visible = (getattr(self.ui, "tabWidget", None) is not None
+                                and self.ui.tabWidget.currentWidget() is getattr(self.ui, "tab_settings", None))
+            if settings_visible and not getattr(self, "_shared_keys_known", False) and gspread is not None:
+                # 키 행 상태는 공유 「설정」 탭 읽기(배송추적 탭 진입 때 하던 것) 결과로 정한다.
+                # 아직 한 번도 읽지 못했으면 여기서 같은 읽기를 시작한다(진행 중이면 다시 시작하지 않음).
+                self._begin_tracking_config_read()
         elif name == "scrollArea_settings_db_sync":
             self._refresh_db_sheet_sync_path_labels()
 
@@ -6925,6 +6994,7 @@ class MainWindow(QMainWindow):
         except Exception:
             QMessageBox.warning(self, title, "공유 시트에 저장하지 못했습니다. Google Sheets 연결과 편집 권한을 확인해 주세요.")
             return
+        self._set_shared_key_status("postcode", "ok", "등록됨 (확인함 · 전원 적용)")
         QMessageBox.information(self, title, "공유 시트에 저장했습니다. 다른 PC에서도 다음 주소 검색부터 적용됩니다.")
 
     def _show_kpost_api_error(self, parent_widget, err_pair):
@@ -6937,7 +7007,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(
                 parent,
                 "우편번호 API 키가 없습니다",
-                "「⚙ 설정 › 연동」에서 「주소 검색용 우편번호 API 키」를 등록해 주세요.\n\n"
+                "「⚙ 설정 › 연동」의 API 키에서 「우체국 주소 검색」을 등록해 주세요.\n\n"
                 "주소와 우편번호를 직접 입력해 엑셀을 만들 수도 있습니다.",
             )
             return
@@ -6953,7 +7023,7 @@ class MainWindow(QMainWindow):
         if code == "ERR-123":
             msg = (
                 "우체국에서 우편번호 조회용 인증키를 확인하지 못했습니다.\n"
-                "우편번호 조회에 등록된 키를 「⚙ 설정 › 연동」 → 「주소 검색용 우편번호 API 키」에 입력해 주세요."
+                "우편번호 조회에 등록된 키를 「⚙ 설정 › 연동」의 API 키 「우체국 주소 검색」에 입력해 주세요."
             )
 
         QMessageBox.warning(

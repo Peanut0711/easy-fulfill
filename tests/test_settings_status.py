@@ -1,9 +1,10 @@
-"""「설정」 탭 상태 표시(창 크기·설정 탭 계획 B-2)를 검증한다.
+"""「설정」 탭 상태 표시(창 크기·설정 탭 계획 B-2·B-3)를 검증한다.
 
 - Google 연동 상태 종류(토큰 파일 기준)와 실행 중 인증 오류 표시
 - 분류 목록 배지(연동 문제가 있으면 「연동  ✗」)
 - 슬랙 Webhook·문의 알림·종추적 키 상태 종류
 - 슬랙 Webhook 버튼이 「알림」 페이지로 옮겨졌는지
+- API 키 키별 행(등록 여부, 검증 결과, 등록/변경 버튼), 인증 안내는 오류일 때만, 연결 해제 위험 버튼
 """
 
 import os
@@ -64,6 +65,10 @@ class SettingsStatusWindowTests(unittest.TestCase):
         "_settings_integration_problem", "_update_settings_nav_badges", "_key_status_kind", "_key_status_short",
         "_update_status_displays", "_set_naver_inquiry_status", "_update_naver_inquiry_status_label",
         "_on_naver_inquiry_result", "_apply_order_index_sync_payload",
+        "API_KEY_ROWS", "_api_key_row_status", "_update_api_key_rows", "_set_shared_key_status",
+        "_apply_shared_key_registration", "_on_naver_creds_validated", "_on_coupang_creds_validated",
+        "_shared_key_status_store",
+        "_on_settings_page_shown",
     )
 
     @classmethod
@@ -73,7 +78,7 @@ class SettingsStatusWindowTests(unittest.TestCase):
         cls.app = load_app_module()
 
     def window(self, auth=("ok", "연결됨", "")):
-        from PySide6.QtWidgets import QLabel, QListWidget, QStackedWidget, QWidget
+        from PySide6.QtWidgets import QLabel, QListWidget, QPushButton, QStackedWidget, QWidget
         cls = type("FakeWindow", (), {name: getattr(self.app.MainWindow, name) for name in self.METHODS})
         window = cls()
         window.ui = SimpleNamespace()
@@ -88,7 +93,13 @@ class SettingsStatusWindowTests(unittest.TestCase):
         window.ui.stackedWidget_settings = stack
         window.ui.label_google_auth_status = QLabel()
         window.ui.label_slack_webhook_status = QLabel()
-        window.ui.label_settings_api_status = QLabel()
+        window.ui.label_google_auth_tip = QLabel()
+        for label_name, button_name in self.app.MainWindow.API_KEY_ROWS.values():
+            setattr(window.ui, label_name, QLabel())
+            setattr(window.ui, button_name, QPushButton("변경"))
+        window._shared_key_status = {}
+        window.settings = {}
+        window.get_app_setting = lambda key, default=None: window.settings.get(key, default)
         window._dlg_key_status = None
         window._dlg_slack_status = None
         window._dlg_naver_status = QLabel()
@@ -155,14 +166,14 @@ class SettingsStatusWindowTests(unittest.TestCase):
     def test_key_check_failure_badges_integration(self):
         window = self.window()
         cases = {
-            "유효함 ✓": "ok", "미설정 — 「키 변경」으로 등록하세요.": "warn", "설정됨 (오프라인 — 유효성 미확인)": "warn",
-            "확인 중…": "idle", "검증 중…": "idle", "확인 실패 — 「키 변경」으로 다시 등록": "error",
+            "유효함 ✓": "ok", "미설정 — 「등록」을 눌러 주세요.": "warn", "설정됨 (오프라인 — 유효성 미확인)": "warn",
+            "확인 중…": "idle", "검증 중…": "idle", "확인 실패 — 「변경」으로 다시 등록": "error",
             "검증 실패 — 저장하지 않음": "error",
         }
         for text, kind in cases.items():
             window._key_status_text = text
             self.assertEqual(window._key_status_kind(), kind, text)
-        window._key_status_text = "확인 실패 — 「키 변경」으로 다시 등록"
+        window._key_status_text = "확인 실패 — 「변경」으로 다시 등록"
         window._update_status_displays()
         self.assertEqual(self.nav_texts(window)[0], "연동  ✗")
         window._key_status_text = "유효함 ✓"
@@ -178,7 +189,6 @@ class SettingsStatusWindowTests(unittest.TestCase):
         window._slack_status_text = "설정됨 ✓"
         window._update_status_displays()
         self.assertEqual((label.text(), label.property("status")), ("✓ 설정됨", "ok"))
-        self.assertNotIn("슬랙", window.ui.label_settings_api_status.text())
 
     def test_inquiry_status_kinds(self):
         window = self.window()
@@ -194,6 +204,90 @@ class SettingsStatusWindowTests(unittest.TestCase):
         window._set_naver_inquiry_status("조회 중…", "idle")
         self.assertEqual((label.text(), label.property("status")), ("조회 중…", "idle"))
 
+    def row(self, window, key):
+        label_name, button_name = self.app.MainWindow.API_KEY_ROWS[key]
+        label, button = getattr(window.ui, label_name), getattr(window.ui, button_name)
+        return label.text(), label.property("status"), button.text()
+
+    def test_google_tip_only_on_error(self):
+        window = self.window()
+        window._refresh_google_auth_status_ui()
+        self.assertTrue(window.ui.label_google_auth_tip.isHidden())
+        self._auth = ("error", "token.json을 읽을 수 없습니다.", "")
+        window._refresh_google_auth_status_ui()
+        self.assertFalse(window.ui.label_google_auth_tip.isHidden())
+
+    def test_api_key_rows_from_shared_registration(self):
+        window = self.window()
+        window._update_status_displays()
+        self.assertEqual(self.row(window, "naver"), ("확인 중…", "idle", "변경"))
+        window._apply_shared_key_registration({"postcode": False, "naver": True, "coupang": False})
+        self.assertEqual(self.row(window, "naver"), ("✓ 등록됨", "ok", "변경"))
+        self.assertEqual(self.row(window, "coupang"), ("! 미설정", "warn", "등록"))
+        self.assertEqual(self.row(window, "postcode"), ("! 미설정", "warn", "등록"))
+        # 주소 검색 전용 키가 없으면 종추적 키로 조회한다는 것을 보인다.
+        window.settings["kpost_regkey"] = "abc"
+        window._apply_shared_key_registration({"postcode": False, "naver": True, "coupang": True})
+        text, kind, button = self.row(window, "postcode")
+        self.assertEqual((kind, button), ("warn", "등록"))
+        self.assertIn("종추적 키로 조회", text)
+
+    def test_api_key_rows_when_sheet_unreadable(self):
+        window = self.window()
+        window._set_shared_key_status("naver", "ok", "등록됨 (확인함 · 전원 적용)")
+        window._apply_shared_key_registration(None)
+        self.assertEqual(self.row(window, "naver")[1], "ok")  # 이미 아는 상태는 지우지 않는다
+        self.assertEqual(self.row(window, "coupang")[:2], ("확인 못 함 (공유 시트를 읽지 못함)", "idle"))
+
+    def test_integration_page_reads_shared_config_once_when_visible(self):
+        from PySide6.QtWidgets import QTabWidget, QWidget
+        window = self.window()
+        reads = []
+        window._begin_tracking_config_read = lambda: reads.append(1)
+        tabs = QTabWidget()
+        first, settings = QWidget(), QWidget()
+        tabs.addTab(first, "주문·발송")
+        tabs.addTab(settings, "⚙ 설정")
+        window.ui.tabWidget, window.ui.tab_settings = tabs, settings
+        window._on_settings_page_shown(0)  # 시작할 때 분류 0을 고르는 것: 설정 탭이 안 보이면 읽지 않는다
+        self.assertEqual(reads, [])
+        tabs.setCurrentWidget(settings)
+        window._on_settings_page_shown(1)  # 알림 페이지
+        self.assertEqual(reads, [])
+        window._on_settings_page_shown(0)
+        self.assertEqual(reads, [1])
+        window._apply_shared_key_registration({"postcode": True, "naver": True, "coupang": True})
+        window._on_settings_page_shown(0)
+        self.assertEqual(reads, [1])  # 한 번 읽은 뒤에는 다시 읽지 않는다
+
+    def test_kpost_row_and_button(self):
+        window = self.window()
+        window._key_status_text = "미설정 — 「등록」을 눌러 주세요."
+        window._update_status_displays()
+        self.assertEqual(self.row(window, "kpost")[1:], ("warn", "등록"))
+        window._key_status_text = "유효함 ✓ (저장됨 · 전원 적용)"
+        window._update_status_displays()
+        self.assertEqual(self.row(window, "kpost"), ("✓ 유효함 (저장됨 · 전원 적용)", "ok", "변경"))
+
+    def test_key_validation_goes_to_key_row_not_inquiry_status(self):
+        window = self.window()
+        window._set_naver_inquiry_status("미답변 0건 · 새 알림 없음 · 10:00", "ok")
+        writes = []
+        window._tracking_controller = SimpleNamespace(queue_tracking_config_write=writes.append)
+        window._naver_pending_creds = ("id", "secret")
+        window._coupang_pending_creds = ("v", "a", "s")
+        with patch.object(self.app.QMessageBox, "warning"):
+            window._on_naver_creds_validated({"ok": True, "valid": False, "error": "401 Unauthorized"})
+        self.assertEqual(self.row(window, "naver")[1], "error")
+        self.assertEqual(window.ui.label_api_status_naver.toolTip(), "401 Unauthorized")
+        window._on_coupang_creds_validated({"ok": True, "valid": True})
+        self.assertEqual(self.row(window, "coupang")[1:], ("ok", "변경"))
+        self.assertEqual(len(writes), 1)
+        self.assertEqual(window._dlg_naver_status.text(), "✓ 미답변 0건 · 새 알림 없음 · 10:00")
+        # 입력한 키의 검증 실패는 저장된 키 문제가 아니므로 분류 배지를 붙이지 않는다.
+        window._update_settings_nav_badges()
+        self.assertEqual(self.nav_texts(window)[0], "연동")
+
 
 class SettingsUiFileTests(unittest.TestCase):
     def test_slack_webhook_button_moved_to_alerts_page(self):
@@ -204,12 +298,46 @@ class SettingsUiFileTests(unittest.TestCase):
         keys = tree.find(".//widget[@name='groupBox_api_keys']")
         self.assertIsNone(keys.find(".//widget[@name='pushButton_cfg_slack_webhook']"))
 
+    def test_api_key_rows_in_grid(self):
+        tree = ET.parse(ROOT / "ui" / "main_window.ui")
+        grid = tree.find(".//widget[@name='groupBox_api_keys']/layout[@class='QGridLayout']")
+        self.assertIsNotNone(grid)
+        for key, button in (("kpost", "pushButton_cfg_kpost_key"), ("postcode", "pushButton_cfg_kpost_postcode_key"),
+                            ("naver", "pushButton_cfg_naver_key"), ("coupang", "pushButton_cfg_coupang_key")):
+            self.assertIsNotNone(grid.find(f".//widget[@name='label_api_status_{key}']"), key)
+            self.assertIsNotNone(grid.find(f".//widget[@name='{button}']"), key)
+        self.assertIsNone(tree.find(".//widget[@name='label_settings_api_status']"))
+
+    def test_disconnect_is_last_google_button(self):
+        tree = ET.parse(ROOT / "ui" / "main_window.ui")
+        row = tree.find(".//layout[@name='horizontalLayout_google_buttons']")
+        names = [item[0].get("name") for item in row.findall("./item")]
+        self.assertEqual(names[-1], "pushButton_google_disconnect")
+        self.assertEqual(names[-2], "horizontalSpacer_google_buttons")  # 다른 버튼과 떨어뜨린다
+        self.assertIn("pushButton_google_open_sheet", names)
+
     def test_status_labels_have_no_widget_color(self):
         # 위젯 스타일시트가 앱 스타일시트(set_status 색)를 덮지 않게 한다.
         tree = ET.parse(ROOT / "ui" / "main_window.ui")
-        for name in ("label_google_auth_status", "label_index_sheet_sync", "label_slack_webhook_status"):
+        for name in ("label_google_auth_status", "label_index_sheet_sync", "label_slack_webhook_status",
+                     "label_api_status_kpost", "label_api_status_postcode", "label_api_status_naver",
+                     "label_api_status_coupang"):
             widget = tree.find(f".//widget[@name='{name}']")
             self.assertIsNone(widget.find("./property[@name='styleSheet']"), name)
+
+
+class SharedKeyRegistrationWorkerTests(unittest.TestCase):
+    def test_config_read_reports_registration_without_values(self):
+        import tracking.workers as workers
+        cfg = {"kpost_regkey": "k", "naver_client_id": "id", "naver_client_secret": "sec",
+               "coupang_vendor_id": "v", "coupang_access_key": "", "coupang_secret_key": "s"}
+        with patch("sheets.google_sheets_oauth.get_authorized_gspread_client", return_value=object()), \
+                patch.object(workers, "_standalone_open_config_ws", return_value=object()), \
+                patch.object(workers, "_read_config_values_map", return_value=cfg):
+            payload = workers.run_tracking_config_read_worker()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["shared_keys"], {"postcode": False, "naver": True, "coupang": False})
+        self.assertNotIn("sec", repr(payload))  # 비밀 값은 화면으로 넘기지 않는다
 
 
 if __name__ == "__main__":
