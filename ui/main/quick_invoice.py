@@ -33,6 +33,10 @@ from orders.quick import (
 )
 from shared.ui_style import set_button_role
 from tracking.workers import CONFIG_KEY_KPOST_REGKEY
+from PySide6.QtGui import QColor
+
+from shared import theme
+from shared.ui_components import fixed_width_button, set_props
 from ui.main import host as _host
 
 
@@ -266,16 +270,20 @@ class QuickInvoiceMixin:
         if gb is None or lay is None:
             return
         self._apply_quick_excel_grid_layout(gb)
-        # 입력 묶음 오른쪽에 「오늘 만든 단건 송장」 목록을 둔다(계획 D-2).
+        # 입력 묶음 오른쪽에 「오늘 만든 단건 송장」 목록을 둔다(계획 D-2). 디자인 개편 4-3: 입력 묶음은 위에 붙이고
+        # 목록이 아래 빈 공간까지 늘어난다(하단 세로 스페이서 대신).
+        lay.setContentsMargins(theme.SPACE_MD, theme.SPACE_MD, theme.SPACE_MD, theme.SPACE_MD)
+        for i in reversed(range(lay.count())):
+            if lay.itemAt(i).spacerItem() is not None:
+                lay.takeAt(i)
         row = QWidget()
         row.setObjectName("widget_quick_invoice_row")
         row_layout = QHBoxLayout(row)
         row_layout.setContentsMargins(0, 0, 0, 0)
-        row_layout.setSpacing(12)
-        row_layout.addWidget(gb)
+        row_layout.setSpacing(theme.SPACE_MD)
+        row_layout.addWidget(gb, 0, Qt.AlignmentFlag.AlignTop)
         row_layout.addWidget(self._build_quick_today_box(), 1)
-        # 하단 세로 스페이서 바로 앞(마지막 위젯 자리)에 넣는다.
-        lay.insertWidget(max(lay.count() - 1, 0), row)
+        lay.addWidget(row, 1)
         self._refresh_quick_today_list()
 
     QUICK_TODAY_LIMIT = 50
@@ -289,15 +297,15 @@ class QuickInvoiceMixin:
         self.listWidget_quick_today.setObjectName("listWidget_quick_today")
         self.listWidget_quick_today.setToolTip("두 번 누르면 엑셀을 엽니다.")
         self.listWidget_quick_today.itemActivated.connect(self._on_quick_today_item_activated)
-        # 높이는 왼쪽 입력 묶음에 맞춘다(목록의 기본 높이가 줄 높이를 늘리지 않게).
-        self.listWidget_quick_today.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Ignored)
+        # 목록은 탭 아래 끝까지 늘어나 많이 만든 날에도 스크롤 없이 더 보인다(디자인 개편 4-3).
+        self.listWidget_quick_today.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.listWidget_quick_today.setMinimumHeight(60)
         box_layout.addWidget(self.listWidget_quick_today, 1)
         folder_button = QPushButton("폴더 열기")
         folder_button.setObjectName("pushButton_quick_today_folder")
         folder_button.clicked.connect(
             lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(self._quick_output_dir().resolve()))))
-        box_layout.addWidget(folder_button, 0, Qt.AlignmentFlag.AlignRight)
+        box_layout.addWidget(fixed_width_button(folder_button), 0, Qt.AlignmentFlag.AlignRight)
         return box
 
     @staticmethod
@@ -351,6 +359,7 @@ class QuickInvoiceMixin:
         if not files:
             item = QListWidgetItem("오늘 만든 단건 송장이 없습니다.")
             item.setFlags(Qt.ItemFlag.NoItemFlags)
+            item.setForeground(QColor(theme.TEXT_MUTED))
             widget.addItem(item)
 
     def _on_quick_today_item_activated(self, item):
@@ -374,6 +383,12 @@ class QuickInvoiceMixin:
         missing = [label for name, label in self.QUICK_REQUIRED_FIELDS
                    if manual and hasattr(self.ui, name) and not getattr(self.ui, name).text().strip()]
         button.setEnabled(not missing)
+        for name, label_text in self.QUICK_REQUIRED_FIELDS:
+            label = getattr(self.ui, name.replace("lineEdit_", "label_", 1), None)
+            if label is not None:
+                state = "warn" if label_text in missing else ""
+                if (label.property("status") or "") != state:
+                    set_props(label, status=state)
         if missing:
             button.setToolTip("빈 칸을 채우면 누를 수 있습니다: " + ", ".join(missing))
         elif manual:
@@ -392,9 +407,9 @@ class QuickInvoiceMixin:
         if gb.layout() is not None:
             return
         grid = QGridLayout(gb)
-        grid.setContentsMargins(12, 12, 12, 12)
-        grid.setHorizontalSpacing(8)
-        grid.setVerticalSpacing(6)
+        grid.setContentsMargins(theme.SPACE_SM, 0, theme.SPACE_SM, theme.SPACE_SM)  # 위 여백은 제목 자리(테마)
+        grid.setHorizontalSpacing(theme.SPACE_SM)
+        grid.setVerticalSpacing(theme.SPACE_SM)
         grid.setColumnStretch(1, 1)
 
         def w(name):
@@ -436,6 +451,22 @@ class QuickInvoiceMixin:
         put("pushButton_quick_excel_gen", 8, 2, 1, 2)
         if w("pushButton_quick_excel_gen") is not None:
             set_button_role(w("pushButton_quick_excel_gen"), "primary")
+            fixed_width_button(w("pushButton_quick_excel_gen"))
+            grid.setAlignment(w("pushButton_quick_excel_gen"), Qt.AlignmentFlag.AlignRight)
+        if w("pushButton_quick_excel_reset") is not None:
+            fixed_width_button(w("pushButton_quick_excel_reset"))
+        # 입력 라벨은 보조 글자색, 필수 칸은 「*」(비면 주의 색: _update_quick_excel_gen_enabled)
+        required = {field.replace("lineEdit_", "label_", 1) for field, _label in self.QUICK_REQUIRED_FIELDS}
+        for name in ("label_store_select", "label_quick_manual_name", "label_quick_manual_phone",
+                     "label_quick_manual_postcode", "label_quick_manual_address", "label_quick_manual_detail",
+                     "label_quick_manual_product"):
+            label = w(name)
+            if label is None:
+                continue
+            if name in required and not label.text().rstrip().endswith("*"):
+                label.setText(f"{label.text().rstrip()} *")
+                label.setToolTip("필수 입력(수동 모드)")
+            set_props(label, formLabel=True)
         gb.setMinimumWidth(380)
         gb.setMaximumWidth(520)
 

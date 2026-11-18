@@ -74,8 +74,13 @@ def run_scenario():
         for name in ("lineEdit_quick_manual_name", "lineEdit_quick_manual_phone", "lineEdit_quick_manual_address"):
             getattr(ui, name).clear()
         states = [(ui.pushButton_quick_excel_gen.isEnabled(), ui.pushButton_quick_excel_gen.toolTip())]
+        required = ("label_quick_manual_name", "label_quick_manual_phone", "label_quick_manual_address")
+        # 디자인 개편 4-3: 필수 칸 라벨에 「*」, 비어 있으면 주의 색
+        result["required_labels"] = [getattr(ui, n).text() for n in required]
+        result["required_empty"] = [getattr(ui, n).property("status") for n in required]
         ui.lineEdit_quick_manual_name.setText("홍길동")
         ui.lineEdit_quick_manual_phone.setText("010-1234-5678")
+        result["required_partial"] = [getattr(ui, n).property("status") for n in required]
         states.append((ui.pushButton_quick_excel_gen.isEnabled(), ui.pushButton_quick_excel_gen.toolTip()))
         created = []
         window.generate_quick_excel = lambda: created.append("gen")
@@ -131,6 +136,12 @@ class QuickInvoiceTabTests(unittest.TestCase):
         self.assertEqual(result["gen_cell"], [8, 2])  # 마지막 줄 오른쪽
         self.assertEqual(result["gen_role"], "primary")
         self.assertIn("Ctrl+Return", result["shortcuts"])
+
+    def test_required_labels_marked(self):
+        result = scenario()
+        self.assertEqual(result["required_labels"], ["이름 *", "전화번호 *", "기본주소 *"])
+        self.assertEqual(result["required_empty"], ["warn", "warn", "warn"])
+        self.assertEqual(result["required_partial"], ["", "", "warn"])
 
     def test_generate_enabled_only_when_required_fields_filled(self):
         states = scenario()["states"]

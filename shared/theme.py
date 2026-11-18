@@ -116,13 +116,15 @@ QTabBar::tab:hover {{ color: {TEXT}; background: {BG_PRESSED}; }}
 QTabBar::tab:selected {{ color: {TEXT}; border-bottom: 2px solid {PRIMARY}; }}
 
 /* ── 묶음(카드) ─────────────────────────────────────── */
+/* 제목을 카드 안 왼쪽 위에 굵게 둔다(공통 부품 SectionCard와 같은 모양, 계획 4-3). */
 QGroupBox {{
     background: {BG_SURFACE}; border: 1px solid {BORDER}; border-radius: {RADIUS_CARD}px;
-    margin-top: 14px; padding: {SPACE_MD}px {SPACE_SM}px {SPACE_SM}px {SPACE_SM}px;
+    margin-top: 0px; padding: {SPACE_MD + 22}px {SPACE_SM}px {SPACE_SM}px {SPACE_SM}px;
+    font-weight: bold; font-size: {FONT_SIZE + 0.5:g}pt;
 }}
 QGroupBox::title {{
-    subcontrol-origin: margin; subcontrol-position: top left;
-    left: {SPACE_SM}px; padding: 0 4px; color: {TEXT}; font-weight: bold;
+    subcontrol-origin: padding; subcontrol-position: top left;
+    left: {SPACE_MD}px; top: {SPACE_MD}px; padding: 0; color: {TEXT};
 }}
 
 /* ── 버튼(보조 기본값) ──────────────────────────────── */
