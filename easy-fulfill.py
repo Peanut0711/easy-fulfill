@@ -20,7 +20,8 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QFileDialog, QMessageB
                               QAbstractItemView, QGroupBox, QCheckBox, QSpinBox, QMenu,
                               QStyle, QProxyStyle, QPlainTextEdit, QFormLayout,
                               QSplitter, QTextEdit, QComboBox, QDoubleSpinBox, QColorDialog,
-                              QScrollArea, QGridLayout, QToolButton, QListWidgetItem, QSizePolicy)
+                              QScrollArea, QGridLayout, QToolButton, QListWidgetItem, QSizePolicy,
+                              QTableWidget)
 from PySide6.QtUiTools import QUiLoader
 from PySide6.QtCore import (
     QFile,
@@ -4611,6 +4612,7 @@ class MainWindow(QMainWindow):
         
         # 메인 윈도우 설정
         self.setCentralWidget(window.centralwidget)
+        self._setup_tab_shortcuts(window.tabWidget)
         # 탭 아래·상태바 위의 알림 띠(완료·주의 알림을 확인 창 대신 보인다). 평소에는 숨어 있다.
         self.notice_bar = NoticeBar(window.centralwidget)
         window.centralwidget.layout().addWidget(self.notice_bar)
@@ -5513,7 +5515,8 @@ class MainWindow(QMainWindow):
         self.act_load.triggered.connect(self.select_excel_file)
 
         self.act_load_invoice = QAction(QIcon('image/open-file-icon.png'), '송장 불러오기', self)
-        self.act_load_invoice.setStatusTip('우체국 송장 엑셀 파일 불러오기')
+        self.act_load_invoice.setStatusTip('우체국 송장 엑셀 파일 불러오기 (Ctrl+Shift+O)')
+        self.act_load_invoice.setShortcut('Ctrl+Shift+O')
         self.act_load_invoice.triggered.connect(self.load_invoice_file)
 
         self.act_copy = QAction(QIcon('image/copy-icon.png'), '복사', self)
@@ -5729,6 +5732,10 @@ class MainWindow(QMainWindow):
         m_link.addAction(self.act_coupang_store)
 
         m_help = mb.addMenu('도움말(&H)')
+        self.act_shortcut_help = QAction('단축키(&K)', self)
+        self.act_shortcut_help.setStatusTip('이 프로그램의 단축키 목록')
+        self.act_shortcut_help.triggered.connect(self.show_shortcut_help)
+        m_help.addAction(self.act_shortcut_help)
         self.act_about = QAction('프로그램 정보(&A)', self)
         self.act_about.triggered.connect(self.show_about)
         m_help.addAction(self.act_about)
@@ -9270,6 +9277,62 @@ class MainWindow(QMainWindow):
 
         # 상태바 메시지 업데이트
         self.statusBar().showMessage("모든 정보가 초기화되었습니다.")
+
+    # 탭 안에서만 동작하는 단축키(QAction이 아닌 것). 단축키 목록 창에 함께 보인다.
+    EXTRA_SHORTCUT_HELP = (
+        ("단건 송장 탭", "엑셀 생성", "Ctrl+Enter"),
+    )
+
+    def _setup_tab_shortcuts(self, tabs):
+        """Ctrl+1~6: 상위 탭으로 바로 이동(왼쪽부터 순서대로). 탭 순서가 바뀌어도 위치 기준으로 동작한다."""
+        self._tab_shortcuts = []
+        for index in range(6):
+            shortcut = QShortcut(QKeySequence(f"Ctrl+{index + 1}"), self)
+            shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+            shortcut.activated.connect(lambda i=index: tabs.setCurrentIndex(i) if i < tabs.count() else None)
+            self._tab_shortcuts.append(shortcut)
+
+    def shortcut_help_rows(self):
+        """단축키 목록 창의 행: (구분, 동작, 단축키). 메뉴 동작의 단축키는 실제 QAction에서 모은다."""
+        rows = []
+        tabs = self.ui.tabWidget
+        for index, shortcut in enumerate(getattr(self, "_tab_shortcuts", [])):
+            if index < tabs.count():
+                title = tabs.tabText(index).replace("⚙", "").strip()
+                rows.append(("탭 이동", f"「{title}」 탭", shortcut.key().toString()))
+        seen = set()
+        for menu in self.menuBar().findChildren(QMenu):
+            for action in menu.actions():
+                key = action.shortcut().toString()
+                if not key or id(action) in seen:
+                    continue
+                seen.add(id(action))
+                rows.append((menu.title().split("(")[0], action.text().replace("&", ""), key))
+        rows.extend(self.EXTRA_SHORTCUT_HELP)
+        return rows
+
+    def show_shortcut_help(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle("단축키")
+        layout = QVBoxLayout(dialog)
+        rows = self.shortcut_help_rows()
+        table = QTableWidget(len(rows), 3, dialog)
+        table.setObjectName("tableWidget_shortcuts")
+        table.setHorizontalHeaderLabels(["구분", "동작", "단축키"])
+        table.verticalHeader().setVisible(False)
+        table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        for r, row in enumerate(rows):
+            for c, text in enumerate(row):
+                table.setItem(r, c, QTableWidgetItem(text))
+        table.resizeColumnsToContents()
+        table.horizontalHeader().setStretchLastSection(True)
+        layout.addWidget(table)
+        close = QPushButton("닫기")
+        close.clicked.connect(dialog.accept)
+        layout.addWidget(close, 0, Qt.AlignmentFlag.AlignRight)
+        dialog.resize(460, 420)
+        dialog.exec()
 
     def show_about(self):
         """프로그램 정보를 보여주는 대화상자를 표시합니다."""
