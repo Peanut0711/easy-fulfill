@@ -691,28 +691,6 @@
             </widget>
            </item>
            <item>
-            <widget class="QGroupBox" name="groupBox_gift_event">
-             <property name="title">
-              <string>구매 금액별 사은품</string>
-             </property>
-             <layout class="QHBoxLayout" name="horizontalLayout_gift_event">
-              <item>
-               <widget class="QPushButton" name="pushButton_gift_event_settings">
-                <property name="text">
-                 <string>공유 설정 열기</string>
-                </property>
-               </widget>
-              </item>
-              <item>
-               <spacer name="horizontalSpacer_gift_event">
-                <property name="orientation"><enum>Qt::Orientation::Horizontal</enum></property>
-                <property name="sizeHint" stdset="0"><size><width>20</width><height>20</height></size></property>
-               </spacer>
-              </item>
-             </layout>
-            </widget>
-           </item>
-           <item>
             <widget class="QGroupBox" name="groupBox_app_version">
              <property name="title">
               <string>프로그램 버전</string>
@@ -1281,6 +1259,35 @@
                  <string>단건 송장의 주소 검색과 우편번호 조회에 사용할 우체국 인증키를 공유 시트에 등록합니다.</string>
                 </property>
                </widget>
+              </item>
+             </layout>
+            </widget>
+           </item>
+           <item>
+            <widget class="QGroupBox" name="groupBox_gift_event">
+             <property name="title">
+              <string>사은품 이벤트</string>
+             </property>
+             <layout class="QHBoxLayout" name="horizontalLayout_gift_event">
+              <item>
+               <widget class="QPushButton" name="pushButton_gift_event_settings">
+                <property name="text">
+                 <string>구간 설정</string>
+                </property>
+               </widget>
+              </item>
+              <item>
+               <widget class="QPushButton" name="pushButton_gift_history">
+                <property name="text">
+                 <string>일별 집계</string>
+                </property>
+               </widget>
+              </item>
+              <item>
+               <spacer name="horizontalSpacer_gift_event">
+                <property name="orientation"><enum>Qt::Orientation::Horizontal</enum></property>
+                <property name="sizeHint" stdset="0"><size><width>20</width><height>20</height></size></property>
+               </spacer>
               </item>
              </layout>
             </widget>

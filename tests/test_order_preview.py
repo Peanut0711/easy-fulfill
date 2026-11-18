@@ -315,6 +315,9 @@ def run_scenario(name):
             os._exit(0)
         result["auto_copied"] = clipboard.text()
         result["tree"] = _tree_snapshot(window)
+        outbox = window._gift_history_sync._outbox
+        result["gift_records"] = sorted((record.store, record.gift) for record in outbox.list_pending())
+        result["gift_history_in_admin"] = window.ui.tab_admin.isAncestorOf(window.ui.pushButton_gift_history)
         # 메뉴 복사(Ctrl+C 액션)
         clipboard.setText("")
         window.act_copy.trigger()
@@ -334,6 +337,7 @@ def run_scenario(name):
             window.clear_list()
             window.copy_to_clipboard()
             result["after_clear"] = {"tree": _tree_snapshot(window), "clipboard": clipboard.text()}
+        result["gift_records_after_copy"] = sorted((record.store, record.gift) for record in outbox.list_pending())
     print("RESULT " + json.dumps(result, ensure_ascii=False), flush=True)
     os._exit(0)
 
@@ -506,6 +510,10 @@ class OrderLoadAndCopyTests(unittest.TestCase):
         self.assertEqual(result["auto_copied"], expected)
         self.assertEqual(result["menu_copy"], expected)
         self.assertEqual(result["tree_copy"], expected)
+        self.assertTrue(result["gift_history_in_admin"])
+        gifts = sorted([store, row["cells"][3]] for row in result["tree"]["rows"] if row["cells"][3])
+        self.assertEqual(result["gift_records"], gifts)
+        self.assertEqual(result["gift_records_after_copy"], gifts)
         after = result["after_clear"]
         self.assertEqual(after["tree"]["rows"], [])
         self.assertEqual(after["tree"]["page"], 0)

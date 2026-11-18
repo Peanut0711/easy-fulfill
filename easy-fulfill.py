@@ -91,6 +91,7 @@ from tracking.repository import (
 )
 from tracking.controller import TrackingController
 from tracking.workers import CONFIG_KEY_KPOST_REGKEY, TrackingConfigWriteThread, run_tracking_list_worker
+from sheets.gift_history import GiftRecordOutbox
 from sheets.version_gate import APP_VERSION, SOURCETREE_UPDATE_ERROR, SOURCETREE_UPDATE_STEPS
 from orders.quick import (
     detect_quick_store,
@@ -113,9 +114,11 @@ from orders.bulk import (
 from orders.excel_values import excel_text
 from orders.invoice import INVOICE_COLUMNS, build_invoice_rows
 from orders.gift_event import DEFAULT_GIFT_EVENT, gift_event_from_config_rows, read_gift_event
+from orders.gift_history import KST, build_gift_records
 from orders.index_sync import conflict_message as order_index_conflict_message, merge_order_indices
 from orders.matching import CoupangOrderIndex, NaverOrderIndex, normalize_coupang_text
 from ui.gift_event_settings import GiftEventSettingsDialog
+from ui.gift_history import GiftHistoryDialog, GiftHistorySync
 from ui.order_ship_panel import (
     STAGE_INTAKE, STAGE_INVOICE, STAGE_ORDER, STAGE_RECEIPT, STORE_NAMES, apply_primary, next_stage,
     order_summary_html, ship_summary_html, stabilize_widths, store_badge_pixmap,
@@ -201,6 +204,14 @@ CONFIG_KEY_KPOST_POSTCODE_REGKEY = "kpost_postcode_regkey"
 def _standalone_open_config_ws(gc):
     """기존 호출부 호환용: 실제 Sheet 생성·열기는 tracking.repository에 위임한다."""
     return open_config_worksheet(gc, SPREADSHEET_ID, CONFIG_SHEET_TITLE, CONFIG_SHEET_HEADERS)
+
+
+def _open_gift_history_spreadsheet():
+    from sheets.google_sheets_oauth import get_authorized_gspread_client
+
+    client = get_authorized_gspread_client(interactive=False)
+    client.set_timeout((5, 15))
+    return client.open_by_key(SPREADSHEET_ID)
 
 
 def _read_shared_postcode_config():
@@ -5796,8 +5807,12 @@ class MainWindow(QMainWindow):
         self._setup_order_ship_drop_targets()
         # 「생성」 버튼/체크박스 제거: 송장 로드 성공 시 자동 생성(상시).
 
-        # 환경설정 탭 버튼 연결
+        # 관리자 사은품 이벤트와 환경설정 탭 버튼 연결
+        self._gift_history_sync = GiftHistorySync(
+            _open_gift_history_spreadsheet, GiftRecordOutbox(Path("database") / "gift_history.sqlite3"), self,
+        )
         self.ui.pushButton_gift_event_settings.clicked.connect(self._open_gift_event_settings)
+        self.ui.pushButton_gift_history.clicked.connect(self._open_gift_history)
         # 프로그램 버전: 현재 버전 표시와 「새 버전 안내 무시」(이 PC 설정, 기본 꺼짐)
         if hasattr(self.ui, "checkBox_ignore_version_update"):
             from sheets.version_gate import SETTING_IGNORE_UPDATE_NOTICE
@@ -5918,6 +5933,12 @@ class MainWindow(QMainWindow):
         dialog = GiftEventSettingsDialog(open_worksheet, self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.statusBar().showMessage("사은품 행사 공유 설정을 저장했습니다.", 5000)
+        dialog.deleteLater()
+
+    def _open_gift_history(self):
+        self._gift_history_sync.flush()
+        dialog = GiftHistoryDialog(self._gift_history_sync.read_report, self)
+        dialog.exec()
         dialog.deleteLater()
 
     def _mount_detail_page_tab(self):
@@ -7599,6 +7620,14 @@ class MainWindow(QMainWindow):
         if not ok:
             self.orders = {}  # 실패한 파일로 이전 주문을 내보내지 않도록 비운다.
         self._refresh_order_ship_panels()
+        if ok and any(order.gift for order in self._order_preview_rows):
+            try:
+                records = build_gift_records(self.store_type, self.orders, self._order_gift_event, datetime.now(KST))
+                if records:
+                    self._gift_history_sync.enqueue(records)
+            except Exception as error:
+                logging.warning("사은품 기록을 로컬에 저장하지 못했습니다: %s", error)
+                self.statusBar().showMessage("사은품 기록을 저장하지 못했습니다. 주문을 다시 불러와 주세요.", 10_000)
 
     def _continue_order_file_processing_after_index(self):
         """백그라운드 인덱스 동기화 완료 후 로고 표시 + 파일 처리로 이어갑니다."""

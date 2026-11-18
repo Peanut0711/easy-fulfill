@@ -42,7 +42,7 @@ class GiftEvent:
         object.__setattr__(self, "tiers", tuple(sorted(self.tiers)))
         object.__setattr__(self, "invoice_labels", tuple(sorted(self.invoice_labels)))
 
-    def _matching_tier(self, store: str, order_amount: float) -> tuple[int, str] | None:
+    def matching_tier(self, store: str, order_amount: float) -> tuple[int, str] | None:
         if not self.enabled or store not in self.stores or not math.isfinite(order_amount):
             return None
         for minimum, gift in reversed(self.tiers):
@@ -52,7 +52,7 @@ class GiftEvent:
 
     def gift_name(self, store: str, order_amount: float) -> str:
         """주문 금액에 맞는 사은품 이름(해당 없으면 빈 문자열). 미리보기 표의 사은품 열에 쓴다."""
-        tier = self._matching_tier(store, order_amount)
+        tier = self.matching_tier(store, order_amount)
         return tier[1] if tier is not None else ""
 
     def markdown_suffix(self, store: str, order_amount: float) -> str:
@@ -63,7 +63,7 @@ class GiftEvent:
         return f" · **🎁: {safe_gift}**"
 
     def invoice_prefix(self, store: str, order_amount: float) -> str:
-        tier = self._matching_tier(store, order_amount)
+        tier = self.matching_tier(store, order_amount)
         if tier is None:
             return ""
         label = dict(self.invoice_labels).get(tier[0], "")
