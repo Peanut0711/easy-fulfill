@@ -10,9 +10,7 @@ from PySide6.QtCore import QProcess, QProcessEnvironment, Qt, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
-    QFormLayout,
     QFrame,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -27,6 +25,9 @@ from PySide6.QtWidgets import (
 )
 
 from shared.paths import APP_ROOT
+from shared import theme
+from shared.ui_components import ButtonRow, FormGrid, SectionCard, fixed_width_button
+from shared.ui_style import set_button_role
 from ui.main import host as _host
 
 
@@ -53,96 +54,102 @@ class DetailPageMixin:
         content.setAutoFillBackground(False)
         page_layout.addWidget(scroll)
         layout = QVBoxLayout(content)
-        layout.setContentsMargins(18, 18, 18, 18)
-        layout.setSpacing(14)
+        layout.setContentsMargins(theme.SPACE_MD, theme.SPACE_MD, theme.SPACE_MD, theme.SPACE_MD)
+        layout.setSpacing(theme.SPACE_MD)
 
-        # 단계 제목: 끝난 단계는 제목 끝에 ✓(_set_detail_step_done). 입력 초기화·상품번호 변경 때 ②③을 지운다.
+        # 디자인 개편 4-5: 단계마다 카드(SectionCard). 끝난 단계는 번호 배지가 ✓(초록)로 바뀐다
+        # (_set_detail_step_done). 입력 초기화·상품번호 변경 때 ②③을 지운다.
         self._detail_step_titles = {
-            1: "① 쿠팡 WING 연결",
-            2: "② 상품 상세 HTML 만들기",
-            3: "③ 쿠팡 상품 HTML 적용",
+            1: "쿠팡 WING 연결",
+            2: "상품 상세 HTML 만들기",
+            3: "쿠팡 상품 HTML 적용",
         }
         self._detail_steps_done = set()
         self._detail_steps_product = ""
-        session_box = QGroupBox(self._detail_step_titles[1])
-        session_layout = QHBoxLayout(session_box)
+
+        def hint(text):
+            label = QLabel(text)
+            label.setWordWrap(True)
+            label.setProperty("hint", "true")
+            return label
+
+        session_box = SectionCard(self._detail_step_titles[1], step=1)
         self.label_detail_session = QLabel(self._detail_session_label())
+        self.label_detail_session.setWordWrap(True)
         self.pushButton_detail_login = QPushButton("쿠팡 로그인 연결/갱신")
         self.pushButton_detail_clear_session = QPushButton("로그인 세션 삭제")
-        session_layout.addWidget(self.label_detail_session, 1)
-        session_layout.addWidget(self.pushButton_detail_login)
-        session_layout.addWidget(self.pushButton_detail_clear_session)
+        set_button_role(self.pushButton_detail_clear_session, "danger")
+        session_row = QHBoxLayout()
+        session_row.setSpacing(theme.SPACE_SM)
+        session_row.addWidget(self.label_detail_session, 1)
+        session_row.addWidget(fixed_width_button(self.pushButton_detail_clear_session))
+        session_row.addWidget(fixed_width_button(self.pushButton_detail_login))
+        session_box.body.addLayout(session_row)
 
-        # 대상 상품: ②(만들기)와 ③(적용)이 같은 네이버 상품번호 칸 하나를 읽는다.
-        target_row = QHBoxLayout()
-        target_label = QLabel("대상 상품 · 네이버 상품번호")
+        # ② 대상 상품: ②(만들기)와 ③(적용)이 같은 네이버 상품번호 칸 하나를 읽는다. 처음 입력하는 ② 카드 안에 둔다.
+        create_box = SectionCard(self._detail_step_titles[2], step=2)
         self.lineEdit_detail_naver = QLineEdit()
         self.lineEdit_detail_naver.setObjectName("lineEdit_detail_naver")
         self.lineEdit_detail_naver.setPlaceholderText("네이버 스마트스토어 상품번호 또는 상품 주소")
-        target_label.setBuddy(self.lineEdit_detail_naver)
-        target_row.addWidget(target_label)
-        target_row.addWidget(self.lineEdit_detail_naver, 1)
-
-        create_box = QGroupBox(self._detail_step_titles[2])
-        create_form = QFormLayout(create_box)
+        create_grid = FormGrid()
+        create_grid.add_row("네이버 상품번호", self.lineEdit_detail_naver)
+        create_grid.label_for(self.lineEdit_detail_naver).setToolTip("③ 적용에서도 이 상품을 씁니다.")
+        create_box.body.addLayout(create_grid)
         self.pushButton_detail_create = QPushButton("HTML 생성")
         self.pushButton_detail_open_preview = QPushButton("미리보기")
         self.pushButton_detail_open_html = QPushButton("HTML 편집")
         self.pushButton_detail_open_folder = QPushButton("결과 폴더 열기")
-        create_actions = QHBoxLayout()
-        create_actions.addWidget(self.pushButton_detail_create)
-        create_actions.addWidget(self.pushButton_detail_open_preview)
-        create_actions.addWidget(self.pushButton_detail_open_html)
-        create_actions.addWidget(self.pushButton_detail_open_folder)
-        create_form.addRow("작업", create_actions)
-        create_form.addRow(QLabel("쿠팡 신규 등록 화면에는 생성된 HTML을 사용자가 직접 붙여 넣습니다."))
+        set_button_role(self.pushButton_detail_create, "primary")
+        create_box.body.addWidget(ButtonRow(
+            left=[self.pushButton_detail_open_folder],
+            right=[self.pushButton_detail_open_preview, self.pushButton_detail_open_html,
+                   self.pushButton_detail_create]))
+        create_box.body.addWidget(hint("쿠팡 신규 등록 화면에는 생성된 HTML을 사용자가 직접 붙여 넣습니다."))
         self.detail_create_progress = None
 
-        replace_box = QGroupBox(self._detail_step_titles[3])
-        replace_layout = QVBoxLayout(replace_box)
+        replace_box = SectionCard(self._detail_step_titles[3], step=3)
         self.pushButton_detail_clear_inputs = QPushButton("입력 초기화")
-        replace_form = QFormLayout()
         self.lineEdit_detail_vendor_inventory = QLineEdit()
         self.lineEdit_detail_vendor_inventory.setPlaceholderText("쿠팡 등록상품 ID")
+        replace_grid = FormGrid()
+        replace_grid.add_row("쿠팡 등록상품 ID", self.lineEdit_detail_vendor_inventory)
+        replace_box.body.addLayout(replace_grid)
         self.pushButton_detail_stage = QPushButton("WING에 HTML 채우기")
         self.pushButton_detail_finish = QPushButton("WING 작업 종료")
         self.pushButton_detail_finish.setEnabled(False)
-        replace_actions = QHBoxLayout()
-        replace_actions.addWidget(self.pushButton_detail_stage)
-        replace_actions.addWidget(self.pushButton_detail_finish)
-        replace_actions.addWidget(self.pushButton_detail_clear_inputs)
-        replace_form.addRow("쿠팡 등록상품 ID", self.lineEdit_detail_vendor_inventory)
-        replace_form.addRow("작업", replace_actions)
-        replace_form.addRow(QLabel("기본 등록 → HTML 작성 전환과 HTML 입력까지만 자동 수행합니다. 저장은 WING에서 직접 누르세요."))
-        replace_layout.addLayout(replace_form)
+        set_button_role(self.pushButton_detail_stage, "primary")
+        replace_box.body.addWidget(ButtonRow(
+            left=[self.pushButton_detail_clear_inputs],
+            right=[self.pushButton_detail_finish, self.pushButton_detail_stage]))
+        replace_box.body.addWidget(hint(
+            "기본 등록 → HTML 작성 전환과 HTML 입력까지만 자동 수행합니다. 저장은 WING에서 직접 누르세요."))
 
-        log_header = QHBoxLayout()
-        # 작업 로그는 기본 접힘. 오류가 기록되면 자동으로 펼친다(_detail_log(error=True)).
+        # 작업 로그 카드: 기본 접힘. 오류가 기록되면 자동으로 펼친다(_detail_log(error=True)).
+        log_box = SectionCard()
         self.toolButton_detail_log_toggle = QToolButton()
         self.toolButton_detail_log_toggle.setObjectName("toolButton_detail_log_toggle")
         self.toolButton_detail_log_toggle.setCheckable(True)
         self.toolButton_detail_log_toggle.setAutoRaise(True)
         self.toolButton_detail_log_toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        log_header.addWidget(self.toolButton_detail_log_toggle)
-        log_header.addStretch(1)
+        self.toolButton_detail_log_toggle.setProperty("sectionTitle", True)
+        log_box.header.insertWidget(0, self.toolButton_detail_log_toggle)
         self.pushButton_detail_log_clear = QPushButton("로그 지우기")
         self.pushButton_detail_log_copy = QPushButton("로그 복사")
         self.pushButton_detail_log_save = QPushButton("로그 저장")
-        log_header.addWidget(self.pushButton_detail_log_clear)
-        log_header.addWidget(self.pushButton_detail_log_copy)
-        log_header.addWidget(self.pushButton_detail_log_save)
+        for button in (self.pushButton_detail_log_clear, self.pushButton_detail_log_copy,
+                       self.pushButton_detail_log_save):
+            log_box.add_action(button)
         self.textEdit_detail_log = QPlainTextEdit()
         self.textEdit_detail_log.setReadOnly(True)
         self.textEdit_detail_log.setPlaceholderText("상세페이지 작업 로그")
         self.textEdit_detail_log.setMinimumHeight(150)
+        log_box.body.addWidget(self.textEdit_detail_log, 1)
         self._detail_step_boxes = {1: session_box, 2: create_box, 3: replace_box}
         layout.addWidget(session_box)
-        layout.addLayout(target_row)
         layout.addWidget(create_box)
         layout.addWidget(replace_box)
-        layout.addLayout(log_header)
-        layout.addWidget(self.textEdit_detail_log, 1)
-        layout.addStretch(0)
+        layout.addWidget(log_box)
+        layout.addStretch(1)  # 로그를 접었을 때 빈 카드가 늘어나지 않게 남는 공간은 아래에 둔다
         tabs.addTab(page, "상세페이지")
         self.toolButton_detail_log_toggle.toggled.connect(self._set_detail_log_expanded)
         self._set_detail_log_expanded(False)
@@ -189,7 +196,7 @@ class DetailPageMixin:
         self.textEdit_detail_log.setVisible(expanded)
 
     def _set_detail_step_done(self, step, done=True):
-        """단계 묶음 제목 끝에 ✓를 붙이거나 뗀다(1: WING 연결, 2: HTML 만들기, 3: WING에 채우기)."""
+        """단계 카드의 번호 배지를 ✓로 바꾸거나 되돌린다(1: WING 연결, 2: HTML 만들기, 3: WING에 채우기)."""
         if done:
             self._detail_steps_done.add(step)
             if step in (2, 3):
@@ -197,8 +204,7 @@ class DetailPageMixin:
                 self._detail_steps_product = self._detail_id_from_input(text, "naver") or text
         else:
             self._detail_steps_done.discard(step)
-        title = self._detail_step_titles[step]
-        self._detail_step_boxes[step].setTitle(f"{title}  ✓" if step in self._detail_steps_done else title)
+        self._detail_step_boxes[step].set_step_done(step in self._detail_steps_done)
 
     def _on_detail_target_changed(self, _value):
         # 다른 상품으로 바꾸면 그 상품의 ②③은 아직 하지 않은 것이다. 주소를 붙여 넣으면 같은 신호 안에서

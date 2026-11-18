@@ -227,7 +227,9 @@ QScrollArea {{ border: none; }}
 QFrame[card="true"], QWidget[card="true"] {{
     background: {BG_SURFACE}; border: 1px solid {BORDER}; border-radius: {RADIUS_CARD}px;
 }}
-QLabel[sectionTitle="true"] {{ color: {TEXT}; font-weight: bold; font-size: {FONT_SIZE + 0.5:g}pt; }}
+QLabel[sectionTitle="true"], QToolButton[sectionTitle="true"] {{
+    color: {TEXT}; font-weight: bold; font-size: {FONT_SIZE + 0.5:g}pt;
+}}
 QLabel[stepBadge="true"] {{
     background: {PRIMARY_SUBTLE}; color: {PRIMARY}; border-radius: 11px; font-weight: bold;
 }}

@@ -46,7 +46,9 @@ class DetailPageTabTests(unittest.TestCase):
         return window
 
     def titles(self, window):
-        return [window._detail_step_boxes[step].title() for step in (1, 2, 3)]
+        """단계 카드 「제목 · 배지」(디자인 개편 4-5: 끝난 단계는 번호 배지가 ✓)."""
+        return [f"{window._detail_step_boxes[step].title_label.text()} · {window._detail_step_boxes[step].step_badge.text()}"
+                for step in (1, 2, 3)]
 
     def finish(self, window, title, exit_code=0, output=""):
         window._detail_process_title = title
@@ -72,13 +74,13 @@ class DetailPageTabTests(unittest.TestCase):
     def test_step_titles_and_done_marks(self):
         window = self.window()
         self.assertEqual(self.titles(window),
-                         ["① 쿠팡 WING 연결", "② 상품 상세 HTML 만들기", "③ 쿠팡 상품 HTML 적용"])
+                         ["쿠팡 WING 연결 · 1", "상품 상세 HTML 만들기 · 2", "쿠팡 상품 HTML 적용 · 3"])
         with patch.object(self.app.QTimer, "singleShot"):
             self.finish(window, "쿠팡 로그인 연결", output='{"seller": ""}')
             window._detail_created_product_no = "12345"
             window.lineEdit_detail_naver.setText("12345")
             self.finish(window, "상품 상세 HTML 생성")
-        self.assertEqual(self.titles(window)[:2], ["① 쿠팡 WING 연결  ✓", "② 상품 상세 HTML 만들기  ✓"])
+        self.assertEqual(self.titles(window)[:2], ["쿠팡 WING 연결 · ✓", "상품 상세 HTML 만들기 · ✓"])
 
         class FakeProcess:
             def readAllStandardOutput(self):
@@ -94,14 +96,14 @@ class DetailPageTabTests(unittest.TestCase):
         window.lineEdit_detail_naver.setText("https://smartstore.naver.com/shop/products/12345")
         self.assertTrue(self.titles(window)[1].endswith("✓"))
         window.lineEdit_detail_naver.setText("55555")
-        self.assertEqual(self.titles(window), ["① 쿠팡 WING 연결  ✓", "② 상품 상세 HTML 만들기", "③ 쿠팡 상품 HTML 적용"])
+        self.assertEqual(self.titles(window), ["쿠팡 WING 연결 · ✓", "상품 상세 HTML 만들기 · 2", "쿠팡 상품 HTML 적용 · 3"])
 
         window._set_detail_step_done(2)
         window.pushButton_detail_clear_inputs.click()
-        self.assertEqual(self.titles(window)[1:], ["② 상품 상세 HTML 만들기", "③ 쿠팡 상품 HTML 적용"])
+        self.assertEqual(self.titles(window)[1:], ["상품 상세 HTML 만들기 · 2", "쿠팡 상품 HTML 적용 · 3"])
         self.assertTrue(self.titles(window)[0].endswith("✓"))  # 로그인 연결은 입력이 아니다
         self.finish(window, "쿠팡 로그인 세션 삭제")
-        self.assertEqual(self.titles(window)[0], "① 쿠팡 WING 연결")
+        self.assertEqual(self.titles(window)[0], "쿠팡 WING 연결 · 1")
 
     def test_log_collapsed_by_default_and_opens_on_error(self):
         window = self.window()
