@@ -155,6 +155,19 @@ class DocumentActionLayoutTests(unittest.TestCase):
         self.assertEqual(self.widget.pdf_button.property("role"), "primary")
         self.assertFalse(self.widget.create_button.property("role"))
 
+    def test_compact_layout_without_fixed_widths(self):
+        # 디자인 개편 4-4: 작성 방식은 한 줄 전체, 입력칸은 고정 폭 없이 남는 폭을 쓰고, 버튼 줄은 위젯 하나.
+        from PySide6.QtWidgets import QGridLayout
+        grid = next(layout for layout in self.widget.findChildren(QGridLayout)
+                    if layout.indexOf(self.widget.input_mode_widget) >= 0)
+        row, column, row_span, column_span = grid.getItemPosition(grid.indexOf(self.widget.input_mode_widget))
+        self.assertEqual((column, column_span), (1, 3))
+        for edit in (self.widget.search_edit, self.widget.naver_order_id_edit, self.widget.coupang_order_id_edit):
+            with self.subTest(edit=edit.placeholderText()[:10]):
+                self.assertNotEqual(edit.minimumWidth(), edit.maximumWidth())
+        self.assertIs(self.widget.pdf_button.parentWidget(), self.widget.action_bar)
+        self.assertFalse(self.widget.product_search_widget.isAncestorOf(self.widget.input_mode_widget))
+
     def test_name_label_marks_required(self):
         label = self.widget.name_label
         self.assertEqual(label.text(), "성명 *")

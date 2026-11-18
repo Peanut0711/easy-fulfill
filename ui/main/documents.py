@@ -2,6 +2,7 @@
 
 from PySide6.QtWidgets import QFrame, QLabel, QScrollArea
 
+from shared import theme
 from shared.paths import APP_ROOT
 from ui.main import host as _host
 
@@ -38,8 +39,15 @@ class DocumentsMixin:
             # 스크롤 영역이 창 배경색(회색)을 칠해 다른 탭(흰색)과 달라 보이지 않게 한다(설정 탭과 같은 방식).
             scroll.viewport().setAutoFillBackground(False)
             self._document_widget.setAutoFillBackground(False)
-            layout.setContentsMargins(6, 6, 6, 6)
-            layout.addWidget(scroll)
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.setSpacing(0)
+            layout.addWidget(scroll, 1)
+            # 디자인 개편 4-4: 「초기화 · 엑셀 만들기 · PDF 만들기」 줄은 스크롤 영역 밖 아래에 두어 창이 낮아도 늘 보인다.
+            action_bar = getattr(self._document_widget, "action_bar", None)
+            if action_bar is not None:
+                action_bar.setParent(None)
+                action_bar.layout().setContentsMargins(theme.SPACE_MD, theme.SPACE_SM, theme.SPACE_MD, theme.SPACE_MD)
+                layout.addWidget(action_bar)
         except Exception as exc:
             self._document_widget = None
             error = QLabel(

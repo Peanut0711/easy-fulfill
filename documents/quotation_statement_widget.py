@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
     QDateEdit,
     QDialog,
     QDialogButtonBox,
-    QFormLayout,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QHeaderView,
@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
 )
 
 from shared import theme
+from shared.ui_components import SectionCard, fixed_width_button
 from shared.paths import APP_ROOT
 from shared.ui_style import clear_status, set_button_role, set_status
 
@@ -266,12 +267,25 @@ class QuotationStatementWidget(QWidget):
 
     def _build_ui(self):
         root = QVBoxLayout(self)
-        root.setContentsMargins(4, 4, 4, 4)
-        root.setSpacing(8)
+        root.setContentsMargins(theme.SPACE_MD, theme.SPACE_MD, theme.SPACE_MD, theme.SPACE_MD)
+        root.setSpacing(theme.SPACE_MD)
 
+        # 디자인 개편 4-4: 기본정보는 2열 격자(4줄)로, 상품 찾기는 「품목」 카드로 옮겨 높이·폭을 줄인다.
         info_group = QGroupBox("문서 기본정보")
-        info_layout = QHBoxLayout(info_group)
-        form = QFormLayout()
+        form = QGridLayout(info_group)
+        form.setContentsMargins(theme.SPACE_SM, 0, theme.SPACE_SM, theme.SPACE_SM)
+        form.setHorizontalSpacing(theme.SPACE_SM)
+        form.setVerticalSpacing(theme.SPACE_SM)
+        form.setColumnStretch(1, 1)
+        form.setColumnStretch(3, 1)
+
+        def add_pair(row, column, label, field, span=1):
+            if isinstance(label, str):
+                label = QLabel(label)
+            label.setProperty("formLabel", True)
+            form.addWidget(label, row, column * 2)
+            form.addWidget(field, row, column * 2 + 1, 1, span)
+            return label
         self.document_type = QComboBox()
         self.document_type.addItems(["견적서", "거래명세서"])
         self.payment_method = QComboBox()
@@ -286,7 +300,6 @@ class QuotationStatementWidget(QWidget):
         self.trade_date = QDateEdit(QDate.currentDate())
         self.trade_date.setCalendarPopup(True)
         self.trade_date.setDisplayFormat("yyyy.MM.dd")
-        form.addRow("문서 종류", self.document_type)
         self.input_mode_label = QLabel("작성 방식")
         self.input_mode_widget = QWidget()
         input_mode_layout = QHBoxLayout(self.input_mode_widget)
@@ -301,40 +314,18 @@ class QuotationStatementWidget(QWidget):
             self.input_mode_group.addButton(button)
             input_mode_layout.addWidget(button)
         input_mode_layout.addStretch(1)
-        form.addRow(self.input_mode_label, self.input_mode_widget)
-        form.addRow("소속", self.organization_edit)
         # 성명은 문서 만들기의 필수 칸이다(create_document 입력 확인). 비어 있으면 라벨을 주의 색으로.
         self.name_label = QLabel("성명 *")
         self.name_label.setObjectName("label_document_name")
         self.name_label.setToolTip("필수 입력")
-        form.addRow(self.name_label, self.name_edit)
-        form.addRow("거래일자", self.trade_date)
-        form.addRow("결제 방법", self.payment_method)
-        form.addRow(self.delivery_label, self.delivery_edit)
-        info_layout.addLayout(form, 1)
-
-        self.product_search_widget = QWidget()
-        search_layout = QVBoxLayout(self.product_search_widget)
-        search_layout.setContentsMargins(0, 0, 0, 0)
-        search_layout.addWidget(QLabel("스마트스토어 기준상품 찾기 (선택한 품목 행에 적용)"))
-        search_row = QHBoxLayout()
-        self.search_edit = QLineEdit()
-        self.search_edit.setPlaceholderText("예: stm32 h7 개발보드")
-        self.search_edit.setFixedWidth(350)
-        self.search_button = QPushButton("상품 찾기")
-        self.search_button.setFixedWidth(82)
-        search_row.addWidget(self.search_edit)
-        search_row.addWidget(self.search_button)
-        search_layout.addLayout(search_row)
-        self.search_status = QLabel("API를 사용하지 않아도 아래 표에 상품명과 가격을 직접 입력할 수 있습니다.")
-        self.search_status.setWordWrap(True)
-        # 줄바꿈 라벨이 세로 가운데 정렬이면 높이가 모자랄 때 위아래가 함께 잘린다.
-        # 두 줄 높이를 확보하고 위쪽에 붙인다.
-        self.search_status.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
-        self.search_status.setMinimumHeight(self.search_status.fontMetrics().lineSpacing() * 2 + 4)
-        search_layout.addWidget(self.search_status)
-        search_layout.addStretch(1)
-        info_layout.addWidget(self.product_search_widget, 2)
+        # 작성 방식(라디오 3개)은 한 줄 전체를 써서 좁은 창에서도 가로 스크롤이 생기지 않게 한다.
+        add_pair(0, 0, "문서 종류", self.document_type)
+        add_pair(0, 1, "거래일자", self.trade_date)
+        add_pair(1, 0, self.input_mode_label, self.input_mode_widget, span=3)
+        add_pair(2, 0, "소속", self.organization_edit)
+        add_pair(2, 1, self.name_label, self.name_edit)
+        add_pair(3, 0, "결제 방법", self.payment_method)
+        add_pair(3, 1, self.delivery_label, self.delivery_edit)
         root.addWidget(info_group)
 
         self.naver_order_group = QGroupBox("네이버 주문 불러오기")
@@ -343,16 +334,16 @@ class QuotationStatementWidget(QWidget):
         order_row.addWidget(QLabel("주문번호"))
         self.naver_order_id_edit = QLineEdit()
         self.naver_order_id_edit.setPlaceholderText("스마트스토어에서 확인한 주문번호를 입력하세요")
-        self.naver_order_id_edit.setFixedWidth(360)
+        self.naver_order_id_edit.setMinimumWidth(200)
         self.naver_order_load_button = QPushButton("주문 불러오기")
-        order_row.addWidget(self.naver_order_id_edit)
-        order_row.addWidget(self.naver_order_load_button)
-        order_row.addStretch(1)
+        order_row.addWidget(self.naver_order_id_edit, 1)
+        order_row.addWidget(fixed_width_button(self.naver_order_load_button))
         order_layout.addLayout(order_row)
         self.naver_order_status = QLabel(
             "주문을 불러오면 상품·옵션·수량·실제 결제금액을 적용하며 추가 할인과 고정 배송비는 적용하지 않습니다."
         )
         self.naver_order_status.setWordWrap(True)
+        self.naver_order_status.setProperty("hint", "true")
         order_layout.addWidget(self.naver_order_status)
         root.addWidget(self.naver_order_group)
 
@@ -362,31 +353,51 @@ class QuotationStatementWidget(QWidget):
         coupang_order_row.addWidget(QLabel("주문번호"))
         self.coupang_order_id_edit = QLineEdit()
         self.coupang_order_id_edit.setPlaceholderText("쿠팡 Wing에서 확인한 주문번호(orderId)를 입력하세요")
-        self.coupang_order_id_edit.setFixedWidth(360)
+        self.coupang_order_id_edit.setMinimumWidth(200)
         self.coupang_order_load_button = QPushButton("주문 불러오기")
-        coupang_order_row.addWidget(self.coupang_order_id_edit)
-        coupang_order_row.addWidget(self.coupang_order_load_button)
-        coupang_order_row.addStretch(1)
+        coupang_order_row.addWidget(self.coupang_order_id_edit, 1)
+        coupang_order_row.addWidget(fixed_width_button(self.coupang_order_load_button))
         coupang_order_layout.addLayout(coupang_order_row)
         self.coupang_order_status = QLabel(
             "주문을 불러오면 실제 적용 할인 후 상품금액과 고객 부담 배송비를 적용합니다."
         )
         self.coupang_order_status.setWordWrap(True)
+        self.coupang_order_status.setProperty("hint", "true")
         coupang_order_layout.addWidget(self.coupang_order_status)
         root.addWidget(self.coupang_order_group)
 
-        item_header = QHBoxLayout()
-        item_header.addWidget(QLabel("품목"))
+        # 「품목」 카드: 제목 줄에 가져온 곳 배지와 행 추가·삭제, 본문에 기준상품 찾기(선택한 행에 적용)와 품목 표.
+        self.add_button = QPushButton("품목 추가")
+        self.delete_button = QPushButton("선택 품목 삭제")
+        items_card = SectionCard("품목", actions=[self.add_button, self.delete_button])
         self.import_source_badge = QLabel()
         self.import_source_badge.setProperty("badge", "info")  # 모양은 테마(QLabel[badge="info"])
         self.import_source_badge.setVisible(False)
-        item_header.addWidget(self.import_source_badge)
-        item_header.addStretch(1)
-        self.add_button = QPushButton("품목 추가")
-        self.delete_button = QPushButton("선택 품목 삭제")
-        item_header.addWidget(self.add_button)
-        item_header.addWidget(self.delete_button)
-        root.addLayout(item_header)
+        items_card.header.insertWidget(2, self.import_source_badge)
+
+        self.product_search_widget = QWidget()
+        search_layout = QVBoxLayout(self.product_search_widget)
+        search_layout.setContentsMargins(0, 0, 0, 0)
+        search_layout.setSpacing(theme.SPACE_XS)
+        search_row = QHBoxLayout()
+        search_row.setSpacing(theme.SPACE_SM)
+        search_caption = QLabel("기준상품")
+        search_caption.setProperty("formLabel", True)
+        search_caption.setToolTip("스마트스토어 기준상품을 찾아 선택한 품목 행에 적용합니다.")
+        self.search_edit = QLineEdit()
+        self.search_edit.setPlaceholderText("스마트스토어 상품 검색 (예: stm32 h7 개발보드) · 선택한 품목 행에 적용")
+        self.search_edit.setMinimumWidth(160)
+        self.search_button = QPushButton("상품 찾기")
+        search_row.addWidget(search_caption)
+        search_row.addWidget(self.search_edit, 1)
+        search_row.addWidget(fixed_width_button(self.search_button))
+        search_layout.addLayout(search_row)
+        self.search_status = QLabel("API를 사용하지 않아도 아래 표에 상품명과 가격을 직접 입력할 수 있습니다.")
+        self.search_status.setWordWrap(True)
+        self.search_status.setProperty("hint", "true")
+        self.search_status.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        search_layout.addWidget(self.search_status)
+        items_card.body.addWidget(self.product_search_widget)
 
         self.table = ItemTable(0, 6)
         self.table.setHorizontalHeaderLabels(
@@ -408,7 +419,8 @@ class QuotationStatementWidget(QWidget):
         self.table.setColumnWidth(COL_DOCUMENT_NAME, 240)
         self.table.setColumnWidth(COL_SPEC, 120)
         self.table.setMinimumHeight(120)
-        root.addWidget(self.table, 1)
+        items_card.body.addWidget(self.table, 1)
+        root.addWidget(items_card, 1)
 
         summary_group = QGroupBox("계산 요약")
         summary_layout = QVBoxLayout(summary_group)
@@ -429,32 +441,37 @@ class QuotationStatementWidget(QWidget):
         self.discount_rate_spin.setVisible(False)
         discount_layout.addWidget(self.discount_rate_spin)
         discount_layout.addStretch(1)
+        self.free_shipping_check = QCheckBox("배송비 면제")
+        discount_layout.addWidget(self.free_shipping_check)
         self.summary_label = QLabel("품목을 입력하면 금액을 계산합니다.")
         self.summary_label.setWordWrap(True)
         self.summary_label.setProperty("emphasis", "true")  # 굵게(테마 QLabel[emphasis="true"])
         self.summary_label.setContentsMargins(4, 4, 4, 4)
         self.negotiated_check = QCheckBox("협의 완료 (현재 입력 단가를 협의 확정가로 사용)")
         self.negotiated_check.setVisible(False)
-        self.free_shipping_check = QCheckBox("배송비 면제")
+        summary_layout.setContentsMargins(theme.SPACE_SM, 0, theme.SPACE_SM, theme.SPACE_SM)
         summary_layout.addWidget(self.discount_controls)
         summary_layout.addWidget(self.summary_label)
         summary_layout.addWidget(self.negotiated_check)
-        summary_layout.addWidget(self.free_shipping_check)
         root.addWidget(summary_group)
 
-        action_row = QHBoxLayout()
+        # 하단 버튼 줄은 위젯 하나(action_bar)로 묶는다. 메인 창은 이것을 스크롤 영역 밖 아래에 붙여 늘 보이게 한다.
+        self.action_bar = QWidget()
+        self.action_bar.setObjectName("widget_document_actions")
+        action_row = QHBoxLayout(self.action_bar)
+        action_row.setContentsMargins(0, 0, 0, 0)
         self.reset_button = QPushButton("초기화")
         self.create_button = QPushButton("엑셀 만들기")
-        self.create_button.setMinimumWidth(120)
+        self.create_button.setMinimumWidth(110)
         self.pdf_button = QPushButton("PDF 만들기")
-        self.pdf_button.setMinimumWidth(120)
+        self.pdf_button.setMinimumWidth(110)
         # 「초기화」는 만들기 버튼과 떨어뜨려 왼쪽 끝에, 주 동작 「PDF 만들기」는 강조(알림·상태바 계획 D-3).
         action_row.addWidget(self.reset_button)
         action_row.addStretch(1)
         action_row.addWidget(self.create_button)
         action_row.addWidget(self.pdf_button)
         set_button_role(self.pdf_button, "primary")
-        root.addLayout(action_row)
+        root.addWidget(self.action_bar)
 
         self.add_button.clicked.connect(self.add_item_row)
         self.delete_button.clicked.connect(self.delete_selected_row)
