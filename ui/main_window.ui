@@ -13,14 +13,6 @@
   <property name="windowTitle">
    <string>Easy Fulfill - 주문 처리 시스템</string>
   </property>
-  <property name="styleSheet">
-   <string>QMainWindow::separator {
-    height: 1px;
-    background: #CCCCCC;
-    margin: 0px;
-    padding: 0px;
-}</string>
-  </property>
   <widget class="QWidget" name="centralwidget">
    <layout class="QVBoxLayout" name="verticalLayout">
     <property name="spacing">
@@ -2120,7 +2112,7 @@
                <item>
                 <widget class="QLabel" name="label_epost_diagnostics_intro">
                  <property name="text">
-                  <string>읽기 전용 확인과, 포털 팝업·인쇄 창을 연 뒤 실제 인쇄 전에서 멈추는 점검입니다. 실제 접수·인쇄·발송처리는 「API(개발 중)」 메뉴의 「실제 동작」에 있습니다.</string>
+                  <string>읽기 전용 확인과, 포털 팝업·인쇄 창을 연 뒤 실제 인쇄 전에서 멈추는 점검입니다. 실제 접수·인쇄·발송처리는 「API·우체국」 메뉴의 「실제 동작」에 있습니다.</string>
                  </property>
                  <property name="wordWrap">
                   <bool>true</bool>
@@ -2186,11 +2178,6 @@
    <addaction name="menuHelp"/>
   </widget>
   <widget class="QStatusBar" name="statusbar">
-   <property name="styleSheet">
-    <string>QStatusBar {
-    border-top: 1px solid #CCCCCC;
-}</string>
-   </property>
   </widget>
   <action name="actionOpenExcel">
    <property name="text">

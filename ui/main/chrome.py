@@ -367,7 +367,7 @@ class ChromeMixin:
         self.act_clear.setStatusTip('주문 정보 초기화 (Ctrl+R)')
         self.act_clear.triggered.connect(self.clear_list)
 
-        # API 동작(개발 중) — 툴바엔 두지 않는다. 진입점·실제 동작은 메뉴, 확인·진단은 「설정 › 프로그램」 버튼
+        # API·우체국 동작 — 툴바엔 두지 않는다. 진입점·실제 동작은 메뉴, 확인·진단은 「설정 › 프로그램」 버튼
         self.act_api_load = QAction(QIcon('image/open-file-icon.png'), 'API로 주문 불러오기', self)
         self.act_api_load.setStatusTip('네이버 주문을 API로 직접 불러오기(발송 전 결제완료·발주확인)')
         self.act_api_load.triggered.connect(self.load_naver_orders_via_api)
@@ -528,7 +528,8 @@ class ChromeMixin:
 
         # 창 크기·설정 탭 계획 B-4: 확인·진단 9개는 「설정 › 프로그램」 버튼으로 옮기고, 메뉴에는
         # 불러오기·로그인·출력 대상과 구분선 아래 실제 동작 4개만 둔다(각 실제 동작은 실행 전 확인 창).
-        m_api = mb.addMenu('API(개발 중)')
+        # 디자인 개편 4-7: 「API(개발 중)」 → 「API·우체국」(검토 리스트 R7). 테스트·문서가 「API」로 시작하는 이름을 찾는다.
+        m_api = mb.addMenu('API·우체국(&A)')
         m_api.addAction(self.act_api_load)
         m_api.addAction(self.act_epost_portal_login)
         m_api.addAction(self.act_epost_print_targets)
