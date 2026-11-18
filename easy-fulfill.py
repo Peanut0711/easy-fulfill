@@ -62,7 +62,7 @@ from shared.paths import APP_ROOT
 from shared.lazy_import import deferred_module, optional_deferred_module, preload_modules_in_background
 from shared.qt_background import run_in_background
 from shared.ui_style import COLOR_DANGER, STATUS_MARKS, apply_app_style, clear_status, set_band, set_button_role, set_status
-from shared.ui_notice import NoticeBar
+from shared.ui_notice import NoticeBar, StatusChip
 from shared.window_geometry import (
     centered_position, default_window_size, geometry_to_setting, is_restorable, parse_saved_geometry,
 )
@@ -4366,6 +4366,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "주문번호 인덱스 충돌", order_index_conflict_message(known))
 
     def _update_index_sheet_sync_label(self):
+        self._update_index_status_chip()
         label = getattr(self.ui, "label_index_sheet_sync", None)
         if label is None:
             return
@@ -4387,6 +4388,24 @@ class MainWindow(QMainWindow):
             set_status(label, "idle",
                        "스프레드시트와 인덱스를 맞추려면 Google 로그인 후 자동으로 반영됩니다.",
                        single_line=False)
+
+    def _update_index_status_chip(self, syncing=False):
+        chip = getattr(self, "statusChip_index", None)
+        if chip is None:
+            return
+        hint = " · 누르면 「설정 › 주문·사은품」"
+        if syncing:
+            set_status(chip, "idle", "인덱스 동기화 중…", "Google 시트와 주문번호 인덱스를 맞추는 중" + hint)
+        elif self._index_sheet_push_timer.isActive():
+            set_status(chip, "idle", "인덱스 저장 대기", "스프레드시트에 곧 반영됩니다" + hint)
+        elif self._index_sheet_push_pending:
+            set_status(chip, "error", "인덱스 반영 실패",
+                       "스프레드시트에 반영하지 못했습니다. Google 연결이나 네트워크를 확인해 주세요." + hint)
+        elif self._index_sheet_last_sync_display:
+            t = self._index_sheet_last_sync_display
+            set_status(chip, "ok", f"인덱스 {t:%H:%M}", f"스프레드시트와 동기화됨 (마지막 반영 {t:%H:%M:%S})" + hint)
+        else:
+            set_status(chip, "idle", "인덱스 —", "아직 스프레드시트와 맞추지 않았습니다" + hint)
 
     def _begin_order_index_read(self, *, interactive=False, on_applied=None, defer_if_busy=False):
         """스프레드시트 인덱스 읽기를 백그라운드 스레드로 시작합니다.
@@ -4601,6 +4620,7 @@ class MainWindow(QMainWindow):
         self.setup_menubar()
         
         self.setStatusBar(window.statusbar)
+        self._setup_status_chips()
         self.setWindowTitle(f"{window.windowTitle()} · v{APP_VERSION}")
         self._order_ship_splitter_initialized = False
 
@@ -4716,6 +4736,27 @@ class MainWindow(QMainWindow):
         if result.get("latest"):
             self._maybe_show_update_notice(result["latest"])
 
+    def _setup_status_chips(self):
+        """상태바 오른쪽 상시 표시(계획 C-2): Google 연결 · 인덱스 동기화 · 앱 버전. 누르면 해당 설정 페이지.
+
+        값은 이미 있는 상태(인증 확인, 인덱스 동기화, 버전 확인)를 갱신할 때 함께 바꾼다. 새 읽기·호출은 없다.
+        """
+        bar = self.statusBar()
+        chips = (
+            ("statusChip_google", "Google", "integration"),
+            ("statusChip_index", "인덱스 —", "orders"),
+            ("statusChip_version", f"v{APP_VERSION}", "program"),
+        )
+        for name, text, page in chips:
+            chip = StatusChip(name, text, bar)
+            set_status(chip, "idle", text)
+            chip.clicked.connect(lambda key=page: self.show_settings_page(key))
+            bar.addPermanentWidget(chip)
+            setattr(self, name, chip)
+        self.statusChip_google.setToolTip("Google Sheets 연결 확인 중 · 누르면 「설정 › 연동」")
+        self.statusChip_index.setToolTip("주문번호 인덱스 동기화 · 누르면 「설정 › 주문·사은품」")
+        self.statusChip_version.setToolTip("앱 버전 · 누르면 「설정 › 프로그램」")
+
     def _update_app_version_label(self, result):
         label = getattr(self.ui, "label_app_version", None)
         if label is None:
@@ -4728,6 +4769,16 @@ class MainWindow(QMainWindow):
         else:
             text += " · 공유 시트에 새 버전 기록 없음"
         label.setText(text)
+        chip = getattr(self, "statusChip_version", None)
+        if chip is not None:
+            version = result.get("version") or APP_VERSION
+            if result.get("blocked"):
+                set_status(chip, "error", f"v{version} · 업데이트 필요", text)
+            elif result.get("latest"):
+                set_status(chip, "warn", f"v{version} → {result['latest']}", text)
+            else:
+                set_status(chip, "idle", f"v{version}", text)
+            chip.setToolTip(chip.toolTip() + " · 누르면 「설정 › 프로그램」")
 
     def _maybe_show_update_notice(self, latest):
         """다른 PC가 쓰는 새 버전을 알린다. 닫으면 이번 실행 동안, 「오늘 더 이상 묻지 않음」이면 오늘 묻지 않는다."""
@@ -5242,6 +5293,7 @@ class MainWindow(QMainWindow):
         """시작 동기화 진행 중임을 막지 않는 가벼운 라벨 표시로만 알립니다."""
         if hasattr(self.ui, "label_index_sheet_sync"):
             set_status(self.ui.label_index_sheet_sync, "idle", "Google 시트와 인덱스 동기화 중…")
+        self._update_index_status_chip(syncing=True)
 
     def _kickoff_startup_order_index_sync(self):
         # 논블로킹 시작: 더 이상 전체 화면 오버레이로 사용자를 막지 않습니다.
@@ -6567,6 +6619,9 @@ class MainWindow(QMainWindow):
         label = getattr(self.ui, "label_google_auth_status", None)
         if label is not None:
             set_status(label, kind, text, detail)
+        chip = getattr(self, "statusChip_google", None)
+        if chip is not None:
+            set_status(chip, kind, "Google", f"Google Sheets: {text} · 누르면 「설정 › 연동」")
         tip = getattr(self.ui, "label_google_auth_tip", None)
         if tip is not None:
             # 「연결 해제 후 재인증」 안내는 인증 오류일 때만 보인다.

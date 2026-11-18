@@ -8,7 +8,7 @@ docs/gui-feedback-tabs-plan.md C-1.
 - 색은 ``shared/ui_style.py``의 앱 스타일시트(``QFrame[notice=…]``)에서 정한다.
 """
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QToolButton
 
 from shared.ui_style import STATUS_MARKS, _repolish, set_status
@@ -110,3 +110,20 @@ class NoticeBar(QFrame):
         if self.kind == "ok" and self.isVisible():
             self._timer.start(OK_AUTO_HIDE_MS)
         super().leaveEvent(event)
+
+
+class StatusChip(QLabel):
+    """상태바 오른쪽 상시 표시(계획 C-2). 색·기호는 ``set_status``로 넣고, 누르면 ``clicked``를 낸다."""
+
+    clicked = Signal()
+
+    def __init__(self, object_name, text="", parent=None):
+        super().__init__(text, parent)
+        self.setObjectName(object_name)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setContentsMargins(8, 0, 8, 0)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and self.rect().contains(event.position().toPoint()):
+            self.clicked.emit()
+        super().mouseReleaseEvent(event)
