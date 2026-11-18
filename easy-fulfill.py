@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QFileDialog, QMessageB
                               QAbstractItemView, QGroupBox, QCheckBox, QSpinBox, QMenu,
                               QStyle, QProxyStyle, QPlainTextEdit, QFormLayout,
                               QSplitter, QTextEdit, QComboBox, QDoubleSpinBox, QColorDialog,
-                              QScrollArea, QGridLayout, QToolButton)
+                              QScrollArea, QGridLayout, QToolButton, QListWidgetItem, QSizePolicy)
 from PySide6.QtUiTools import QUiLoader
 from PySide6.QtCore import (
     QFile,
@@ -53,6 +53,7 @@ from PySide6.QtGui import (
     QPalette,
     QTextCursor,
     QKeySequence,
+    QShortcut,
     QGuiApplication,
 )
 from PySide6.QtWebEngineCore import QWebEngineSettings
@@ -6039,7 +6040,19 @@ class MainWindow(QMainWindow):
             self.ui.comboBox_store_select.currentIndexChanged.connect(
                 self._refresh_quick_excel_manual_ui
             )
+            self.ui.comboBox_store_select.currentIndexChanged.connect(self._update_quick_excel_gen_enabled)
             self._refresh_quick_excel_manual_ui()
+        for _name, _label in self.QUICK_REQUIRED_FIELDS:
+            if hasattr(self.ui, _name):
+                getattr(self.ui, _name).textChanged.connect(self._update_quick_excel_gen_enabled)
+        self._update_quick_excel_gen_enabled()
+        quick_tab = getattr(self.ui, "tab_quick_invoice", None)
+        if quick_tab is not None:
+            # 단건 송장 탭 안에서만 동작하는 Ctrl+Enter(생성)
+            for sequence in ("Ctrl+Return", "Ctrl+Enter"):
+                shortcut = QShortcut(QKeySequence(sequence), quick_tab)
+                shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+                shortcut.activated.connect(self._on_quick_excel_shortcut)
         if hasattr(self.ui, "pushButton_quick_manual_postcode_lookup"):
             self.ui.pushButton_quick_manual_postcode_lookup.clicked.connect(
                 self._on_quick_manual_postcode_lookup_clicked
@@ -6755,6 +6768,8 @@ class MainWindow(QMainWindow):
                 self._on_settings_page_shown(stack.currentIndex())
         elif name == "tab_tracking":
             self._enter_tracking_tab()
+        elif name == "tab_quick_invoice":
+            self._refresh_quick_today_list()
         elif name == "tab_documents":
             self._mount_document_widget()
             if self._document_widget is not None:
@@ -7356,8 +7371,125 @@ class MainWindow(QMainWindow):
         if gb is None or lay is None:
             return
         self._apply_quick_excel_grid_layout(gb)
+        # 입력 묶음 오른쪽에 「오늘 만든 단건 송장」 목록을 둔다(계획 D-2).
+        row = QWidget()
+        row.setObjectName("widget_quick_invoice_row")
+        row_layout = QHBoxLayout(row)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.setSpacing(12)
+        row_layout.addWidget(gb)
+        row_layout.addWidget(self._build_quick_today_box(), 1)
         # 하단 세로 스페이서 바로 앞(마지막 위젯 자리)에 넣는다.
-        lay.insertWidget(max(lay.count() - 1, 0), gb, 0, Qt.AlignmentFlag.AlignLeft)
+        lay.insertWidget(max(lay.count() - 1, 0), row)
+        self._refresh_quick_today_list()
+
+    QUICK_TODAY_LIMIT = 50
+
+    def _build_quick_today_box(self):
+        box = QGroupBox("오늘 만든 단건 송장")
+        box.setObjectName("groupBox_quick_today")
+        box.setMinimumWidth(180)
+        box_layout = QVBoxLayout(box)
+        self.listWidget_quick_today = QListWidget()
+        self.listWidget_quick_today.setObjectName("listWidget_quick_today")
+        self.listWidget_quick_today.setToolTip("두 번 누르면 엑셀을 엽니다.")
+        self.listWidget_quick_today.itemActivated.connect(self._on_quick_today_item_activated)
+        # 높이는 왼쪽 입력 묶음에 맞춘다(목록의 기본 높이가 줄 높이를 늘리지 않게).
+        self.listWidget_quick_today.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Ignored)
+        self.listWidget_quick_today.setMinimumHeight(60)
+        box_layout.addWidget(self.listWidget_quick_today, 1)
+        folder_button = QPushButton("폴더 열기")
+        folder_button.setObjectName("pushButton_quick_today_folder")
+        folder_button.clicked.connect(
+            lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(self._quick_output_dir().resolve()))))
+        box_layout.addWidget(folder_button, 0, Qt.AlignmentFlag.AlignRight)
+        return box
+
+    @staticmethod
+    def _quick_output_dir():
+        return Path("output")  # save_invoice_excel과 같은 폴더(작업 폴더 기준)
+
+    def _quick_excel_recipient(self, path):
+        """퀵 엑셀 첫 행의 수취인명. 같은 파일은 다시 읽지 않는다."""
+        cache = self.__dict__.setdefault("_quick_recipient_cache", {})
+        try:
+            key = (str(path), path.stat().st_mtime)
+        except OSError:
+            return ""
+        if key not in cache:
+            name = ""
+            try:
+                from openpyxl import load_workbook
+
+                workbook = load_workbook(path, read_only=True)
+                try:
+                    rows = workbook.active.iter_rows(min_row=1, max_row=2, values_only=True)
+                    header = next(rows, ())
+                    first = next(rows, ())
+                    if "수취인명" in header:
+                        name = str(first[header.index("수취인명")] or "").strip()
+                finally:
+                    workbook.close()
+            except Exception as error:
+                print(f"! 단건 송장 목록: 수취인을 읽지 못했습니다 {path.name}: {error}")
+            cache[key] = name
+        return cache[key]
+
+    def _refresh_quick_today_list(self):
+        """오늘 output 폴더에 만든 퀵 엑셀(퀵_<스토어>_<YYYYMMDDHHMMSS>.xlsx)을 최근 것부터 보인다."""
+        widget = getattr(self, "listWidget_quick_today", None)
+        if widget is None:
+            return
+        folder = self._quick_output_dir()
+        today = datetime.now().strftime("%Y%m%d")
+        files = sorted(folder.glob(f"퀵_*_{today}??????.xlsx"), reverse=True) if folder.is_dir() else []
+        widget.clear()
+        for path in files[: self.QUICK_TODAY_LIMIT]:
+            parts = path.stem.split("_")
+            stamp = parts[-1]
+            store = "_".join(parts[1:-1])
+            recipient = self._quick_excel_recipient(path) or "(수취인 없음)"
+            item = QListWidgetItem(f"{stamp[8:10]}:{stamp[10:12]}  {recipient}  · {store}")
+            item.setToolTip(str(path.resolve()))
+            item.setData(Qt.ItemDataRole.UserRole, str(path.resolve()))
+            widget.addItem(item)
+        if not files:
+            item = QListWidgetItem("오늘 만든 단건 송장이 없습니다.")
+            item.setFlags(Qt.ItemFlag.NoItemFlags)
+            widget.addItem(item)
+
+    def _on_quick_today_item_activated(self, item):
+        path = item.data(Qt.ItemDataRole.UserRole)
+        if path:
+            self._open_created_file(path)
+
+    QUICK_REQUIRED_FIELDS = (
+        ("lineEdit_quick_manual_name", "이름"),
+        ("lineEdit_quick_manual_phone", "전화번호"),
+        ("lineEdit_quick_manual_address", "기본주소"),
+    )
+
+    def _update_quick_excel_gen_enabled(self, *_args):
+        """수동 모드에서는 이름·전화번호·기본주소를 다 넣어야 「생성」이 켜진다(빈 칸은 툴팁). 클립보드 모드는 항상 켠다."""
+        button = getattr(self.ui, "pushButton_quick_excel_gen", None)
+        combo = getattr(self.ui, "comboBox_store_select", None)
+        if button is None:
+            return
+        manual = combo is not None and combo.currentText().strip() == "수동"
+        missing = [label for name, label in self.QUICK_REQUIRED_FIELDS
+                   if manual and hasattr(self.ui, name) and not getattr(self.ui, name).text().strip()]
+        button.setEnabled(not missing)
+        if missing:
+            button.setToolTip("빈 칸을 채우면 누를 수 있습니다: " + ", ".join(missing))
+        elif manual:
+            button.setToolTip("입력한 정보로 송장 엑셀을 만듭니다 (Ctrl+Enter)")
+        else:
+            button.setToolTip("클립보드에 복사한 주문 정보로 송장 엑셀을 만듭니다 (Ctrl+Enter)")
+
+    def _on_quick_excel_shortcut(self):
+        button = getattr(self.ui, "pushButton_quick_excel_gen", None)
+        if button is not None and button.isEnabled():
+            button.click()
 
     def _apply_quick_excel_grid_layout(self, gb):
         """.ui의 절대좌표 배치를 격자 레이아웃으로 바꾼다.
@@ -7380,11 +7512,9 @@ class MainWindow(QMainWindow):
                 widget.setMaximumSize(16777215, 16777215)
                 grid.addWidget(widget, row, col, row_span, col_span)
 
-        # 1행: 스토어 선택 · 생성 · 초기화
+        # 1행: 스토어 선택. 「생성」·「초기화」는 입력을 다 한 뒤 누르도록 맨 아래 줄에 둔다(계획 D-2).
         put("label_store_select", 0, 0)
         put("comboBox_store_select", 0, 1)
-        put("pushButton_quick_excel_gen", 0, 2)
-        put("pushButton_quick_excel_reset", 0, 3)
         # 2행: 클립보드 안내(수동 모드가 아닐 때만 표시)
         put("label_gift_3", 1, 0, 1, 4)
         if w("label_gift_3") is not None:
@@ -7406,6 +7536,11 @@ class MainWindow(QMainWindow):
         put("lineEdit_quick_manual_detail", 6, 1, 1, 3)
         put("label_quick_manual_product", 7, 0)
         put("lineEdit_quick_manual_product", 7, 1, 1, 3)
+        # 마지막 줄: 초기화(왼쪽) · 생성(오른쪽, 이 화면의 다음 동작)
+        put("pushButton_quick_excel_reset", 8, 0)
+        put("pushButton_quick_excel_gen", 8, 2, 1, 2)
+        if w("pushButton_quick_excel_gen") is not None:
+            set_button_role(w("pushButton_quick_excel_gen"), "primary")
         gb.setMinimumWidth(380)
         gb.setMaximumWidth(520)
 
@@ -7754,6 +7889,7 @@ class MainWindow(QMainWindow):
         """송장 데이터로 엑셀 파일을 저장하고 경로를 반환합니다."""
         output_file = save_invoice_excel(invoice_data, filename_prefix)
         print(f"✓ 퀵 엑셀 저장 완료: {output_file}")
+        self._refresh_quick_today_list()
         self.show_excel_created_message(output_file, "송장 엑셀 파일이 생성되었습니다.")
         return output_file
 

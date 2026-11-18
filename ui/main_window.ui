@@ -555,7 +555,7 @@
          </rect>
         </property>
         <property name="title">
-         <string>퀵 엑셀</string>
+         <string>단건 송장 엑셀</string>
         </property>
         <widget class="QPushButton" name="pushButton_quick_excel_gen">
          <property name="geometry">
