@@ -43,6 +43,10 @@ QLabel[status="warn"] {{ color: {COLOR_WARN}; }}
 QLabel[status="error"] {{ color: {COLOR_DANGER}; }}
 QLabel[status="idle"] {{ color: {COLOR_IDLE}; }}
 QLabel[emphasis="true"] {{ font-weight: 600; }}
+QLabel[band="warn"] {{
+    color: {COLOR_WARN}; background: #fff4e5; font-weight: 600;
+    border: 1px solid #f0c27a; border-radius: 4px;
+}}
 """
 
 
@@ -93,6 +97,25 @@ def set_status(label, kind, text, detail="", *, emphasis=False, mark=True, singl
     label.setToolTip(tooltip)
     if changed:
         _repolish(label)
+
+
+BAND_KINDS = ("warn",)
+BAND_MARGINS = (8, 4, 8, 4)
+
+
+def set_band(label, kind) -> None:
+    """``kind``가 있으면 라벨을 색 띠(배경·테두리)로 보이고, ``None``이면 띠를 숨긴다."""
+    if kind is not None and kind not in BAND_KINDS:
+        raise ValueError(f"알 수 없는 띠: {kind}")
+    if (label.property("band") or None) != kind:
+        label.setProperty("band", kind or "")
+        _repolish(label)
+    # 스타일시트 padding은 처음 polish 때만 반영되어 속성을 나중에 바꾸면 적용되지 않는다. 여백은 직접 준다.
+    if kind is not None:
+        label.setContentsMargins(*BAND_MARGINS)
+    else:
+        label.setContentsMargins(0, 0, 0, 0)
+    label.setVisible(kind is not None)
 
 
 def clear_status(label) -> None:

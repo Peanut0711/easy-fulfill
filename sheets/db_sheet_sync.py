@@ -6,7 +6,7 @@ easy-fulfill UI·database-sync CLI 모두 이 모듈을 사용합니다.
 """
 
 import re
-from datetime import datetime
+from datetime import date, datetime
 
 from pathlib import Path
 
@@ -121,28 +121,47 @@ def try_parse_db_sync_filename_date(filename: str):
     return None
 
 
-def format_db_sync_label_line(channel_title: str, path: Path | None) -> str:
+def db_sync_file_date(path: Path):
+    """파일 날짜 ``date``: 파일 이름의 날짜, 없으면 수정 시각. 둘 다 모르면 None."""
+    ymd = try_parse_db_sync_filename_date(path.name)
+    if ymd is not None:
+        try:
+            return date(*ymd)
+        except ValueError:
+            pass
+    try:
+        return datetime.fromtimestamp(path.stat().st_mtime).date()
+    except OSError:
+        return None
+
+
+def format_db_sync_label_line(channel_title: str, path: Path | None, today: date | None = None) -> str:
     """
-    DB동기화 탭용 한 줄: 「네이버 DB [ 4월 9일 ] : 경로」 형식.
+    「설정 › DB 동기화」 파일 한 줄: 「네이버 DB · Product_20261117_093000.csv · 11-17 (오늘)」.
+
+    날짜는 파일 이름의 날짜(없으면 수정 시각)와 며칠 전인지(오늘·어제·n일 전)다. 전체 경로는 화면에서
+    툴팁으로 보인다. 파일이 없으면 「네이버 DB · 파일 없음」.
 
     Args:
         channel_title: 예) "네이버 DB", "쿠팡 DB"
-        path: 최신 파일 경로 (없으면 안내 문구만)
+        path: 최신 파일 경로 (없으면 None)
+        today: 기준 날짜(테스트용, 기본은 오늘)
     """
     if path is None:
-        return f"{channel_title} [ — ] : (해당 패턴 파일 없음)"
-    ymd = try_parse_db_sync_filename_date(path.name)
-    if ymd is None:
-        try:
-            dt = datetime.fromtimestamp(path.stat().st_mtime)
-            ymd = (dt.year, dt.month, dt.day)
-        except OSError:
-            date_label = "—"
-        else:
-            date_label = f"{ymd[1]}월 {ymd[2]}일"
+        return f"{channel_title} · 파일 없음"
+    file_date = db_sync_file_date(path)
+    if file_date is None:
+        return f"{channel_title} · {path.name} · 날짜 모름"
+    days = ((today or date.today()) - file_date).days
+    if days == 0:
+        ago = "오늘"
+    elif days == 1:
+        ago = "어제"
+    elif days > 1:
+        ago = f"{days}일 전"
     else:
-        date_label = f"{ymd[1]}월 {ymd[2]}일"
-    return f"{channel_title} [ {date_label} ] : {path}"
+        ago = "미래 날짜"
+    return f"{channel_title} · {path.name} · {file_date:%m-%d} ({ago})"
 
 
 def get_spreadsheet_headers(worksheet, header_row_num):

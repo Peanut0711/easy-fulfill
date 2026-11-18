@@ -56,6 +56,22 @@ class UiStyleTests(unittest.TestCase):
         clear_status(label)
         self.assertEqual(label.property("status"), "")
 
+    def test_band_shows_with_margins_and_hides(self):
+        from PySide6.QtWidgets import QLabel
+        from shared.ui_style import BAND_MARGINS, set_band
+        label = QLabel("테스트 모드")
+        label.ensurePolished()  # 이미 polish된 라벨에도 여백이 들어가야 한다
+        set_band(label, "warn")
+        margins = label.contentsMargins()
+        self.assertEqual((margins.left(), margins.top(), margins.right(), margins.bottom()), BAND_MARGINS)
+        self.assertEqual(label.property("band"), "warn")
+        self.assertFalse(label.isHidden())
+        set_band(label, None)
+        self.assertTrue(label.isHidden())
+        self.assertEqual(label.contentsMargins().left(), 0)
+        with self.assertRaises(ValueError):
+            set_band(label, "error")
+
     def test_status_color_applied_through_app_stylesheet(self):
         from PySide6.QtGui import QPalette
         from PySide6.QtWidgets import QLabel

@@ -61,7 +61,7 @@ from shiboken6 import isValid
 from shared.paths import APP_ROOT
 from shared.lazy_import import deferred_module, optional_deferred_module, preload_modules_in_background
 from shared.qt_background import run_in_background
-from shared.ui_style import COLOR_DANGER, apply_app_style, clear_status, set_button_role, set_status
+from shared.ui_style import COLOR_DANGER, apply_app_style, clear_status, set_band, set_button_role, set_status
 from shared.window_geometry import (
     centered_position, default_window_size, geometry_to_setting, is_restorable, parse_saved_geometry,
 )
@@ -6074,6 +6074,10 @@ class MainWindow(QMainWindow):
             )
         if hasattr(self.ui, "pushButton_db_sync_run"):
             self.ui.pushButton_db_sync_run.clicked.connect(self._on_db_sheet_sync_run_clicked)
+            set_button_role(self.ui.pushButton_db_sync_run, "primary")  # 이 페이지의 다음 동작
+        if hasattr(self.ui, "checkBox_db_sync_preview"):
+            self.ui.checkBox_db_sync_preview.toggled.connect(self._update_db_sync_test_mode_ui)
+            self._update_db_sync_test_mode_ui()
 
         print("버튼과 메뉴 연결 완료")
 
@@ -6694,6 +6698,22 @@ class MainWindow(QMainWindow):
         self._db_sync_coupang_path_override = Path(path)
         self._refresh_db_sheet_sync_path_labels()
 
+    def _update_db_sync_test_mode_ui(self, *_args):
+        """테스트 모드면 주의 색 띠를 보이고 실행 버튼을 「테스트 실행」으로, 끄면 띠를 숨기고 「실행」으로."""
+        box = getattr(self.ui, "checkBox_db_sync_preview", None)
+        if box is None:
+            return
+        test_mode = box.isChecked()
+        band = getattr(self.ui, "label_db_sync_test_mode_band", None)
+        if band is not None:
+            set_band(band, "warn" if test_mode else None)
+        button = getattr(self.ui, "pushButton_db_sync_run", None)
+        if button is not None:
+            button.setText("테스트 실행" if test_mode else "실행")
+            button.setToolTip(
+                "공유 시트에 쓰지 않고 추가될 행만 로그로 보입니다." if test_mode else
+                "공유 시트의 네이버·쿠팡 탭에 없는 상품을 실제로 추가합니다(실행 전 확인 창).")
+
     def _set_db_sync_path_controls_busy(self, busy: bool):
         w = self.ui
         for name in (
@@ -6718,8 +6738,8 @@ class MainWindow(QMainWindow):
                 get_latest_file_from_patterns,
             )
         except ImportError as e:
-            self.ui.label_db_sync_naver_file.setText(f"네이버 DB [ — ] : (모듈 오류: {e})")
-            self.ui.label_db_sync_coupang_file.setText("쿠팡 DB [ — ] : —")
+            set_status(self.ui.label_db_sync_naver_file, "error", "네이버 DB · 모듈 오류", str(e))
+            set_status(self.ui.label_db_sync_coupang_file, "error", "쿠팡 DB · 모듈 오류", str(e))
             return
         if reset_manual_overrides:
             self._db_sync_naver_path_override = None
@@ -6730,8 +6750,17 @@ class MainWindow(QMainWindow):
         c = self._db_sync_coupang_path_override
         if c is None:
             c = get_latest_file_from_pattern(COUPANG_CONFIG["db_dir"], COUPANG_CONFIG["file_pattern"])
-        self.ui.label_db_sync_naver_file.setText(format_db_sync_label_line("네이버 DB", n))
-        self.ui.label_db_sync_coupang_file.setText(format_db_sync_label_line("쿠팡 DB", c))
+        for label, title, path, manual in (
+            (self.ui.label_db_sync_naver_file, "네이버 DB", n, self._db_sync_naver_path_override is not None),
+            (self.ui.label_db_sync_coupang_file, "쿠팡 DB", c, self._db_sync_coupang_path_override is not None),
+        ):
+            text = format_db_sync_label_line(title, path) + (" · 직접 지정" if manual else "")
+            if path is None:
+                set_status(label, "warn", text, mark=False)  # 파일 없음은 주의 색
+            else:
+                clear_status(label)
+                label.setText(text)
+                label.setToolTip(str(path))  # 전체 경로
 
     def _on_db_sheet_sync_run_clicked(self):
         if not hasattr(self.ui, "plainTextEdit_db_sync_log"):

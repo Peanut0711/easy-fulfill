@@ -1756,7 +1756,7 @@
             </property>
             <layout class="QVBoxLayout" name="verticalLayout_db_sync">
              <property name="spacing">
-              <number>8</number>
+              <number>10</number>
              </property>
              <property name="leftMargin">
               <number>12</number>
@@ -1771,273 +1771,330 @@
               <number>8</number>
              </property>
              <item>
-              <widget class="QLabel" name="label_db_sync_intro">
-               <property name="text">
-                <string>기본은 database 폴더에서 최신 Product_*.csv·price_inventory_*.xlsx를 찾습니다.&#10;각 행 끝 「직접지정」으로 다른 위치의 파일을 지정할 수 있습니다(새로고침 시 자동 탐지로 복귀).&#10;구글 시트의 네이버·쿠팡 탭에 아직 없는 상품만 행으로 추가하며, 기존 행의 가격·재고는 갱신하지 않습니다.</string>
+              <widget class="QGroupBox" name="groupBox_db_sync_files">
+               <property name="title">
+                <string>DB 파일 · 이 PC</string>
                </property>
-               <property name="wordWrap">
-                <bool>true</bool>
-               </property>
+               <layout class="QVBoxLayout" name="verticalLayout_db_sync_files">
+                <property name="spacing"><number>8</number></property>
+                <item>
+                 <widget class="QLabel" name="label_db_sync_intro">
+                  <property name="text">
+                   <string>기본은 database 폴더에서 최신 Product_*.csv·price_inventory_*.xlsx를 찾습니다.&#10;각 행 끝 「직접지정」으로 다른 위치의 파일을 지정할 수 있습니다(새로고침 시 자동 탐지로 복귀).</string>
+                  </property>
+                  <property name="wordWrap">
+                   <bool>true</bool>
+                  </property>
+                 </widget>
+                </item>
+                <item>
+                 <layout class="QHBoxLayout" name="horizontalLayout_db_naver_row">
+                  <property name="spacing">
+                   <number>8</number>
+                  </property>
+                  <item>
+                   <widget class="QCheckBox" name="checkBox_db_sync_naver">
+                    <property name="text">
+                     <string/>
+                    </property>
+                    <property name="checked">
+                     <bool>true</bool>
+                    </property>
+                   </widget>
+                  </item>
+                  <item>
+                   <widget class="QLabel" name="label_db_sync_naver_file">
+                    <property name="sizePolicy">
+                     <sizepolicy hsizetype="Expanding" vsizetype="Preferred">
+                      <horstretch>1</horstretch>
+                      <verstretch>0</verstretch>
+                     </sizepolicy>
+                    </property>
+                    <property name="text">
+                     <string>네이버 DB [ — ] : (없음)</string>
+                    </property>
+                    <property name="wordWrap">
+                     <bool>true</bool>
+                    </property>
+                    <property name="textInteractionFlags">
+                     <set>Qt::TextInteractionFlag::TextSelectableByMouse</set>
+                    </property>
+                   </widget>
+                  </item>
+                  <item>
+                   <widget class="QPushButton" name="pushButton_db_sync_naver_browse">
+                    <property name="sizePolicy">
+                     <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+                      <horstretch>0</horstretch>
+                      <verstretch>0</verstretch>
+                     </sizepolicy>
+                    </property>
+                    <property name="minimumSize">
+                     <size>
+                      <width>72</width>
+                      <height>0</height>
+                     </size>
+                    </property>
+                    <property name="text">
+                     <string>직접지정</string>
+                    </property>
+                    <property name="toolTip">
+                     <string>CSV 파일을 직접 선택합니다. 새로고침을 누르면 database 폴더 자동 탐지로 돌아갑니다.</string>
+                    </property>
+                   </widget>
+                  </item>
+                 </layout>
+                </item>
+                <item>
+                 <layout class="QHBoxLayout" name="horizontalLayout_db_coupang_row">
+                  <property name="spacing">
+                   <number>8</number>
+                  </property>
+                  <item>
+                   <widget class="QCheckBox" name="checkBox_db_sync_coupang">
+                    <property name="text">
+                     <string/>
+                    </property>
+                    <property name="checked">
+                     <bool>true</bool>
+                    </property>
+                   </widget>
+                  </item>
+                  <item>
+                   <widget class="QLabel" name="label_db_sync_coupang_file">
+                    <property name="sizePolicy">
+                     <sizepolicy hsizetype="Expanding" vsizetype="Preferred">
+                      <horstretch>1</horstretch>
+                      <verstretch>0</verstretch>
+                     </sizepolicy>
+                    </property>
+                    <property name="text">
+                     <string>쿠팡 DB [ — ] : (없음)</string>
+                    </property>
+                    <property name="wordWrap">
+                     <bool>true</bool>
+                    </property>
+                    <property name="textInteractionFlags">
+                     <set>Qt::TextInteractionFlag::TextSelectableByMouse</set>
+                    </property>
+                   </widget>
+                  </item>
+                  <item>
+                   <widget class="QPushButton" name="pushButton_db_sync_coupang_browse">
+                    <property name="sizePolicy">
+                     <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+                      <horstretch>0</horstretch>
+                      <verstretch>0</verstretch>
+                     </sizepolicy>
+                    </property>
+                    <property name="minimumSize">
+                     <size>
+                      <width>72</width>
+                      <height>0</height>
+                     </size>
+                    </property>
+                    <property name="text">
+                     <string>직접지정</string>
+                    </property>
+                    <property name="toolTip">
+                     <string>엑셀(.xlsx) 파일을 직접 선택합니다. 새로고침을 누르면 database 폴더 자동 탐지로 돌아갑니다.</string>
+                    </property>
+                   </widget>
+                  </item>
+                 </layout>
+                </item>
+                <item>
+                 <layout class="QHBoxLayout" name="horizontalLayout_db_refresh">
+                  <item>
+                   <widget class="QPushButton" name="pushButton_db_sync_refresh_paths">
+                    <property name="sizePolicy">
+                     <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+                      <horstretch>0</horstretch>
+                      <verstretch>0</verstretch>
+                     </sizepolicy>
+                    </property>
+                    <property name="minimumSize">
+                     <size>
+                      <width>140</width>
+                      <height>36</height>
+                     </size>
+                    </property>
+                    <property name="maximumSize">
+                     <size>
+                      <width>140</width>
+                      <height>16777215</height>
+                     </size>
+                    </property>
+                    <property name="text">
+                     <string>새로고침</string>
+                    </property>
+                    <property name="toolTip">
+                     <string>수동으로 고른 파일 지정을 해제하고, database 폴더에서 네이버·쿠팡 최신 파일 경로를 다시 찾아 라벨을 갱신합니다.</string>
+                    </property>
+                   </widget>
+                  </item>
+                  <item>
+                   <spacer name="horizontalSpacer_db_refresh">
+                    <property name="orientation">
+                     <enum>Qt::Orientation::Horizontal</enum>
+                    </property>
+                    <property name="sizeHint" stdset="0">
+                     <size><width>0</width><height>0</height></size>
+                    </property>
+                   </spacer>
+                  </item>
+                 </layout>
+                </item>
+               </layout>
               </widget>
              </item>
              <item>
-              <layout class="QHBoxLayout" name="horizontalLayout_db_naver_row">
-               <property name="spacing">
-                <number>8</number>
+              <widget class="QGroupBox" name="groupBox_db_sync_run">
+               <property name="title">
+                <string>공유 시트에 신규 상품 추가 · 전원 공유</string>
                </property>
-               <item>
-                <widget class="QCheckBox" name="checkBox_db_sync_naver">
-                 <property name="text">
-                  <string/>
-                 </property>
-                 <property name="checked">
-                  <bool>true</bool>
-                 </property>
-                </widget>
-               </item>
-               <item>
-                <widget class="QLabel" name="label_db_sync_naver_file">
-                 <property name="sizePolicy">
-                  <sizepolicy hsizetype="Expanding" vsizetype="Preferred">
-                   <horstretch>1</horstretch>
-                   <verstretch>0</verstretch>
-                  </sizepolicy>
-                 </property>
-                 <property name="text">
-                  <string>네이버 DB [ — ] : (없음)</string>
-                 </property>
-                 <property name="wordWrap">
-                  <bool>true</bool>
-                 </property>
-                 <property name="textInteractionFlags">
-                  <set>Qt::TextInteractionFlag::TextSelectableByMouse</set>
-                 </property>
-                </widget>
-               </item>
-               <item>
-                <widget class="QPushButton" name="pushButton_db_sync_naver_browse">
-                 <property name="sizePolicy">
-                  <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
-                   <horstretch>0</horstretch>
-                   <verstretch>0</verstretch>
-                  </sizepolicy>
-                 </property>
-                 <property name="minimumSize">
-                  <size>
-                   <width>72</width>
-                   <height>0</height>
-                  </size>
-                 </property>
-                 <property name="text">
-                  <string>직접지정</string>
-                 </property>
-                 <property name="toolTip">
-                  <string>CSV 파일을 직접 선택합니다. 새로고침을 누르면 database 폴더 자동 탐지로 돌아갑니다.</string>
-                 </property>
-                </widget>
-               </item>
-              </layout>
-             </item>
-             <item>
-              <layout class="QHBoxLayout" name="horizontalLayout_db_coupang_row">
-               <property name="spacing">
-                <number>8</number>
-               </property>
-               <item>
-                <widget class="QCheckBox" name="checkBox_db_sync_coupang">
-                 <property name="text">
-                  <string/>
-                 </property>
-                 <property name="checked">
-                  <bool>true</bool>
-                 </property>
-                </widget>
-               </item>
-               <item>
-                <widget class="QLabel" name="label_db_sync_coupang_file">
-                 <property name="sizePolicy">
-                  <sizepolicy hsizetype="Expanding" vsizetype="Preferred">
-                   <horstretch>1</horstretch>
-                   <verstretch>0</verstretch>
-                  </sizepolicy>
-                 </property>
-                 <property name="text">
-                  <string>쿠팡 DB [ — ] : (없음)</string>
-                 </property>
-                 <property name="wordWrap">
-                  <bool>true</bool>
-                 </property>
-                 <property name="textInteractionFlags">
-                  <set>Qt::TextInteractionFlag::TextSelectableByMouse</set>
-                 </property>
-                </widget>
-               </item>
-               <item>
-                <widget class="QPushButton" name="pushButton_db_sync_coupang_browse">
-                 <property name="sizePolicy">
-                  <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
-                   <horstretch>0</horstretch>
-                   <verstretch>0</verstretch>
-                  </sizepolicy>
-                 </property>
-                 <property name="minimumSize">
-                  <size>
-                   <width>72</width>
-                   <height>0</height>
-                  </size>
-                 </property>
-                 <property name="text">
-                  <string>직접지정</string>
-                 </property>
-                 <property name="toolTip">
-                  <string>엑셀(.xlsx) 파일을 직접 선택합니다. 새로고침을 누르면 database 폴더 자동 탐지로 돌아갑니다.</string>
-                 </property>
-                </widget>
-               </item>
-              </layout>
-             </item>
-             <item>
-              <layout class="QHBoxLayout" name="horizontalLayout_db_options">
-               <property name="spacing">
-                <number>20</number>
-               </property>
-               <item>
-                <widget class="QCheckBox" name="checkBox_db_sync_preview">
-                 <property name="sizePolicy">
-                  <sizepolicy hsizetype="Minimum" vsizetype="Fixed">
-                   <horstretch>0</horstretch>
-                   <verstretch>0</verstretch>
-                  </sizepolicy>
-                 </property>
-                 <property name="text">
-                  <string>테스트 모드 (적용 안함)</string>
-                 </property>
-                 <property name="checked">
-                  <bool>false</bool>
-                 </property>
-                </widget>
-               </item>
-               <item>
-                <widget class="QCheckBox" name="checkBox_db_sync_verbose_log">
-                 <property name="toolTip">
-                  <string>체크 시 기존·실시간 DB 샘플, 신제품 행 목록, 서식·교차 색상 적용 등 상세 메시지를 표시합니다. 끄면 결과·건수·요약 위주로만 표시합니다.</string>
-                 </property>
-                 <property name="text">
-                  <string>로그 출력 (상세)</string>
-                 </property>
-                 <property name="checked">
-                  <bool>false</bool>
-                 </property>
-                </widget>
-               </item>
-               <item>
-                <spacer name="horizontalSpacer_db_options">
-                 <property name="orientation">
-                  <enum>Qt::Orientation::Horizontal</enum>
-                 </property>
-                 <property name="sizeHint" stdset="0">
-                  <size>
-                   <width>0</width>
-                   <height>0</height>
-                  </size>
-                 </property>
-                 <property name="sizeType">
-                  <enum>QSizePolicy::Policy::Expanding</enum>
-                 </property>
-                </spacer>
-               </item>
-              </layout>
-             </item>
-             <item>
-              <layout class="QHBoxLayout" name="horizontalLayout_db_run">
-               <property name="spacing">
-                <number>10</number>
-               </property>
-               <item>
-                <widget class="QPushButton" name="pushButton_db_sync_refresh_paths">
-                 <property name="sizePolicy">
-                  <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
-                   <horstretch>0</horstretch>
-                   <verstretch>0</verstretch>
-                  </sizepolicy>
-                 </property>
-                 <property name="minimumSize">
-                  <size>
-                   <width>140</width>
-                   <height>36</height>
-                  </size>
-                 </property>
-                 <property name="maximumSize">
-                  <size>
-                   <width>140</width>
-                   <height>16777215</height>
-                  </size>
-                 </property>
-                 <property name="text">
-                  <string>새로고침</string>
-                 </property>
-                 <property name="toolTip">
-                  <string>수동으로 고른 파일 지정을 해제하고, database 폴더에서 네이버·쿠팡 최신 파일 경로를 다시 찾아 라벨을 갱신합니다.</string>
-                 </property>
-                </widget>
-               </item>
-               <item>
-                <widget class="QPushButton" name="pushButton_db_sync_run">
-                 <property name="sizePolicy">
-                  <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
-                   <horstretch>0</horstretch>
-                   <verstretch>0</verstretch>
-                  </sizepolicy>
-                 </property>
-                 <property name="minimumSize">
-                  <size>
-                   <width>140</width>
-                   <height>36</height>
-                  </size>
-                 </property>
-                 <property name="maximumSize">
-                  <size>
-                   <width>140</width>
-                   <height>16777215</height>
-                  </size>
-                 </property>
-                 <property name="text">
-                  <string>실행</string>
-                 </property>
-                </widget>
-               </item>
-               <item>
-                <spacer name="horizontalSpacer_db_run_trailing">
-                 <property name="orientation">
-                  <enum>Qt::Orientation::Horizontal</enum>
-                 </property>
-                 <property name="sizeHint" stdset="0">
-                  <size>
-                   <width>0</width>
-                   <height>0</height>
-                  </size>
-                 </property>
-                 <property name="sizeType">
-                  <enum>QSizePolicy::Policy::Expanding</enum>
-                 </property>
-                </spacer>
-               </item>
-              </layout>
-             </item>
-             <item>
-              <widget class="QPlainTextEdit" name="plainTextEdit_db_sync_log">
-               <property name="readOnly">
-                <bool>true</bool>
-               </property>
-               <property name="minimumSize">
-                <size>
-                 <width>0</width>
-                 <height>200</height>
-                </size>
-               </property>
-               <property name="placeholderText">
-                <string>실행 결과 로그가 여기에 표시됩니다.</string>
-               </property>
+               <layout class="QVBoxLayout" name="verticalLayout_db_sync_run">
+                <property name="spacing"><number>8</number></property>
+                <item>
+                 <widget class="QLabel" name="label_db_sync_run_intro">
+                  <property name="text">
+                   <string>구글 시트의 네이버·쿠팡 탭에 아직 없는 상품만 행으로 추가하며, 기존 행의 가격·재고는 갱신하지 않습니다.</string>
+                  </property>
+                  <property name="wordWrap">
+                   <bool>true</bool>
+                  </property>
+                 </widget>
+                </item>
+                <item>
+                 <layout class="QHBoxLayout" name="horizontalLayout_db_options">
+                  <property name="spacing">
+                   <number>20</number>
+                  </property>
+                  <item>
+                   <widget class="QCheckBox" name="checkBox_db_sync_preview">
+                    <property name="sizePolicy">
+                     <sizepolicy hsizetype="Minimum" vsizetype="Fixed">
+                      <horstretch>0</horstretch>
+                      <verstretch>0</verstretch>
+                     </sizepolicy>
+                    </property>
+                    <property name="text">
+                     <string>테스트 모드 (적용 안함)</string>
+                    </property>
+                    <property name="checked">
+                     <bool>false</bool>
+                    </property>
+                   </widget>
+                  </item>
+                  <item>
+                   <widget class="QCheckBox" name="checkBox_db_sync_verbose_log">
+                    <property name="toolTip">
+                     <string>체크 시 기존·실시간 DB 샘플, 신제품 행 목록, 서식·교차 색상 적용 등 상세 메시지를 표시합니다. 끄면 결과·건수·요약 위주로만 표시합니다.</string>
+                    </property>
+                    <property name="text">
+                     <string>로그 출력 (상세)</string>
+                    </property>
+                    <property name="checked">
+                     <bool>false</bool>
+                    </property>
+                   </widget>
+                  </item>
+                  <item>
+                   <spacer name="horizontalSpacer_db_options">
+                    <property name="orientation">
+                     <enum>Qt::Orientation::Horizontal</enum>
+                    </property>
+                    <property name="sizeHint" stdset="0">
+                     <size>
+                      <width>0</width>
+                      <height>0</height>
+                     </size>
+                    </property>
+                    <property name="sizeType">
+                     <enum>QSizePolicy::Policy::Expanding</enum>
+                    </property>
+                   </spacer>
+                  </item>
+                 </layout>
+                </item>
+                <item>
+                 <widget class="QLabel" name="label_db_sync_test_mode_band">
+                  <property name="text">
+                   <string>테스트 모드: 공유 시트에 적용하지 않습니다(추가될 행만 로그로 확인).</string>
+                  </property>
+                  <property name="wordWrap">
+                   <bool>true</bool>
+                  </property>
+                  <property name="visible">
+                   <bool>false</bool>
+                  </property>
+                 </widget>
+                </item>
+                <item>
+                 <layout class="QHBoxLayout" name="horizontalLayout_db_run">
+                  <property name="spacing">
+                   <number>10</number>
+                  </property>
+                  <item>
+                   <widget class="QPushButton" name="pushButton_db_sync_run">
+                    <property name="sizePolicy">
+                     <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+                      <horstretch>0</horstretch>
+                      <verstretch>0</verstretch>
+                     </sizepolicy>
+                    </property>
+                    <property name="minimumSize">
+                     <size>
+                      <width>140</width>
+                      <height>36</height>
+                     </size>
+                    </property>
+                    <property name="maximumSize">
+                     <size>
+                      <width>140</width>
+                      <height>16777215</height>
+                     </size>
+                    </property>
+                    <property name="text">
+                     <string>실행</string>
+                    </property>
+                   </widget>
+                  </item>
+                  <item>
+                   <spacer name="horizontalSpacer_db_run_trailing">
+                    <property name="orientation">
+                     <enum>Qt::Orientation::Horizontal</enum>
+                    </property>
+                    <property name="sizeHint" stdset="0">
+                     <size>
+                      <width>0</width>
+                      <height>0</height>
+                     </size>
+                    </property>
+                    <property name="sizeType">
+                     <enum>QSizePolicy::Policy::Expanding</enum>
+                    </property>
+                   </spacer>
+                  </item>
+                 </layout>
+                </item>
+                <item>
+                 <widget class="QPlainTextEdit" name="plainTextEdit_db_sync_log">
+                  <property name="readOnly">
+                   <bool>true</bool>
+                  </property>
+                  <property name="minimumSize">
+                   <size>
+                    <width>0</width>
+                    <height>200</height>
+                   </size>
+                  </property>
+                  <property name="placeholderText">
+                   <string>실행 결과 로그가 여기에 표시됩니다.</string>
+                  </property>
+                 </widget>
+                </item>
+               </layout>
               </widget>
              </item>
             </layout>
