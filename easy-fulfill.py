@@ -67,6 +67,7 @@ from shared.paths import APP_ROOT
 from shared.lazy_import import deferred_module, optional_deferred_module
 from shared.qt_background import run_in_background
 from shared import theme
+from shared.ui_components import ButtonRow, FormGrid
 from shared.ui_style import apply_app_style, set_button_role, set_status
 from product_detail.detail_image_upload import upload_image_for_editor, validated_cdn_url
 # 첫 화면에 필요 없는 네트워크·복호화 모듈은 처음 쓸 때 불러온다(시작 시간 단축).
@@ -1771,6 +1772,7 @@ class DetailHtmlEditorDialog(QDialog):
         return len(text[:position].encode("utf-16-le")) // 2
 
     def __init__(self, path, parent=None):
+        from shared import theme  # 편집기 테스트가 클래스만 떼어 실행하므로 메서드 안에서 불러온다
         super().__init__(parent)
         self.path = Path(path)
         self.original_html = self.path.read_text(encoding="utf-8")
@@ -1869,11 +1871,11 @@ class DetailHtmlEditorDialog(QDialog):
             chip.setAutoDefault(False)
             chip.setToolTip(f"{name} {value} · 선택한 텍스트에 적용")
             chip.setAccessibleName(f"{name} 글자색 {value}")
+            # 견본 바탕색은 문서 글자색(데이터)이라 버튼마다 넣고, 테두리 상태는 테마(QPushButton[swatch="true"]).
+            chip.setProperty("swatch", True)
             chip.setStyleSheet(
-                f"QPushButton {{ background-color:{value}; color:white; border:2px solid transparent; border-radius:3px; }}"
-                "QPushButton:hover, QPushButton:focus { border-color:#94a3b8; }"
-                "QPushButton:checked { border-color:#111827; }"
-                "QPushButton:disabled { background-color:#e5e7eb; border-color:#d1d5db; }")
+                f"QPushButton {{ background-color:{value}; }}"
+                f"QPushButton:disabled {{ background-color:{theme.DISABLED_BG}; }}")
             chip.clicked.connect(lambda _checked=False, color=value: self._apply_text_property("color", color))
             self.color_palette_buttons[value.lower()] = chip
             color_row.addWidget(chip)
@@ -1886,7 +1888,7 @@ class DetailHtmlEditorDialog(QDialog):
         self.font_size.valueChanged.connect(lambda value: self.apply_font_size.setEnabled(
             value > 0 and self._font_state is not None and self._preview_ready and not self._alignment_pending))
         self.preview_canvas = QFrame()
-        self.preview_canvas.setStyleSheet("QFrame { background:#e9ecef; }")
+        self.preview_canvas.setObjectName("detailPreviewCanvas")  # 바탕은 테마 규칙
         preview_canvas_layout = QHBoxLayout(self.preview_canvas)
         preview_canvas_layout.setContentsMargins(12, 0, 12, 0)
         preview_canvas_layout.addWidget(self.preview, 0, Qt.AlignHCenter)
@@ -1958,6 +1960,10 @@ class DetailHtmlEditorDialog(QDialog):
         save = QPushButton("저장")
         self.maximize = QPushButton("최대화")
         close = QPushButton("닫기")
+        # 디자인 개편 4-8: 이 창의 주 동작은 「저장」, 편집 내용을 버리는 「원본으로 되돌리기」는 위험 버튼.
+        from shared.ui_style import set_button_role as _set_role  # 편집기 테스트가 클래스만 떼어 실행한다
+        _set_role(save, "primary")
+        _set_role(reset, "danger")
         actions.addWidget(self.block_status, 1)
         actions.addWidget(self.delete_blocks)
         actions.addWidget(self.undo_delete)
@@ -2183,6 +2189,7 @@ class DetailHtmlEditorDialog(QDialog):
 
     def _update_editor_highlights(self, matches=None, scroll_to=None):
         """미리보기 선택 범위와 스마트스토어 URL을 HTML 편집창에 함께 표시한다."""
+        from shared import theme  # 편집기 테스트가 클래스만 떼어 실행하므로 메서드 안에서 불러온다
         source = self.editor.toPlainText()
         selections = []
         for index in sorted(self._selected_blocks):
@@ -2194,7 +2201,7 @@ class DetailHtmlEditorDialog(QDialog):
             cursor.setPosition(self._qt_text_position(source, end), QTextCursor.KeepAnchor)
             selection = QTextEdit.ExtraSelection()
             selection.cursor = cursor
-            selection.format.setBackground(QColor("#dbeafe"))
+            selection.format.setBackground(QColor(theme.PRIMARY_SUBTLE))
             selections.append(selection)
 
         if matches is None:
@@ -2205,7 +2212,7 @@ class DetailHtmlEditorDialog(QDialog):
             cursor.setPosition(self._qt_text_position(source, match.end()), QTextCursor.KeepAnchor)
             selection = QTextEdit.ExtraSelection()
             selection.cursor = cursor
-            selection.format.setBackground(QColor("#fff59d"))
+            selection.format.setBackground(QColor(theme.SEARCH_HIGHLIGHT_BG))
             selections.append(selection)
         self.editor.setExtraSelections(selections)
 
@@ -3145,33 +3152,35 @@ class KpostAddressSearchDialog(QDialog):
         self.selected_address = ""
         self.detail_address = ""
 
+        # 디자인 개편 4-8: 검색어 칸 옆에 「검색」, 안내는 보조 글자, 「확인」은 주 동작(오른쪽, 강조).
         layout = QVBoxLayout(self)
-        layout.addWidget(
-            QLabel("검색어 (도로명+번지, 읍면동+지번, 건물명 등 · 2자 이상)")
-        )
+        layout.setContentsMargins(theme.SPACE_LG, theme.SPACE_LG, theme.SPACE_LG, theme.SPACE_LG)
+        layout.setSpacing(theme.SPACE_SM)
         self._query = QLineEdit()
-        layout.addWidget(self._query)
-        row = QHBoxLayout()
+        self._query.setPlaceholderText("도로명+번지, 읍면동+지번, 건물명 등 (2자 이상)")
         btn_search = QPushButton("검색")
         btn_search.clicked.connect(self._on_search_clicked)
-        row.addWidget(btn_search)
-        row.addStretch()
-        layout.addLayout(row)
-        layout.addWidget(QLabel("검색 결과에서 한 건을 선택하세요."))
+        self._query.returnPressed.connect(btn_search.click)
+        self._detail = QLineEdit()
+        self._detail.setPlaceholderText("동·호수 등 (선택)")
+        grid = FormGrid()
+        grid.add_row("검색어", self._query, extra=btn_search)
+        layout.addLayout(grid)
+        hint = QLabel("검색 결과에서 한 건을 선택하세요.")
+        hint.setProperty("hint", "true")
+        layout.addWidget(hint)
         self._list = QListWidget()
         self._list.setSelectionMode(QAbstractItemView.SingleSelection)
         layout.addWidget(self._list, 1)
-        layout.addWidget(QLabel("상세주소 (동·호수 등, 선택)"))
-        self._detail = QLineEdit()
-        layout.addWidget(self._detail)
-        btn_row = QHBoxLayout()
+        detail_grid = FormGrid()
+        detail_grid.add_row("상세주소", self._detail)
+        layout.addLayout(detail_grid)
         btn_ok = QPushButton("확인")
         btn_cancel = QPushButton("취소")
         btn_ok.clicked.connect(self._on_accept)
         btn_cancel.clicked.connect(self.reject)
-        btn_row.addWidget(btn_ok)
-        btn_row.addWidget(btn_cancel)
-        layout.addLayout(btn_row)
+        set_button_role(btn_ok, "primary")
+        layout.addWidget(ButtonRow(right=[btn_ok, btn_cancel]))
 
     def _on_search_clicked(self):
         q = self._query.text().strip()

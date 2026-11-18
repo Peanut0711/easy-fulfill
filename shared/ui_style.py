@@ -25,8 +25,11 @@ APP_STYLESHEET = theme.APP_STYLESHEET
 
 
 def apply_app_style(app) -> None:
-    """QApplication 생성 직후 한 번 부른다(테마 전체 적용: ``shared.theme.apply_theme``)."""
+    """QApplication 생성 직후 한 번 부른다: 테마(``shared.theme.apply_theme``)와 Qt 기본 문구 한국어 번역."""
     theme.apply_theme(app)
+    from shared.ui_locale import install_korean_translations
+
+    install_korean_translations(app)
 
 
 def _repolish(widget) -> None:

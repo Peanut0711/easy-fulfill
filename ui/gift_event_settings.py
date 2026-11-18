@@ -10,6 +10,8 @@ from PySide6.QtWidgets import (
 
 from orders.gift_event import GIFT_EVENT_STORES, GiftEvent, read_gift_event, save_gift_event
 
+from shared.ui_style import set_button_role
+
 
 class _SheetThread(QThread):
     def __init__(self, operation, parent):
@@ -75,6 +77,7 @@ class GiftEventSettingsDialog(QDialog):
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
         self._save = buttons.button(QDialogButtonBox.StandardButton.Save)
         self._save.setText("공유 설정 저장")
+        set_button_role(self._save, "primary")  # 디자인 개편 4-8: 이 창의 주 동작
         self._cancel = buttons.button(QDialogButtonBox.StandardButton.Cancel)
         self._cancel.setText("취소")
         buttons.accepted.connect(self._save_settings)

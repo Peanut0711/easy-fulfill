@@ -51,6 +51,7 @@ ROW_WARN_BG = "#fff3c4"
 TRACK_RISK_HIGH_BG = "#ffb3b3"
 TRACK_RISK_WARN_BG = "#ffe0b3"
 STORE_11ST = "#f43142"
+SEARCH_HIGHLIGHT_BG = "#fff59d"  # 편집기 찾기 결과 강조
 
 # ── 글꼴(포인트) ───────────────────────────────────────────────────
 FONT_FAMILIES = ("Malgun Gothic", "맑은 고딕")
@@ -254,6 +255,15 @@ QListWidget#listWidget_settings_nav::item {{
 }}
 QListWidget#listWidget_settings_nav::item:hover {{ background: {BG_PRESSED}; }}
 QListWidget#listWidget_settings_nav::item:selected {{ background: {PRIMARY_SUBTLE}; color: {PRIMARY}; }}
+
+/* ── 상세 HTML 편집기 ───────────────────────────────── */
+QFrame#detailPreviewCanvas {{ background: {BG_PRESSED}; }}
+QPushButton[swatch="true"] {{
+    border: 2px solid transparent; border-radius: 3px; padding: 0; min-width: 0px;
+}}
+QPushButton[swatch="true"]:hover, QPushButton[swatch="true"]:focus {{ border-color: {TEXT_PLACEHOLDER}; }}
+QPushButton[swatch="true"]:checked {{ border-color: {TEXT}; }}
+QPushButton[swatch="true"]:disabled {{ border-color: {BORDER}; }}
 
 /* ── 오버레이(시작·작업 중, 배송추적 목록 전환, 파일 끌어다 놓기) ── */
 QFrame#startupLoadingOverlay, QFrame#busyProcessingOverlay {{ background: {SCRIM}; border: none; }}
