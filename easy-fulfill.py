@@ -5969,6 +5969,7 @@ class MainWindow(QMainWindow):
         self.status_label = QLabel()
         self.status_label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
         self.status_label.setMinimumHeight(24)
+        self.status_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.status_label.setStyleSheet("""
             QLabel {
                 color: #666666;
@@ -5980,7 +5981,6 @@ class MainWindow(QMainWindow):
         """)
         
         # 상태바에 레이블을 추가하고 너비를 최대로 설정
-        statusbar.removeWidget(self.status_label)  # 기존 위젯 제거
         statusbar.addWidget(self.status_label, 1)  # stretch factor 1로 설정하여 최대 너비 사용
         
         # 상태바 스타일 설정
@@ -5996,12 +5996,12 @@ class MainWindow(QMainWindow):
             }
         """)
         
-        # 일정 시간 후 상태바 메시지를 비우는 단발 타이머
-        # (아이콘 호버 시 표시되는 StatusTip이 마우스를 떼도 계속 남아 있는 문제 해결)
+        # 메뉴 안내·진행 메시지가 끝나면 마지막 알림을 다시 보여 준다.
+        self._last_notice_text = ""
         self._status_clear_timer = QTimer(self)
         self._status_clear_timer.setSingleShot(True)
-        self._status_clear_timer.timeout.connect(lambda: self.status_label.setText(""))
-        STATUS_AUTO_CLEAR_MS = 3000  # 3초 후 자동으로 사라짐
+        self._status_clear_timer.timeout.connect(lambda: self.status_label.setText(self._last_notice_text))
+        STATUS_AUTO_CLEAR_MS = 3000
 
         def update_status_label(message):
             """상태바 메시지 업데이트 시 레이블도 함께 업데이트"""
@@ -7924,7 +7924,9 @@ class MainWindow(QMainWindow):
 
         같은 문구를 상태바에도 남겨, 띠가 사라진 뒤에도 마지막 알림을 볼 수 있다.
         """
-        self.statusBar().showMessage(f"{STATUS_MARKS.get(kind, '')} {text}".strip())
+        self._last_notice_text = f"{STATUS_MARKS.get(kind, '')} {text}".strip()
+        self._status_clear_timer.stop()
+        self.status_label.setText(self._last_notice_text)
         bar = getattr(self, "notice_bar", None)
         if bar is not None:
             bar.show_notice(kind, text, actions, detail)

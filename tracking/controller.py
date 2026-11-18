@@ -302,22 +302,26 @@ class TrackingController(QObject):
                 table.setColumnHidden(index, label in hidden)
 
     def _fit_tracking_columns(self):
-        """보이는 열을 표 폭 안에 맞춘다(가로 스크롤 없이). 각 열은 내용 폭(최대 TRACKING_COLUMN_MAX_WIDTH)에서
-        시작해, 넘치면 넓은 열부터 같은 상한까지 줄인다. 열 머리 글자 폭보다는 줄이지 않는다. 마지막 열은 남은 폭."""
+        """보이는 열을 표 폭에 맞추고 마지막 열에 남은 폭을 할당한다."""
         table = getattr(self.ui, "tableWidget_tracking", None)
         if table is None or table.columnCount() == 0:
             return
         header = table.horizontalHeader()
         visible = [c for c in range(table.columnCount()) if not table.isColumnHidden(c)]
-        if len(visible) < 2:
+        if not visible:
             return
-        fixed = visible[:-1]
+        *fixed, last = visible
         wanted = {c: min(max(table.sizeHintForColumn(c), header.sectionSizeHint(c)), TRACKING_COLUMN_MAX_WIDTH)
                   for c in fixed}
         floor = {c: min(header.sectionSizeHint(c), wanted[c]) for c in fixed}
-        budget = table.viewport().width() - TRACKING_LAST_COLUMN_MIN_WIDTH
+        viewport_width = table.viewport().width()
+        last_min = max(TRACKING_LAST_COLUMN_MIN_WIDTH, header.sectionSizeHint(last))
+        budget = viewport_width - last_min
         widths = dict(wanted)
         if sum(widths.values()) > budget > 0:
+            if sum(floor.values()) > budget:
+                # 열을 더 켜거나 창을 좁히면 머리글 폭보다 줄여 표 폭을 맞춘다.
+                floor = dict.fromkeys(fixed, header.minimumSectionSize())
             low, high = 0, max(wanted.values())
             while low < high:  # 합이 예산 안에 드는 가장 큰 상한을 찾는다
                 mid = (low + high + 1) // 2
@@ -328,7 +332,8 @@ class TrackingController(QObject):
             widths = {c: max(floor[c], min(wanted[c], low)) for c in fixed}
         for c, width in widths.items():
             header.resizeSection(c, width)
-        header.setStretchLastSection(True)
+        # Qt의 마지막 열 늘리기는 이전 섹션 폭(기본 100px)을 최소 폭으로 유지할 수 있다.
+        header.resizeSection(last, max(last_min, viewport_width - sum(widths.values())))
 
     def _tracking_empty_text(self, mode, search):
         if getattr(self, "_tracking_risk_filter", None):

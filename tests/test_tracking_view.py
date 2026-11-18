@@ -110,6 +110,8 @@ class TrackingViewTests(unittest.TestCase):
         fixed = sum(table.columnWidth(c) for c in visible[:-1])
         self.assertLessEqual(fixed + TRACKING_LAST_COLUMN_MIN_WIDTH, table.viewport().width())
         header = table.horizontalHeader()
+        self.assertEqual(header.length(), table.viewport().width())
+        self.assertFalse(table.horizontalScrollBar().isVisible())
         for c in visible[:-1]:
             self.assertGreaterEqual(table.columnWidth(c), min(header.sectionSizeHint(c), 220), c)
         place = next(c for c in visible if table.horizontalHeaderItem(c).text() == "마지막위치")

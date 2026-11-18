@@ -101,8 +101,10 @@ class FileCreatedNoticeTests(unittest.TestCase):
     def window(self):
         from PySide6.QtWidgets import QMainWindow
         from shared.ui_notice import NoticeBar
-        names = ("notify", "show_excel_created_message", "_open_created_file", "_open_created_file_location")
+        names = ("setup_status_bar", "notify", "show_excel_created_message",
+                 "_open_created_file", "_open_created_file_location")
         window = type("FakeWindow", (QMainWindow,), {n: vars(self.module.MainWindow)[n] for n in names})()
+        window.setup_status_bar()
         window.notice_bar = NoticeBar(window)
         window.opened = []
         window.open_file_with_default_app = lambda path: window.opened.append(("file", path)) or True
@@ -118,12 +120,25 @@ class FileCreatedNoticeTests(unittest.TestCase):
         bar = window.notice_bar
         self.assertEqual(bar.text(), "일괄 발송 파일이 생성되었습니다: 일괄발송_쿠팡_1.xlsx")
         self.assertEqual(bar.action_labels(), ["엑셀 열기", "폴더 열기"])
-        self.assertIn("일괄 발송 파일이 생성되었습니다", window.statusBar().currentMessage())
+        self.assertIn("일괄 발송 파일이 생성되었습니다", window.status_label.text())
         bar._buttons[0].click()
         self.assertEqual(window.opened, [("file", "C:/output/일괄발송_쿠팡_1.xlsx")])
         with patch.object(QMessageBox, "warning") as warning:
             bar._buttons[1].click()  # 폴더 열기 실패는 경고 창으로 알린다(그대로)
         warning.assert_called_once()
+
+    def test_last_notice_stays_after_banner_and_temporary_status_expire(self):
+        window = self.window()
+        window.notify("ok", "파일 생성 완료")
+        window.notice_bar._timer.timeout.emit()
+        self.assertTrue(window.notice_bar.isHidden())
+        window._status_clear_timer.timeout.emit()
+        self.assertEqual(window.status_label.text(), "✓ 파일 생성 완료")
+
+        window.statusBar().showMessage("메뉴 안내")
+        self.assertEqual(window.status_label.text(), "메뉴 안내")
+        window._status_clear_timer.timeout.emit()
+        self.assertEqual(window.status_label.text(), "✓ 파일 생성 완료")
 
     def test_pdf_label(self):
         window = self.window()
