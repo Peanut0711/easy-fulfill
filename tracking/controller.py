@@ -13,11 +13,11 @@ from datetime import date, datetime
 from pathlib import Path
 
 from shared.lazy_import import optional_deferred_module
-from shared.ui_style import clear_status, set_status
+from shared.ui_style import clear_status, set_button_role, set_status
 
 gspread = optional_deferred_module("gspread")  # 설치 여부만 확인하고 처음 쓸 때 불러온다.
 
-from PySide6.QtCore import QObject, Qt, QUrl
+from PySide6.QtCore import QEvent, QObject, Qt, QUrl
 from PySide6.QtGui import QColor, QDesktopServices
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -79,6 +79,15 @@ TRACKING_SHEET_PUSH_DEBOUNCE_MS = 1200
 TRACKING_TABLE_REFRESH_DEBOUNCE_MS = 250  # 검색 입력·기준 변경 후 표를 다시 그리기까지 대기
 CONFIG_KEY_AUTO_REFRESH_MIN = "tracking_auto_refresh_min"
 TRACKING_AUTO_REFRESH_DEFAULT_MIN = 60
+# 배송추적 표 보기(이 PC 앱 설정). 숨긴 열 이름 목록. 설정이 없으면 기본 숨김 열을 쓴다.
+SETTING_TRACKING_HIDDEN_COLUMNS = "tracking_hidden_columns"
+TRACKING_DEFAULT_HIDDEN_COLUMNS = ("최근조회", "스토어")
+TRACKING_ALWAYS_VISIBLE_COLUMNS = ("수취인명",)
+TRACKING_COLUMN_MAX_WIDTH = 220   # 내용이 길어도 한 열이 이보다 넓어지지 않는다(원문은 툴팁)
+TRACKING_LAST_COLUMN_MIN_WIDTH = 80  # 마지막 열(메모)에 남겨 둘 폭
+TRACKING_TOOLTIP_COLUMNS = (2, 6, 8, 10, 11)  # 스토어·배송상태·마지막위치·메모·최근이벤트
+# 위험 칩: key → 글자. "all"은 위험 전체.
+TRACKING_RISK_CHIPS = (("all", "⚠ 위험"), ("허브정체", "허브"), ("수거누락", "수거누락"), ("이동정체", "이동"))
 COURIER_RECEIPT_PREFIX = "하이제니스"
 
 
@@ -171,6 +180,13 @@ class TrackingController(QObject):
             table.itemChanged.connect(self._on_tracking_item_changed)
             table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
             table.customContextMenuRequested.connect(self._on_tracking_context_menu)
+            header = table.horizontalHeader()
+            header.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            header.customContextMenuRequested.connect(self._on_tracking_header_menu)
+            header.setToolTip("열 머리를 오른쪽 클릭하면 보일 열을 고를 수 있습니다.")
+            # 창 폭이 바뀌면 열 폭을 다시 맞추고 빈 목록 안내 위치를 옮긴다.
+            table.viewport().installEventFilter(self)
+            self._build_tracking_risk_chips()
         if hasattr(self.ui, "comboBox_tracking_filter"):
             self.ui.comboBox_tracking_filter.currentIndexChanged.connect(
                 self._on_tracking_filter_changed
@@ -180,6 +196,205 @@ class TrackingController(QObject):
             self.ui.lineEdit_tracking_recipient_search.textChanged.connect(
                 self._schedule_tracking_table_refresh
             )
+
+    def eventFilter(self, obj, event):
+        if event.type() != QEvent.Type.Resize:
+            return False
+        try:
+            table = getattr(getattr(self, "ui", None), "tableWidget_tracking", None)
+            if table is not None and obj is table.viewport():
+                if event.size().width() != event.oldSize().width():
+                    self._fit_tracking_columns()
+                self._place_tracking_empty_label()
+        except RuntimeError:  # 창을 닫는 중 표가 먼저 지워진 경우
+            pass
+        return False
+
+    def _build_tracking_risk_chips(self):
+        """건수 줄에 위험 칩(누르면 그 위험만 거름)을 넣는다. .ui에 건수 줄이 없으면 만들지 않는다."""
+        layout = getattr(self.ui, "horizontalLayout_tracking_filter", None)
+        count_label = getattr(self.ui, "label_tracking_count", None)
+        if layout is None or count_label is None or getattr(self, "_tracking_risk_chips", None):
+            return
+        chips = {}
+        index = layout.indexOf(count_label) + 1
+        for offset, (key, _text) in enumerate(TRACKING_RISK_CHIPS):
+            chip = QPushButton()
+            chip.setObjectName(f"pushButton_tracking_risk_{'all' if key == 'all' else offset}")
+            chip.setCheckable(True)
+            chip.setToolTip("누르면 이 위험 송장만 보입니다. 다시 누르면 모두 보입니다.")
+            chip.setProperty("chip", "true")  # 작은 여백(공통 스타일)
+            set_button_role(chip, "danger")
+            chip.clicked.connect(lambda _=False, k=key: self._on_tracking_risk_chip_clicked(k))
+            chip.hide()
+            layout.insertWidget(index + offset, chip)
+            chips[key] = chip
+        self._tracking_risk_chips = chips
+        # 칩이 자리를 차지해도 건수 글자(마지막 조회·자동 간격)가 잘리지 않게 진행 문구보다 폭을 두 배로 받는다.
+        layout.setStretchFactor(count_label, 2)
+
+    def _on_tracking_risk_chip_clicked(self, key):
+        current = getattr(self, "_tracking_risk_filter", None)
+        self._tracking_risk_filter = None if current == key else key
+        self._populate_tracking_table()
+
+    def _tracking_view_settings(self):
+        """표 한 번 그릴 때 쓰는 설정(정체 기준·도서산간 가산, 숨긴 열, 자동 새로고침 간격)을 한 번에 읽는다."""
+        reader = getattr(self.host, "read_app_settings", None)
+        if callable(reader):
+            settings = reader()
+            get = lambda key: settings.get(key, "")  # noqa: E731
+            hidden = settings.get(SETTING_TRACKING_HIDDEN_COLUMNS)
+            auto = settings.get(CONFIG_KEY_AUTO_REFRESH_MIN, "")
+        else:
+            get = None
+            hidden = self.get_app_setting(SETTING_TRACKING_HIDDEN_COLUMNS, None)
+            auto = self.get_app_setting(CONFIG_KEY_AUTO_REFRESH_MIN, "")
+        thresholds = {category: self._stale_threshold(category, get) for category in STALE_DEFAULTS}
+        if not isinstance(hidden, (list, tuple)):
+            hidden = TRACKING_DEFAULT_HIDDEN_COLUMNS
+        hidden = {name for name in hidden if name not in TRACKING_ALWAYS_VISIBLE_COLUMNS}
+        return (thresholds, self._remote_bonus_hours(get)), hidden, self._parse_auto_refresh_min(auto)
+
+    def _on_tracking_header_menu(self, pos):
+        """열 머리 오른쪽 클릭: 보일 열을 고른다(이 PC에 저장)."""
+        table = getattr(self.ui, "tableWidget_tracking", None)
+        if table is None:
+            return
+        menu = QMenu(table)
+        menu.addSection("보일 열")
+        for index, (_src, label) in enumerate(self._TRACKING_TABLE_COLUMNS):
+            action = menu.addAction(label)
+            action.setCheckable(True)
+            action.setChecked(not table.isColumnHidden(index))
+            if label in TRACKING_ALWAYS_VISIBLE_COLUMNS:
+                action.setEnabled(False)
+            action.toggled.connect(lambda visible, name=label: self._set_tracking_column_visible(name, visible))
+        menu.addSeparator()
+        menu.addAction("기본 열로 되돌리기", self._reset_tracking_columns)
+        menu.exec(table.horizontalHeader().mapToGlobal(pos))
+
+    def _hidden_tracking_columns(self):
+        table = getattr(self.ui, "tableWidget_tracking", None)
+        if table is None:
+            return set()
+        return {label for index, (_src, label) in enumerate(self._TRACKING_TABLE_COLUMNS)
+                if index < table.columnCount() and table.isColumnHidden(index)}
+
+    def _set_tracking_column_visible(self, name, visible):
+        hidden = self._hidden_tracking_columns()
+        (hidden.discard if visible else hidden.add)(name)
+        self.set_app_setting(SETTING_TRACKING_HIDDEN_COLUMNS, sorted(hidden))
+        self._apply_tracking_hidden_columns(hidden)
+        self._fit_tracking_columns()
+
+    def _reset_tracking_columns(self):
+        self.set_app_setting(SETTING_TRACKING_HIDDEN_COLUMNS, list(TRACKING_DEFAULT_HIDDEN_COLUMNS))
+        self._apply_tracking_hidden_columns(set(TRACKING_DEFAULT_HIDDEN_COLUMNS))
+        self._fit_tracking_columns()
+
+    def _apply_tracking_hidden_columns(self, hidden):
+        table = getattr(self.ui, "tableWidget_tracking", None)
+        if table is None:
+            return
+        for index, (_src, label) in enumerate(self._TRACKING_TABLE_COLUMNS):
+            if index < table.columnCount():
+                table.setColumnHidden(index, label in hidden)
+
+    def _fit_tracking_columns(self):
+        """보이는 열을 표 폭 안에 맞춘다(가로 스크롤 없이). 각 열은 내용 폭(최대 TRACKING_COLUMN_MAX_WIDTH)에서
+        시작해, 넘치면 넓은 열부터 같은 상한까지 줄인다. 열 머리 글자 폭보다는 줄이지 않는다. 마지막 열은 남은 폭."""
+        table = getattr(self.ui, "tableWidget_tracking", None)
+        if table is None or table.columnCount() == 0:
+            return
+        header = table.horizontalHeader()
+        visible = [c for c in range(table.columnCount()) if not table.isColumnHidden(c)]
+        if len(visible) < 2:
+            return
+        fixed = visible[:-1]
+        wanted = {c: min(max(table.sizeHintForColumn(c), header.sectionSizeHint(c)), TRACKING_COLUMN_MAX_WIDTH)
+                  for c in fixed}
+        floor = {c: min(header.sectionSizeHint(c), wanted[c]) for c in fixed}
+        budget = table.viewport().width() - TRACKING_LAST_COLUMN_MIN_WIDTH
+        widths = dict(wanted)
+        if sum(widths.values()) > budget > 0:
+            low, high = 0, max(wanted.values())
+            while low < high:  # 합이 예산 안에 드는 가장 큰 상한을 찾는다
+                mid = (low + high + 1) // 2
+                if sum(max(floor[c], min(wanted[c], mid)) for c in fixed) <= budget:
+                    low = mid
+                else:
+                    high = mid - 1
+            widths = {c: max(floor[c], min(wanted[c], low)) for c in fixed}
+        for c, width in widths.items():
+            header.resizeSection(c, width)
+        header.setStretchLastSection(True)
+
+    def _tracking_empty_text(self, mode, search):
+        if getattr(self, "_tracking_risk_filter", None):
+            return "조건에 맞는 위험 송장이 없습니다. 위험 칩을 다시 누르면 모두 보입니다."
+        if search:
+            return f"「{search}」 수취인을 찾지 못했습니다."
+        return {
+            "배송중": "배송중인 송장이 없습니다.",
+            "오늘": "오늘 등록된 송장이 없습니다.",
+            "완료": f"최근 {TRACKING_COMPLETED_LOOKBACK_DAYS}일 안에 완료된 송장이 없습니다.",
+        }.get(mode, f"「{mode}」 송장이 없습니다.")
+
+    def _show_tracking_empty_label(self, text):
+        table = getattr(self.ui, "tableWidget_tracking", None)
+        if table is None:
+            return
+        label = getattr(self, "_tracking_empty_label", None)
+        if label is None:
+            label = QLabel(table.viewport())
+            label.setObjectName("label_tracking_empty")
+            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            label.setWordWrap(True)
+            set_status(label, "idle", "")
+            self._tracking_empty_label = label
+        if text:
+            set_status(label, "idle", text)
+            label.show()
+            self._place_tracking_empty_label()
+        else:
+            label.hide()
+
+    def _place_tracking_empty_label(self):
+        label = getattr(self, "_tracking_empty_label", None)
+        table = getattr(getattr(self, "ui", None), "tableWidget_tracking", None)
+        if label is None or table is None:
+            return
+        rect = table.viewport().rect()
+        label.setGeometry(rect.adjusted(20, 0, -20, 0))
+
+    @staticmethod
+    def _last_checked_text(rows):
+        """행의 최근조회 시각(J열) 중 가장 늦은 것. 다른 PC의 조회도 포함된다."""
+        latest = None
+        for row in rows:
+            value = row[9] if len(row) > 9 else ""
+            try:
+                parsed = datetime.strptime(str(value).strip(), "%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                continue
+            latest = parsed if latest is None or parsed > latest else latest
+        if latest is None:
+            return ""
+        return latest.strftime("%H:%M") if latest.date() == date.today() else latest.strftime("%m-%d %H:%M")
+
+    def _update_tracking_risk_chips(self, counts):
+        chips = getattr(self, "_tracking_risk_chips", None)
+        if not chips:
+            return
+        total = sum(counts.values())
+        current = getattr(self, "_tracking_risk_filter", None)
+        for key, text in TRACKING_RISK_CHIPS:
+            n = total if key == "all" else counts.get(key, 0)
+            chip = chips[key]
+            chip.setText(f"{text} {n}")
+            chip.setVisible(n > 0)
+            chip.setChecked(current == key)
 
     def show_help(self):
         """배송추적 사용 안내를 표시한다."""
@@ -320,6 +535,7 @@ class TrackingController(QObject):
             return
         self._tracking_list_values = payload.get("values", []) or []
         self._tracking_list_total_rows = int(payload.get("total_rows", 0) or 0)
+        self._tracking_list_loaded = True
         self._populate_tracking_table()
         self._set_tracking_table_loading(False)
         if self._slack_notify_after_reload:
@@ -423,7 +639,28 @@ class TrackingController(QObject):
         bg_hub = QColor("#ffb3b3")      # 허브 정체 = 빨강(위험)
         bg_warn = QColor("#ffe0b3")     # 수거누락·이동정체 = 주황(주의)
         counts = {"허브정체": 0, "수거누락": 0, "이동정체": 0}
-        risk_settings = self._risk_settings()
+        risk_settings, hidden_columns, auto_refresh_min = self._tracking_view_settings()
+
+        evaluated = []
+        for row in rows:
+            done = _cell(row, 7).strip().upper() == "Y"
+            ref = self._parse_event_dt(_cell(row, 11)) or self._parse_event_dt(_cell(row, 1))
+            risk, _elapsed = self._evaluate_risk(
+                _cell(row, 6), _cell(row, 8), done, ref, now_dt,
+                _cell(row, TRACKING_MANAGEMENT_COL), risk_settings)
+            if risk:
+                counts[risk] += 1
+            evaluated.append((row, risk))
+        # 위험 칩 거르기. 거르던 위험이 없어지면 거르기를 푼다.
+        risk_filter = getattr(self, "_tracking_risk_filter", None)
+        if risk_filter and not (sum(counts.values()) if risk_filter == "all" else counts.get(risk_filter, 0)):
+            risk_filter = self._tracking_risk_filter = None
+        if risk_filter == "all":
+            shown = [(row, risk) for row, risk in evaluated if risk]
+        elif risk_filter:
+            shown = [(row, risk) for row, risk in evaluated if risk == risk_filter]
+        else:
+            shown = evaluated
 
         cols = self._TRACKING_TABLE_COLUMNS
         prev_regino = self._selected_tracking_regino()  # 자동 갱신 시 선택 유지용
@@ -433,53 +670,59 @@ class TrackingController(QObject):
             table.clearContents()
             table.setColumnCount(len(cols))
             table.setHorizontalHeaderLabels([label for _, label in cols])
-            table.setRowCount(len(rows))
-            for r, row in enumerate(rows):
-                done = _cell(row, 7).strip().upper() == "Y"
-                ref = self._parse_event_dt(_cell(row, 11)) or self._parse_event_dt(_cell(row, 1))
-                risk, _elapsed = self._evaluate_risk(
-                    _cell(row, 6), _cell(row, 8), done, ref, now_dt,
-                    _cell(row, TRACKING_MANAGEMENT_COL), risk_settings)
-                if risk:
-                    counts[risk] += 1
+            table.setRowCount(len(shown))
+            for r, (row, risk) in enumerate(shown):
                 bg = bg_hub if risk == "허브정체" else (bg_warn if risk else None)
                 for c, (src_idx, _label) in enumerate(cols):
-                    item = QTableWidgetItem(_cell(row, src_idx))
+                    text = _cell(row, src_idx)
+                    item = QTableWidgetItem(text)
                     if src_idx != 10:
                         item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                    if src_idx in TRACKING_TOOLTIP_COLUMNS and text:
+                        item.setToolTip(text)  # 좁은 열에서 잘린 글자를 볼 수 있게
                     if bg is not None:
                         item.setBackground(bg)
                     table.setItem(r, c, item)
         finally:
             self._populating_tracking_table = False
         table.setSortingEnabled(True)
-        table.resizeColumnsToContents()
-        header = table.horizontalHeader()
-        if header is not None:
-            header.setStretchLastSection(True)
+        self._apply_tracking_hidden_columns(hidden_columns)
+        self._fit_tracking_columns()
         if prev_regino:  # 자동 갱신 후 이전 선택 행 복원
             for r in range(table.rowCount()):
                 it = table.item(r, self._tracking_table_col(0))
                 if it is not None and it.text().strip() == prev_regino:
                     table.setCurrentCell(r, self._tracking_table_col(0))
                     break
+        total_risk = sum(counts.values())
         if hasattr(self.ui, "label_tracking_count"):
-            total_risk = sum(counts.values())
             if mode == "전체":
-                txt = f"표시 {len(rows)}건 / 전체 {total}건"
+                txt = f"표시 {len(shown)}건 / 전체 {total}건"
             elif mode == "완료":
-                txt = f"표시 {len(rows)}건 / 최근 {TRACKING_COMPLETED_LOOKBACK_DAYS}일 완료"
+                txt = f"표시 {len(shown)}건 / 최근 {TRACKING_COMPLETED_LOOKBACK_DAYS}일 완료"
             else:
-                txt = f"표시 {len(rows)}건"
+                txt = f"표시 {len(shown)}건"
+            if risk_filter:
+                txt += " (위험만)"
+            last_checked = self._last_checked_text(data_rows)
+            if last_checked:
+                txt += f"  ·  마지막 조회 {last_checked}"
+            txt += f"  ·  자동 {auto_refresh_min}분" if auto_refresh_min else "  ·  자동 꺼짐"
+            detail = txt
             if total_risk:
-                txt += (f"  ·  ⚠️ 위험 {total_risk}건"
-                        f" (허브 {counts['허브정체']} · 수거누락 {counts['수거누락']}"
-                        f" · 이동 {counts['이동정체']})")
-                set_status(self.ui.label_tracking_count, "error", txt, txt, emphasis=True, mark=False)
+                detail += (f"\n위험 {total_risk}건: 허브 {counts['허브정체']} · 수거누락 {counts['수거누락']}"
+                           f" · 이동 {counts['이동정체']}")
+            if total_risk and not getattr(self, "_tracking_risk_chips", None):
+                # 위험 칩이 없는 화면(예: 테스트용 간단한 화면)에서는 예전처럼 건수 줄에 위험을 보인다.
+                set_status(self.ui.label_tracking_count, "error", detail.replace("\n", "  ·  "), detail,
+                           emphasis=True, mark=False)
             else:
                 clear_status(self.ui.label_tracking_count)
                 self.ui.label_tracking_count.setText(txt)
-                self.ui.label_tracking_count.setToolTip(txt)
+                self.ui.label_tracking_count.setToolTip(detail)
+        self._update_tracking_risk_chips(counts)
+        loaded = getattr(self, "_tracking_list_loaded", False)
+        self._show_tracking_empty_label(self._tracking_empty_text(mode, search) if loaded and not shown else "")
 
     @staticmethod
     def _parse_event_dt(s):
@@ -821,7 +1064,11 @@ class TrackingController(QObject):
     # ── 송장 배송추적: 자동 새로고침(백그라운드 타이머) ──────────────────────
     def _auto_refresh_interval_min(self):
         """자동 새로고침 간격(분). 미설정이면 기본 60, '0'이면 끔(0 반환)."""
-        s = str(self.get_app_setting(CONFIG_KEY_AUTO_REFRESH_MIN, "")).strip()
+        return self._parse_auto_refresh_min(self.get_app_setting(CONFIG_KEY_AUTO_REFRESH_MIN, ""))
+
+    @staticmethod
+    def _parse_auto_refresh_min(value):
+        s = str(value if value is not None else "").strip()
         if not s:
             return TRACKING_AUTO_REFRESH_DEFAULT_MIN
         try:

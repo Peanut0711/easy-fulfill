@@ -37,6 +37,8 @@ QPushButton[role="danger"] {{
 }}
 QPushButton[role="danger"]:hover {{ background: #fdecea; }}
 QPushButton[role="danger"]:pressed {{ background: #f9d6d2; }}
+QPushButton[role="danger"]:checked {{ background: #f9d6d2; border-color: {COLOR_DANGER}; font-weight: 600; }}
+QPushButton[chip="true"] {{ padding: 1px 8px; }}
 QPushButton[role="danger"]:disabled {{ color: #d9a29b; border-color: #f0d4d0; }}
 QLabel[status="ok"] {{ color: {COLOR_OK}; }}
 QLabel[status="warn"] {{ color: {COLOR_WARN}; }}
