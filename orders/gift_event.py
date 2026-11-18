@@ -60,7 +60,7 @@ class GiftEvent:
         if not gift:
             return ""
         safe_gift = re.sub(r"([\\`*_~\[\]<>!&|])", r"\\\1", gift)
-        return f" · **🎁 사은품: {safe_gift}**"
+        return f" · **🎁: {safe_gift}**"
 
     def invoice_prefix(self, store: str, order_amount: float) -> str:
         tier = self._matching_tier(store, order_amount)
