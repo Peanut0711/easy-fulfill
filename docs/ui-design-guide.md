@@ -1,6 +1,6 @@
 # UI 디자인 가이드 (커스텀 테마)
 
-상태: **초안**(2026-11-18, [GUI 전면 디자인 개편 계획](ui-redesign-plan.md) 0단계). 값은 2단계 「검토 지점 A」에서 캡처를 보고 확정한다. 확정 전까지 「정할 것」에 남은 항목은 바꿀 수 있다.
+상태: **초안**(2026-11-18, [GUI 전면 디자인 개편 계획](ui-redesign-plan.md) 0단계. 2026-11-19 2-1에서 `shared/theme.py`로 적용하며 컨트롤 높이·주의 색을 고침). 값은 2단계 「검토 지점 A」에서 캡처를 보고 확정한다. 확정 전까지 「정할 것」에 남은 항목은 바꿀 수 있다.
 
 이 문서의 값은 `shared/theme.py` 한 곳에서만 코드로 쓴다(2단계부터). 화면 코드에는 색 값·글꼴 크기·여백 수치를 직접 쓰지 않고 기준값 이름이나 부품을 쓴다.
 
@@ -34,7 +34,7 @@
 | `primary.subtle` | `#e8f0fe` | 선택 행, 선택 목록 항목 |
 | `danger` / `danger.subtle` | `#c0392b` / `#fdecea` | 위험 버튼, 오류 |
 | `ok` / `ok.subtle` | `#2e7d32` / `#edf7ee` | 성공 |
-| `warn` / `warn.subtle` | `#b26a00` / `#fff4e5` | 주의 |
+| `warn` / `warn.subtle` | `#a15f00` / `#fff4e5` | 주의(2-1에서 `#b26a00`→`#a15f00`: 흰 바탕 대비 4.2→5.1) |
 | `disabled.text` / `disabled.bg` | `#a0a8b3` / `#eef0f3` | 꺼진 컨트롤 |
 
 스토어 색(네이버·쿠팡·지마켓·11번가 배지)은 로고 색을 따르며 `shared/theme.py`에 `store.*`로 둔다.
@@ -54,11 +54,11 @@
 | `space.md` | 12 | 카드 안쪽 여백, 카드 사이 |
 | `space.lg` | 16 | 탭 페이지 가장자리 여백 |
 | `space.xl` | 24 | 큰 구역 사이(드물게) |
-| `control.height` | 32 | 버튼, 입력칸, 콤보 |
-| `control.height.compact` | 28 | 표 위 도구 줄, 표 행 높이 |
-| `chip.height` | 24 | 상태 칩, 작은 배지 |
-| `button.min_width` | 72 | 글자가 짧은 버튼 |
-| `radius.control` / `radius.card` / `radius.chip` | 6 / 8 / 12 | |
+| `control.height` | 30 | 버튼, 입력칸, 콤보(9pt 기준. 10pt로 키우면 2-3에서 다시 정함) |
+| `control.height.compact` | 26 | 표 위 도구 줄, 표 행 높이 |
+| `chip.height` | 22 | 상태 칩, 작은 배지 |
+| `button.min_width` | 64 | 글자가 짧은 버튼 |
+| `radius.control` / `radius.card` / `radius.chip` | 6 / 8 / 11 | |
 | `focus.ring` | 2 | 포커스 테두리 두께(`primary`) |
 
 ## 화면 틀

@@ -130,8 +130,8 @@
 | 1-2d 상세페이지 탭 믹스인 | 완료 | `ced9443` | `ui/main/detail_page.py` `DetailPageMixin`(메서드 28개, `DETAIL_LOG_ERROR_MARKERS`). 옮긴 코드의 `Path(__file__).resolve().parent`(저장소 루트) 4곳은 같은 경로인 `APP_ROOT`로 바꿈. `DetailHtmlEditorDialog`·`DetailPreviewServer`는 `easy-fulfill.py`에 두고 `host(self)`로 읽음(편집기 테스트가 소스에서 클래스를 떼어 쓰므로 4-8에서 함께 옮긴다). `easy-fulfill.py` 9,572→9,118줄. 캡처 84장 기준과 같음 |
 | 1-2e 단건 송장·문서 만들기 탭 믹스인 | 완료 | `9ef29ef` | `ui/main/quick_invoice.py` `QuickInvoiceMixin`(입력 격자, 우체국 우편번호·주소 검색, 클립보드 해석, 송장 엑셀 만들기, 오늘 만든 목록; 메서드 28개와 `QUICK_TODAY_LIMIT`·`QUICK_REQUIRED_FIELDS`), `ui/main/documents.py` `DocumentsMixin`(`_mount_document_widget`, `base_dir`는 같은 경로인 `APP_ROOT`로). `KpostAddressSearchDialog`는 `easy-fulfill.py`에 두고 `host(self)`로 읽음(4-8에서 옮김). `easy-fulfill.py` 9,118→8,368줄. 캡처 84장 기준과 같음 |
 | 1-2f 주문·발송 탭 믹스인 | 완료 | `b356759` | `ui/main/order_ship.py` `OrderShipMixin`: 주문·발송 패널 화면 코드만(분할 비율, 미리보기 표, 버튼 줄·다음 동작 강조, 끌어다 놓기, 진행 요약, 파일 상태 라벨·`eventFilter`, 스토어 로고; 메서드 17개와 `_STORE_NAMES`). 주문 엑셀 처리·송장·우체국·주문번호 인덱스 같은 업무 로직은 옮기지 않음(R3). `easy-fulfill.py` 8,368→8,131줄. 캡처 84장 기준과 같음 |
-| 1-2g `easy-fulfill.py`에 남은 쓰지 않는 import 정리 | 완료 | (이 줄을 고친 커밋) | 이름 78개(옮기면서 안 쓰게 된 것과 원래 안 쓰던 것). 지우는 조건: 파일 안에서 안 쓰고, 믹스인이 `host(self)`로 읽지 않고, 테스트가 앱 모듈 속성으로 쓰거나 패치하지 않음. `easy-fulfill.py` 8,131→8,110줄. **1단계 결과:** 11,649→8,110줄, 화면 코드는 `ui/main/` 믹스인 7개(공통 틀, 시작·종료, 설정, 상세페이지, 단건 송장, 문서 만들기, 주문·발송 패널). 캡처 84장 기준과 같음 |
-| 2-1 테마 모듈과 Fusion 적용 | 대기 | | `shared/theme.py`, 검토 지점 A 항목은 검토 리스트로 |
+| 1-2g `easy-fulfill.py`에 남은 쓰지 않는 import 정리 | 완료 | `f0a0f7b` | 이름 78개(옮기면서 안 쓰게 된 것과 원래 안 쓰던 것). 지우는 조건: 파일 안에서 안 쓰고, 믹스인이 `host(self)`로 읽지 않고, 테스트가 앱 모듈 속성으로 쓰거나 패치하지 않음. `easy-fulfill.py` 8,131→8,110줄. **1단계 결과:** 11,649→8,110줄, 화면 코드는 `ui/main/` 믹스인 7개(공통 틀, 시작·종료, 설정, 상세페이지, 단건 송장, 문서 만들기, 주문·발송 패널). 캡처 84장 기준과 같음 |
+| 2-1 테마 모듈과 Fusion 적용 | 완료 | (이 줄을 고친 커밋) | `shared/theme.py`: 기준값, Fusion, 팔레트, 맑은 고딕 9pt, 앱 전체 스타일시트(바탕·메뉴·탭·묶음 카드·버튼·입력·표·상태바, 역할·상태 규칙 이전). 콤보·날짜·숫자 칸 화살표는 `image/ui/chevron-*.svg`. `shared/ui_style.py`는 색·스타일시트를 테마에서 가져옴(이름 유지). 새 `tests/test_theme.py`(대비 4.5:1, 스타일시트 색은 테마 값만, 아이콘 파일, 적용). 측정(Windows): 창 최소 667×443→664×490(예산 안). 캡처 84장 모두 바뀜(의도). 125% 주문 패널 버튼 줄 겹침은 여백이 늘어 더 잘림 — 4-1에서 해결. 위젯별 `setStyleSheet`(오버레이, 상태바 라벨, 문서 표 등)는 아직 그대로 — 2-2 |
 | 2-2 직접 지정 색·글꼴을 테마로 옮김 | 대기 | | |
 | 2-3 글꼴 크기 확정과 크기 예산 재측정 | 대기 | | |
 | 3-1 공통 부품(카드·버튼 줄·입력 격자·빈 상태·표·대화상자 버튼) | 대기 | | `shared/ui_components.py`, 견본 캡처 |
@@ -155,9 +155,12 @@
 | R1 | 1-2 | 화면 코드를 나누는 방식. 이전 [기능 분리 계획](easy-fulfill-refactoring-plan.md)은 `tracking/controller.py`처럼 탭별 컨트롤러 객체(위임 메서드)를 목표로 한다 | 이번에는 `MainWindow` 믹스인으로 옮기기만 한다. 메서드 이름과 `self.…`가 그대로라 테스트·위임이 바뀌지 않고 「모양·동작 그대로」를 캡처로 검증할 수 있다. 컨트롤러로 바꾸는 일은 기능 분리 계획에서 따로 한다 | |
 | R2 | 1-2b | 믹스인으로 옮긴 코드가 `easy-fulfill.py`에 남은 전역(작업 스레드 클래스, `gspread`, 상수)을 어떻게 쓸지 | `ui/main/__init__.py` `host(self)`가 `MainWindow.__init__.__globals__`(그 모듈의 전역 dict)를 돌려주고 `host(self).OrderIndexWriteThread`처럼 읽는다. 옮기기 전과 같은 값을 쓰고, 테스트의 `patch.object(app_module, …)`도 그대로 통한다. import한 이름이라도 테스트가 앱 모듈에서 패치하는 것(`run_in_background`, `submit_real_order`, `resolve_recipient_address`, `ParcelReceiptStore`, `_read_config_values_map`, `lookup_order_receipt`)은 같은 방식으로 읽는다. 작업 스레드를 도메인 모듈로 옮기면(기능 분리 계획) 직접 import로 바꾼다 | |
 | R3 | 1-2f | `MainWindow`에 남은 약 5,000줄(주문 엑셀 처리, 송장 생성, 우체국 접수·포털, 주문번호 인덱스, 상품 분류, 시그널 연결 `setup_connections`, 탭 전환 `_on_main_tab_changed`)도 이번에 옮길지 | 옮기지 않는다. 1단계 목적(탭을 다시 디자인할 때 화면 코드가 한 파일에 있음)에는 화면 코드만 필요하고, 업무 로직은 소스에서 메서드를 떼어 쓰는 테스트가 있어 옮기는 위험이 크다. 업무 로직 분리는 [기능 분리 계획](easy-fulfill-refactoring-plan.md)에서 따로 한다. 4단계에서 탭을 다시 짤 때 필요한 시그널 연결은 그 탭 믹스인으로 옮긴다 | |
+| R4 | 2-1 | 검토 지점 A: 테마의 색·밀도·탭 모양 | 디자인 가이드 권장값으로 적용: 바탕 회색 `#f4f6f8` + 흰 카드(묶음), 탭은 아래 줄 표시, 버튼·입력 높이 30(가이드 초안 32에서 9pt 밀도에 맞춰 줄임), 주의 색 `#a15f00`(대비 기준 4.5 충족을 위해 진하게). Fusion에서는 메뉴 이름의 단축 글자 밑줄(파일(F)의 F)이 Alt를 누르지 않아도 늘 보인다(Windows 기본 모양은 Alt를 눌러야 보임). 확인할 캡처: `python tools\capture_screens.py` 결과의 `index.html` | |
 
 ## 버전 이력 초안
 
 `main`에 합칠 때 [버전 이력](app-version-update-guide.md#버전-이력)에 정리할 앱 동작 변경을 커밋마다 여기에 적는다.
 
 - (0단계) 앱 동작 변경 없음. 개발용 화면 캡처 도구 추가.
+- (1단계) 앱 동작 변경 없음. 메인 창 화면 코드를 `ui/main/`으로 나눔.
+- (2-1) 앱 전체에 새 테마를 입힌다: 회색 바탕에 흰 카드 묶음, 아래 줄로 표시하는 탭, 둥근 버튼·입력칸, 굵은 표 머리글, 키보드 포커스 테두리. Windows 기본 모양 대신 Fusion 스타일로 그려 PC마다 같게 보인다. 주의(주황) 글자를 더 진하게 해 읽기 쉽게 했다.

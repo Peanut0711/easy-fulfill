@@ -16,13 +16,14 @@ class UiStyleTests(unittest.TestCase):
         from PySide6.QtWidgets import QApplication
         cls.app = QApplication.instance() or QApplication([])
 
-    def test_stylesheet_uses_property_selectors_only(self):
+    def test_colors_come_from_theme_only(self):
+        # 색 값은 shared/theme.py 한 곳에서 정한다(UI 개편 2-1부터, 4-1의 「속성 선택자만」 규칙을 대체).
         import re
-        from shared.ui_style import APP_STYLESHEET
-        selectors = re.findall(r"^\s*([^{}\n]+?)\s*\{", APP_STYLESHEET, flags=re.MULTILINE)
-        self.assertTrue(selectors)
-        for selector in selectors:
-            self.assertIn("[", selector, f"종류 전체 규칙 금지: {selector}")
+        source = (ROOT / "shared" / "ui_style.py").read_text(encoding="utf-8")
+        self.assertEqual(re.findall(r"#[0-9a-fA-F]{6}\b", source), [])
+        from shared import theme, ui_style
+        self.assertIs(ui_style.APP_STYLESHEET, theme.APP_STYLESHEET)
+        self.assertEqual(ui_style.COLOR_DANGER, theme.DANGER)
 
     def test_button_role(self):
         from PySide6.QtWidgets import QPushButton

@@ -1,63 +1,32 @@
-"""앱 공통 버튼 역할과 상태 표시 스타일.
+"""앱 공통 버튼 역할과 상태 표시 도우미.
 
-규칙(docs/gui-stage4-structure-style-plan.md 4-1):
-- 스타일시트는 속성 선택자만 쓴다(``QPushButton[role="primary"]``, ``QLabel[status="error"]``).
-  종류 전체에 거는 규칙(``QPushButton { … }``)은 Windows 기본 모양을 통째로 바꾸므로 쓰지 않는다.
-- 색은 이 파일에서만 정한다.
+색과 스타일시트는 ``shared/theme.py``(디자인 기준값) 한 곳에서 정한다. 이 모듈은 위젯에 동적 속성
+(``role``·``status``·``emphasis``·``band``)을 붙이고 다시 그리게 하는 도우미만 둔다.
 - 역할·상태를 바꿀 때는 위젯 자체의 ``setStyleSheet``로 색을 넣지 않는다(위젯 스타일시트가 앱
   스타일시트보다 우선해 색이 덮인다).
 """
 
-COLOR_PRIMARY = "#1a73e8"
-COLOR_PRIMARY_HOVER = "#1765cc"
-COLOR_PRIMARY_PRESSED = "#155ab6"
-COLOR_PRIMARY_DISABLED = "#9fbff0"
-COLOR_DANGER = "#c0392b"
-COLOR_OK = "#2e7d32"
-COLOR_WARN = "#b26a00"
-COLOR_IDLE = "#888888"
+from shared import theme
+
+COLOR_PRIMARY = theme.PRIMARY
+COLOR_PRIMARY_HOVER = theme.PRIMARY_HOVER
+COLOR_PRIMARY_PRESSED = theme.PRIMARY_PRESSED
+COLOR_PRIMARY_DISABLED = theme.PRIMARY_DISABLED
+COLOR_DANGER = theme.DANGER
+COLOR_OK = theme.OK
+COLOR_WARN = theme.WARN
+COLOR_IDLE = theme.IDLE
 
 BUTTON_ROLES = ("primary", "danger")
 STATUS_KINDS = ("ok", "warn", "error", "idle")
 STATUS_MARKS = {"ok": "✓", "warn": "!", "error": "✗", "idle": ""}
 
-APP_STYLESHEET = f"""
-QPushButton[role="primary"] {{
-    background: {COLOR_PRIMARY}; color: white; font-weight: 600;
-    border: 1px solid {COLOR_PRIMARY_HOVER}; border-radius: 4px; padding: 4px 10px;
-}}
-QPushButton[role="primary"]:hover {{ background: {COLOR_PRIMARY_HOVER}; }}
-QPushButton[role="primary"]:pressed {{ background: {COLOR_PRIMARY_PRESSED}; }}
-QPushButton[role="primary"]:disabled {{
-    background: {COLOR_PRIMARY_DISABLED}; border-color: {COLOR_PRIMARY_DISABLED};
-}}
-QPushButton[role="danger"] {{
-    color: {COLOR_DANGER}; background: white;
-    border: 1px solid #e6b0aa; border-radius: 4px; padding: 4px 10px;
-}}
-QPushButton[role="danger"]:hover {{ background: #fdecea; }}
-QPushButton[role="danger"]:pressed {{ background: #f9d6d2; }}
-QPushButton[role="danger"]:checked {{ background: #f9d6d2; border-color: {COLOR_DANGER}; font-weight: 600; }}
-QPushButton[chip="true"] {{ padding: 1px 8px; }}
-QPushButton[role="danger"]:disabled {{ color: #d9a29b; border-color: #f0d4d0; }}
-QLabel[status="ok"] {{ color: {COLOR_OK}; }}
-QLabel[status="warn"] {{ color: {COLOR_WARN}; }}
-QLabel[status="error"] {{ color: {COLOR_DANGER}; }}
-QLabel[status="idle"] {{ color: {COLOR_IDLE}; }}
-QLabel[emphasis="true"] {{ font-weight: 600; }}
-QFrame[notice="ok"] {{ background: #edf7ee; border-top: 1px solid #a5d6a7; }}
-QFrame[notice="warn"] {{ background: #fff4e5; border-top: 1px solid #f0c27a; }}
-QFrame[notice="error"] {{ background: #fdecea; border-top: 1px solid #e6b0aa; }}
-QLabel[band="warn"] {{
-    color: {COLOR_WARN}; background: #fff4e5; font-weight: 600;
-    border: 1px solid #f0c27a; border-radius: 4px;
-}}
-"""
+APP_STYLESHEET = theme.APP_STYLESHEET
 
 
 def apply_app_style(app) -> None:
-    """QApplication 생성 직후 한 번 부른다."""
-    app.setStyleSheet(APP_STYLESHEET)
+    """QApplication 생성 직후 한 번 부른다(테마 전체 적용: ``shared.theme.apply_theme``)."""
+    theme.apply_theme(app)
 
 
 def _repolish(widget) -> None:

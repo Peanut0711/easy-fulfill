@@ -8086,7 +8086,7 @@ def main():
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
     )
     app = QApplication(sys.argv)
-    apply_app_style(app)  # 버튼 역할·상태 색(속성 선택자만 쓰는 앱 공통 스타일)
+    apply_app_style(app)  # 앱 테마(shared/theme.py): Fusion, 팔레트, 글꼴, 앱 전체 스타일시트
     # 앱의 백그라운드 작업은 Google 브라우저 로그인을 열지 않는다(재인증 버튼에서만 연다).
     try:
         from sheets.google_sheets_oauth import set_interactive_login_default
