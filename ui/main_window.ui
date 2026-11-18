@@ -1643,7 +1643,7 @@
           <item>
            <widget class="QLabel" name="label_tracking_count">
             <property name="sizePolicy">
-             <sizepolicy hsizetype="Expanding" vsizetype="Preferred">
+             <sizepolicy hsizetype="Ignored" vsizetype="Preferred">
               <horstretch>1</horstretch>
               <verstretch>0</verstretch>
              </sizepolicy>
@@ -1653,6 +1653,22 @@
             </property>
             <property name="alignment">
              <set>Qt::AlignmentFlag::AlignLeft|Qt::AlignmentFlag::AlignVCenter</set>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QLabel" name="label_tracking_summary">
+            <property name="sizePolicy">
+             <sizepolicy hsizetype="Ignored" vsizetype="Preferred">
+              <horstretch>1</horstretch>
+              <verstretch>0</verstretch>
+             </sizepolicy>
+            </property>
+            <property name="text">
+             <string/>
+            </property>
+            <property name="alignment">
+             <set>Qt::AlignmentFlag::AlignRight|Qt::AlignmentFlag::AlignVCenter</set>
             </property>
            </widget>
           </item>
@@ -1713,7 +1729,7 @@
            <widget class="QLineEdit" name="lineEdit_tracking_recipient_search">
             <property name="minimumSize">
              <size>
-              <width>150</width>
+              <width>120</width>
               <height>30</height>
              </size>
             </property>
@@ -1726,26 +1742,23 @@
            </widget>
           </item>
           <item>
-           <widget class="QLabel" name="label_tracking_summary">
-            <property name="sizePolicy">
-             <sizepolicy hsizetype="Expanding" vsizetype="Preferred">
-              <horstretch>1</horstretch>
-              <verstretch>0</verstretch>
-             </sizepolicy>
+           <spacer name="horizontalSpacer_tracking_actions">
+            <property name="orientation">
+             <enum>Qt::Orientation::Horizontal</enum>
             </property>
-            <property name="text">
-             <string/>
+            <property name="sizeHint" stdset="0">
+             <size>
+              <width>0</width>
+              <height>20</height>
+             </size>
             </property>
-            <property name="wordWrap">
-             <bool>true</bool>
-            </property>
-           </widget>
+           </spacer>
           </item>
           <item>
            <widget class="QPushButton" name="pushButton_tracking_stop_selected">
             <property name="minimumSize">
              <size>
-              <width>120</width>
+              <width>0</width>
               <height>34</height>
              </size>
             </property>
@@ -1761,7 +1774,7 @@
            <widget class="QPushButton" name="pushButton_refresh_tracking">
             <property name="minimumSize">
              <size>
-              <width>110</width>
+              <width>0</width>
               <height>34</height>
              </size>
             </property>
@@ -1783,7 +1796,7 @@
            <widget class="QPushButton" name="pushButton_refresh_tracking_exceptions">
             <property name="minimumSize">
              <size>
-              <width>120</width>
+              <width>0</width>
               <height>34</height>
              </size>
             </property>

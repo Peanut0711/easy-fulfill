@@ -5946,7 +5946,18 @@ class MainWindow(QMainWindow):
         tabs = self.ui.tabWidget
         page = QWidget()
         page.setObjectName("tab_detail_page")
-        layout = QVBoxLayout(page)
+        # 내용 최소 높이(약 600px)가 창 크기 예산보다 커서 스크롤 영역에 넣는다(창이 커지지 않게).
+        page_layout = QVBoxLayout(page)
+        page_layout.setContentsMargins(0, 0, 0, 0)
+        scroll = QScrollArea(page)
+        scroll.setObjectName("scrollArea_detail_page")
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        content = QWidget()
+        content.setObjectName("widget_detail_page_content")
+        scroll.setWidget(content)
+        page_layout.addWidget(scroll)
+        layout = QVBoxLayout(content)
         layout.setContentsMargins(18, 18, 18, 18)
         layout.setSpacing(14)
 

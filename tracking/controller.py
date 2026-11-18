@@ -475,7 +475,7 @@ class TrackingController(QObject):
             else:
                 self.ui.label_tracking_count.setStyleSheet("")
             self.ui.label_tracking_count.setText(txt)
-            self.ui.label_tracking_count.setToolTip("")
+            self.ui.label_tracking_count.setToolTip(txt)
 
     @staticmethod
     def _parse_event_dt(s):
@@ -757,7 +757,9 @@ class TrackingController(QObject):
     # ── 송장 배송추적: 새로고침(스마트택배 조회) ──────────────────────────
     def _set_tracking_summary(self, text):
         if hasattr(self.ui, "label_tracking_summary"):
+            # 폭이 좁으면 글자가 잘리므로 원문은 툴팁으로도 보인다(라벨이 창 폭을 늘리지 않음).
             self.ui.label_tracking_summary.setText(text)
+            self.ui.label_tracking_summary.setToolTip(text)
 
     def on_refresh_tracking_clicked(self):
         """화면의 추적중 송장만 우체국 종추적조회로 갱신합니다."""
