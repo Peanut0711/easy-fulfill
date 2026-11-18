@@ -13,67 +13,65 @@ from pathlib import Path
 import subprocess
 import tempfile
 import shutil
-from PySide6.QtWidgets import (QApplication, QMainWindow, QFileDialog, QMessageBox, 
-                              QInputDialog, QLineEdit, QTableWidgetItem, QLabel, 
-                              QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QWidget,
-                               QProgressBar, QProgressDialog, QFrame, QGraphicsOpacityEffect, QListWidget,
-                              QAbstractItemView, QGroupBox, QCheckBox, QSpinBox, QMenu,
-                              QStyle, QProxyStyle, QPlainTextEdit, QFormLayout,
-                              QSplitter, QTextEdit, QComboBox, QDoubleSpinBox, QColorDialog,
-                              QScrollArea, QGridLayout, QToolButton, QListWidgetItem, QSizePolicy,
-                              QTableWidget)
-from PySide6.QtUiTools import QUiLoader
+from PySide6.QtWidgets import (
+    QApplication,
+    QMainWindow,
+    QFileDialog,
+    QMessageBox,
+    QInputDialog,
+    QLineEdit,
+    QTableWidgetItem,
+    QLabel,
+    QDialog,
+    QVBoxLayout,
+    QHBoxLayout,
+    QPushButton,
+    QWidget,
+    QFrame,
+    QListWidget,
+    QAbstractItemView,
+    QSpinBox,
+    QStyle,
+    QProxyStyle,
+    QPlainTextEdit,
+    QSplitter,
+    QTextEdit,
+    QComboBox,
+    QDoubleSpinBox,
+    QColorDialog,
+)
 from PySide6.QtCore import (
-    QFile,
-    QIODevice,
     Qt,
-    QSize,
     QUrl,
     QTimer,
     QThread,
     Signal,
-    QPropertyAnimation,
-    QEasingCurve,
-    QRect,
-    QRectF,
     QEvent,
     QProcess,
     QProcessEnvironment,
 )
 from PySide6.QtGui import (
     QPixmap,
-    QImage,
     QIcon,
     QAction,
-    QDesktopServices,
-    QFont,
-    QPainter,
     QColor,
-    QBrush,
-    QPen,
     QPalette,
     QTextCursor,
     QKeySequence,
     QShortcut,
-    QGuiApplication,
 )
 from PySide6.QtWebEngineCore import QWebEngineSettings
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from shiboken6 import isValid
 from shared.paths import APP_ROOT
-from shared.lazy_import import deferred_module, optional_deferred_module, preload_modules_in_background
+from shared.lazy_import import deferred_module, optional_deferred_module
 from shared.qt_background import run_in_background
-from shared.ui_style import COLOR_DANGER, STATUS_MARKS, apply_app_style, clear_status, set_band, set_button_role, set_status
-from shared.ui_notice import NoticeBar, StatusChip
-from shared.window_geometry import (
-    centered_position, default_window_size, geometry_to_setting, is_restorable, parse_saved_geometry,
-)
+from shared.ui_style import apply_app_style, set_button_role, set_status
 from product_detail.detail_image_upload import upload_image_for_editor, validated_cdn_url
 # 첫 화면에 필요 없는 네트워크·복호화 모듈은 처음 쓸 때 불러온다(시작 시간 단축).
 requests = deferred_module("requests")
 msoffcrypto = deferred_module("msoffcrypto")
 from io import BytesIO
-import warnings
 import logging
 import json
 import hashlib
@@ -81,21 +79,14 @@ import traceback
 import xml.etree.ElementTree as ET
 from html.parser import HTMLParser
 from tracking.service import (
-    CONFIG_KEY_INQUIRY_WORK_END,
-    CONFIG_KEY_INQUIRY_WORK_START,
-    NAVER_INQUIRY_WORK_END_HOUR,
-    NAVER_INQUIRY_WORK_START_HOUR,
     inquiry_alerts_allowed as _inquiry_alerts_allowed,
-    parse_timestamp as _parse_ts,
     read_inquiry_work_hours as _read_inquiry_work_hours,
-    tracking_management_state as _tracking_management_state,
 )
 from tracking.repository import (
     config_values_map_from_rows,
     normalize_tracking_no as _normalize_tracking_no,
     open_config_worksheet,
     read_config_values_map as _read_config_values_map,
-    write_config_values as _write_config_values,
     write_config_values as _write_config_values_checked,
     ConfigValueChangedError,
 )
@@ -108,17 +99,11 @@ from ui.main.settings import SettingsMixin
 from ui.main.startup import StartupMixin
 from ui.main.chrome import ChromeMixin
 from ui.main import register_host
-from tracking.workers import CONFIG_KEY_KPOST_REGKEY, TrackingConfigWriteThread, run_tracking_list_worker
 from sheets.gift_history import GiftRecordOutbox
-from sheets.version_gate import APP_VERSION, SOURCETREE_UPDATE_ERROR, SOURCETREE_UPDATE_STEPS
+from sheets.version_gate import APP_VERSION
 from orders.quick import (
-    detect_quick_store,
     extract_zip_code,
-    parse_coupang_quick_clipboard,
     parse_generic_quick_clipboard,
-    parse_gmarket_quick_clipboard,
-    parse_naver_quick_clipboard,
-    save_invoice_excel,
 )
 from orders.bulk import (
     build_11st_orders,
@@ -135,19 +120,13 @@ from orders.gift_event import DEFAULT_GIFT_EVENT, gift_event_from_config_rows, r
 from orders.gift_history import KST, build_gift_records
 from orders.index_sync import conflict_message as order_index_conflict_message, merge_order_indices
 from orders.matching import CoupangOrderIndex, NaverOrderIndex, normalize_coupang_text
-from ui.gift_event_settings import GiftEventSettingsDialog
-from ui.gift_history import GiftHistoryDialog, GiftHistorySync
-from ui.order_ship_panel import (
-    STAGE_INTAKE, STAGE_INVOICE, STAGE_ORDER, STAGE_RECEIPT, STORE_NAMES, apply_primary, next_stage,
-    order_summary_html, ship_summary_html, stabilize_widths, store_badge_pixmap,
-    DROP_ZONE_STYLE, FileDropTarget,
-)
+from ui.gift_history import GiftHistorySync
 
 ORDER_IDLE_TEXT = "주문 엑셀을 끌어다 놓으세요"
 INVOICE_IDLE_TEXT = "송장 엑셀을 끌어다 놓으세요"
 from ui.order_preview import (
-    CODE_MISSING_BACKGROUND, NON_PARCEL_BACKGROUND, PreviewOrder, PreviewProduct,
-    setup_preview_view, show_preview, summary_counts,
+    PreviewOrder,
+    PreviewProduct,
 )
 from shipping.post_parcel import (
     ParcelApiError,
