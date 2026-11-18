@@ -84,6 +84,8 @@
 
 ## 부품
 
+구현: `shared/ui_components.py`(3-1). 부품만 따로 보려면 `python tools\capture_screens.py --groups components`.
+
 | 부품 | 규칙 |
 |---|---|
 | **카드** `SectionCard` | `bg.surface`, `border` 1px, `radius.card`, 안쪽 `space.md`. 제목 줄: 단계 번호(있으면 원 배지) · 제목(10.5pt 굵게) · 오른쪽 보조 동작. QGroupBox와 파란 번호 제목을 대신한다 |

@@ -221,6 +221,22 @@ QProgressBar::chunk {{ background: {PRIMARY}; border-radius: 4px; }}
 QSplitter::handle {{ background: {BG_APP}; }}
 QScrollArea {{ border: none; }}
 
+/* ── 공통 부품(shared/ui_components.py) ───────────────── */
+QFrame[card="true"] {{
+    background: {BG_SURFACE}; border: 1px solid {BORDER}; border-radius: {RADIUS_CARD}px;
+}}
+QLabel[sectionTitle="true"] {{ color: {TEXT}; font-weight: bold; font-size: {FONT_SIZE + 0.5:g}pt; }}
+QLabel[stepBadge="true"] {{
+    background: {PRIMARY_SUBTLE}; color: {PRIMARY}; border-radius: 11px; font-weight: bold;
+}}
+QLabel[stepBadge="true"][stepState="done"] {{ background: {OK_SUBTLE}; color: {OK}; }}
+QLabel[formLabel="true"] {{ color: {TEXT_SECONDARY}; }}
+QLabel[formLabel="true"][status="warn"] {{ color: {WARN}; }}
+QLabel[fieldError="true"] {{ color: {DANGER}; font-size: {FONT_SIZE_SMALL:g}pt; }}
+QLabel[emptyText="true"] {{ color: {TEXT_MUTED}; }}
+QTableView[dataTable="true"]::item {{ border-bottom: 1px solid {BORDER}; padding: 0 {SPACE_SM}px; }}
+QTableView[dataTable="true"]::item:selected {{ background: {PRIMARY_SUBTLE}; color: {TEXT}; }}
+
 /* ── 오버레이(시작·작업 중, 배송추적 목록 전환, 파일 끌어다 놓기) ── */
 QFrame#startupLoadingOverlay, QFrame#busyProcessingOverlay {{ background: {SCRIM}; border: none; }}
 QFrame#startupLoadingCard, QFrame#busyProcessingCard {{

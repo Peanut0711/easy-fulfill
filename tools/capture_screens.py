@@ -32,7 +32,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SCALES = (100, 125, 150)
 # FHD(1920×1080) 화면의 배율별 작업 영역(작업 표시줄 제외, 논리 픽셀). docs/gui-window-settings-plan.md 「크기 기준」
 FHD_WORK_AREAS = {100: (1920, 1032), 125: (1536, 826), 150: (1280, 688)}
-GROUPS = ("tabs", "settings", "states", "menus", "dialogs")
+GROUPS = ("tabs", "settings", "states", "menus", "dialogs", "components")
 FIXED_VERSION = "0.0.0"
 FIXED_DOCUMENT_DATE = (2026, 1, 5)
 WORKER_TIMEOUT_S = 300
@@ -479,6 +479,13 @@ def _worker(scale, out_dir, platform, groups):
             sample = workdir / "sample-detail.html"
             sample.write_text("<h2>상품 상세</h2><p>캡처용 예시 문단입니다.</p><hr><p>두 번째 문단</p>", encoding="utf-8")
             dialog("detail-html-editor", lambda: module.DetailHtmlEditorDialog(sample, window))
+
+        if "components" in groups:
+            gallery = _component_gallery()
+            gallery.resize(860, 760)
+            show_hidden(gallery)
+            render(gallery, "components-gallery")
+            gallery.close()
     except Exception as exc:
         errors.append(f"메인 창: {type(exc).__name__}: {exc}")
     finally:
@@ -492,6 +499,88 @@ def _worker(scale, out_dir, platform, groups):
         shutil.rmtree(workdir, ignore_errors=True)
         # 백그라운드 QThread 정리 단계를 건너뛴다(easy-fulfill.py main()과 같은 이유)
         os._exit(0)
+
+
+def _component_gallery():
+    """공통 부품(shared/ui_components.py) 견본 화면. 탭에 적용하기 전에 부품만 따로 본다."""
+    from PySide6.QtWidgets import (
+        QCheckBox, QComboBox, QLabel, QLineEdit, QPushButton, QSpinBox, QTableWidget, QTableWidgetItem,
+        QVBoxLayout, QWidget,
+    )
+
+    from shared.ui_components import ButtonRow, EmptyState, FormGrid, SectionCard, align_numeric, setup_table
+    from shared.ui_style import set_band, set_button_role, set_status
+
+    page = QWidget()
+    page.setObjectName("componentGallery")
+    page.setAutoFillBackground(True)
+    root = QVBoxLayout(page)
+    root.setContentsMargins(16, 16, 16, 16)
+    root.setSpacing(12)
+
+    form_card = SectionCard("주문 정보 입력", step=1, actions=[QPushButton("불러오기")])
+    grid = FormGrid()
+    name, phone, zip_code, store = QLineEdit(), QLineEdit("010-1234-5678"), QLineEdit("1234"), QComboBox()
+    name.setPlaceholderText("예: 홍길동")
+    store.addItems(["네이버", "쿠팡"])
+    grid.add_row("스토어", store)
+    grid.add_row("이름", name, required=True)
+    grid.add_row("전화번호", phone)
+    grid.add_row("우편번호", zip_code, extra=QPushButton("주소 검색"))
+    grid.set_missing(name, True)
+    grid.set_error(zip_code, "우편번호는 5자리 숫자입니다.")
+    form_card.body.addLayout(grid)
+    reset, excel, make = QPushButton("초기화"), QPushButton("엑셀 만들기"), QPushButton("PDF 만들기")
+    set_button_role(make, "primary")
+    form_card.body.addWidget(ButtonRow(left=[reset], right=[excel, make]))
+    form_card.set_step_done(True)
+    root.addWidget(form_card)
+
+    table_card = SectionCard("배송 목록", step=2)
+    table = setup_table(QTableWidget(3, 4))
+    table.setHorizontalHeaderLabels(["수취인명", "배송상태", "금액", "메모"])
+    for row, values in enumerate((("김철수", "배송중", "12,000", "경비실"), ("이영희", "배달완료", "8,500", ""),
+                                  ("박민수", "허브 정체", "31,000", "연락 필요"))):
+        for column, value in enumerate(values):
+            item = QTableWidgetItem(value)
+            table.setItem(row, column, align_numeric(item) if column == 2 else item)
+    table.selectRow(1)
+    table.setFixedHeight(140)
+    table_card.body.addWidget(table)
+    table_card.body.addWidget(EmptyState("송장 엑셀을 불러오면 여기에 보입니다.", QPushButton("송장 불러오기")))
+    root.addWidget(table_card)
+
+    misc = SectionCard("버튼·상태 표시")
+    disabled, danger, checked = QPushButton("꺼진 버튼"), QPushButton("연결 해제"), QPushButton("선택됨")
+    disabled.setEnabled(False)
+    set_button_role(danger, "danger")
+    checked.setCheckable(True)
+    checked.setChecked(True)
+    primary = QPushButton("다음 동작")
+    set_button_role(primary, "primary")
+    misc.body.addWidget(ButtonRow(left=[danger], right=[disabled, checked, QPushButton("보조"), primary]))
+    statuses = QWidget()
+    status_row = QVBoxLayout(statuses)
+    status_row.setContentsMargins(0, 0, 0, 0)
+    for kind, text in (("ok", "연결됨"), ("warn", "미설정"), ("error", "인증 오류"), ("idle", "확인 전")):
+        label = QLabel()
+        set_status(label, kind, text)
+        status_row.addWidget(label)
+    misc.body.addWidget(statuses)
+    band = QLabel("테스트 모드: 공유 시트에 쓰지 않습니다.")
+    set_band(band, "warn")
+    misc.body.addWidget(band)
+    hint = QLabel("보조 안내 문구(hint)")
+    hint.setProperty("hint", "true")
+    badge = QLabel("네이버 주문에서 가져옴")
+    badge.setProperty("badge", "info")
+    misc.body.addWidget(hint)
+    misc.body.addWidget(badge)
+    misc.body.addWidget(QCheckBox("배송비 면제"))
+    misc.body.addWidget(QSpinBox())
+    root.addWidget(misc)
+    root.addStretch(1)
+    return page
 
 
 def main(argv=None):
