@@ -701,8 +701,7 @@ class TrackingController(QObject):
             )
             return
         if self._courier_export_thread is not None:
-            QMessageBox.information(
-                self.host, "택배사 접수목록", "이미 내보내는 중입니다. 잠시만 기다려 주세요.")
+            self.host.statusBar().showMessage("택배사 접수목록: 이미 내보내는 중입니다. 잠시만 기다려 주세요.", 5000)
             return
         today = date.today()
         default_name = f"{COURIER_RECEIPT_PREFIX} {today.strftime('%y.%m.%d')}.xlsx"
@@ -729,28 +728,11 @@ class TrackingController(QObject):
             return
         count = payload.get("count", 0)
         if count == 0:
-            self.host.statusBar().showMessage("오늘 접수된 송장이 없습니다.", 4000)
-            QMessageBox.information(self.host, "택배사 접수목록", "오늘 송장추적에 등록된 송장이 없습니다.")
+            self.host.notify("warn", "택배사 접수목록: 오늘 송장추적에 등록된 송장이 없습니다.")
             return
         path = payload.get("path")
-        self.host.statusBar().showMessage(f"택배사 접수목록 {count}건 저장 완료", 5000)
-        result = QMessageBox.question(
-            self.host, "택배사 접수목록",
-            f"오늘 접수 {count}건을 저장했습니다.\n\n{path}\n\n파일이 있는 폴더를 열까요?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if result != QMessageBox.StandardButton.Yes:
-            return
-        try:
-            folder = os.path.dirname(path)
-            if sys.platform == "win32":
-                os.startfile(folder)
-            elif sys.platform == "darwin":
-                subprocess.call(("open", folder))
-            else:
-                subprocess.call(("xdg-open", folder))
-        except Exception as error:
-            print(f"! 택배사 접수목록 폴더 열기 실패: {error}")
+        # 「폴더를 열까요?」 확인 창 대신 알림 띠의 「엑셀 열기」·「폴더 열기」(계획 C-3).
+        self.host.show_excel_created_message(path, f"택배사 접수목록 {count}건을 저장했습니다.")
 
     def _cleanup_courier_export_thread(self):
         thread = self._courier_export_thread
@@ -965,8 +947,7 @@ class TrackingController(QObject):
     def _on_slack_sent(self, payload: dict, is_test: bool):
         if payload.get("ok"):
             if is_test:
-                QMessageBox.information(
-                    self.host, "슬랙 테스트", "전송 성공! 슬랙 채널을 확인해 주세요.")
+                self.host.notify("ok", "슬랙 테스트 메시지를 보냈습니다. 슬랙 채널을 확인해 주세요.")
             else:
                 print("✓ 슬랙 알림 전송")
         else:

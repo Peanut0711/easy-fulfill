@@ -3158,7 +3158,12 @@ class DetailHtmlEditorDialog(QDialog):
 
     def _save(self):
         self.path.write_text(self.editor.toPlainText(), encoding="utf-8")
-        if QMessageBox.information(self, "상세페이지", "수정한 HTML을 저장했습니다.") == QMessageBox.Ok:
+        owner = self.parent()
+        if owner is not None and hasattr(owner, "notify"):
+            # 편집기를 닫고 메인 창 알림 띠로 알린다(확인 창 없음, 계획 C-3).
+            owner.notify("ok", f"수정한 HTML을 저장했습니다: {self.path.name}", detail=str(self.path))
+            self.accept()
+        elif QMessageBox.information(self, "상세페이지", "수정한 HTML을 저장했습니다.") == QMessageBox.Ok:
             self.accept()
 
     def _toggle_maximize(self):
@@ -4448,18 +4453,9 @@ class MainWindow(QMainWindow):
         kind = payload.get("kind")
         self._apply_order_index_sync_payload(payload, prompt_reauth=True)
         if kind == "created":
-            QMessageBox.information(
-                self,
-                "인덱스 동기화",
-                "오늘 날짜 행이 없어 네이버·쿠팡·지마켓 인덱스를 각 1로 "
-                "스프레드시트에 새로 만들었습니다.",
-            )
+            self.notify("ok", "오늘 날짜 행이 없어 네이버·쿠팡·지마켓 인덱스를 각 1로 스프레드시트에 새로 만들었습니다.")
         else:
-            QMessageBox.information(
-                self,
-                "인덱스 동기화",
-                "스프레드시트에서 인덱스를 불러왔습니다.",
-            )
+            self.notify("ok", "스프레드시트에서 인덱스를 불러왔습니다.")
 
     def _on_order_index_sheet_poll(self):
         if not self._startup_order_index_sync_done:
@@ -4511,12 +4507,10 @@ class MainWindow(QMainWindow):
                 self, "되돌리기", f"되돌리기에 실패했습니다.\n\n{payload.get('error', '')}")
             return
         if not payload.get("reverted"):
-            QMessageBox.information(self, "되돌리기", "오늘 되돌릴 변경이 없습니다.")
+            self.notify("warn", "오늘 되돌릴 인덱스 변경이 없습니다.")
             return
         store = payload.get("store_ko", "")
-        QMessageBox.information(
-            self, "되돌리기 완료",
-            f"{store} 인덱스를 {payload.get('frm')} → {payload.get('to')} 로 되돌렸습니다.")
+        self.notify("ok", f"{store} 인덱스를 {payload.get('frm')} → {payload.get('to')} 로 되돌렸습니다.")
         # 시트 최신값으로 UI 갱신
         self._begin_order_index_read(interactive=False, on_applied=None, defer_if_busy=False)
 
@@ -6306,19 +6300,13 @@ class MainWindow(QMainWindow):
         path = log_dir / f"detail-page-{datetime.now():%Y%m%d-%H%M%S}.log"
         path.write_text(self.textEdit_detail_log.toPlainText(), encoding="utf-8")
         self._detail_log(f"[작업 로그] 저장했습니다: {path}")
-        dialog = QMessageBox(self)
-        dialog.setIcon(QMessageBox.Information)
-        dialog.setWindowTitle("작업 로그")
-        dialog.setText(f"로그를 저장했습니다.\n{path}")
-        open_log_button = dialog.addButton("로그 열기", QMessageBox.ActionRole)
-        open_folder_button = dialog.addButton("폴더 열기", QMessageBox.ActionRole)
-        dialog.addButton("닫기", QMessageBox.RejectRole)
-        dialog.exec()
-
-        if dialog.clickedButton() is open_log_button:
-            QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
-        elif dialog.clickedButton() is open_folder_button:
-            QDesktopServices.openUrl(QUrl.fromLocalFile(str(log_dir)))
+        # 확인 창 대신 알림 띠의 「로그 열기」·「폴더 열기」(계획 C-3).
+        self.notify(
+            "ok", f"작업 로그를 저장했습니다: {path.name}",
+            [("로그 열기", lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))),
+             ("폴더 열기", lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(log_dir))))],
+            detail=str(path),
+        )
 
     @staticmethod
     def _detail_id_from_input(value, kind):
@@ -6830,7 +6818,7 @@ class MainWindow(QMainWindow):
         if not hasattr(self.ui, "plainTextEdit_db_sync_log"):
             return
         if self._db_sheet_sync_thread is not None and self._db_sheet_sync_thread.isRunning():
-            QMessageBox.information(self, "DB동기화", "이미 실행 중입니다.")
+            self.statusBar().showMessage("DB동기화: 이미 실행 중입니다.", 5000)
             return
         if gspread is None:
             QMessageBox.warning(self, "DB동기화", "gspread 패키지가 필요합니다. (pip install gspread)")
@@ -6955,9 +6943,9 @@ class MainWindow(QMainWindow):
         self._clear_google_auth_runtime_error()
         self._refresh_google_auth_status_ui()
         if deleted:
-            QMessageBox.information(self, "연결 해제", "저장된 로그인 정보를 삭제했습니다.")
+            self.notify("ok", "Google 연결을 해제했습니다(이 PC의 저장된 로그인 정보를 삭제).")
         else:
-            QMessageBox.information(self, "연결 해제", "삭제할 token.json이 없었습니다.")
+            self.notify("warn", "삭제할 Google 로그인 정보(token.json)가 없었습니다.")
 
     def _on_google_reauth_clicked(self, ask_confirm: bool = True):
         if ask_confirm:
@@ -6982,7 +6970,7 @@ class MainWindow(QMainWindow):
             return False
 
         if getattr(self, "_google_reauth_thread", None) is not None:
-            QMessageBox.information(self, "재인증", "Google 로그인이 이미 진행 중입니다. 열린 브라우저에서 마쳐 주세요.")
+            self.statusBar().showMessage("재인증: Google 로그인이 이미 진행 중입니다. 열린 브라우저에서 마쳐 주세요.", 5000)
             return True
         delete_oauth_token_file()
         self._invalidate_google_sheets_client_and_caches()
@@ -7005,7 +6993,7 @@ class MainWindow(QMainWindow):
             self._clear_google_auth_runtime_error()
             self._refresh_google_auth_status_ui()
             self.statusBar().showMessage("Google Sheets 연동이 완료되었습니다.", 5000)
-            QMessageBox.information(self, "재인증", "Google Sheets 연동이 완료되었습니다.")
+            self.notify("ok", "Google Sheets 연동이 완료되었습니다.")
         else:
             self._gspread_client = None
             self._refresh_google_auth_status_ui()
@@ -7122,7 +7110,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, title, "공유 시트에 저장하지 못했습니다. Google Sheets 연결과 편집 권한을 확인해 주세요.")
             return
         self._set_shared_key_status("postcode", "ok", "등록됨 (확인함 · 전원 적용)")
-        QMessageBox.information(self, title, "공유 시트에 저장했습니다. 다른 PC에서도 다음 주소 검색부터 적용됩니다.")
+        self.notify("ok", "주소 검색용 우편번호 API 키를 공유 시트에 저장했습니다. 다른 PC에서도 다음 주소 검색부터 적용됩니다.")
 
     def _show_kpost_api_error(self, parent_widget, err_pair):
         code, msg = err_pair
@@ -7494,9 +7482,6 @@ class MainWindow(QMainWindow):
                         '비고': ''
                     }]
                     output_file = self.save_invoice_excel(invoice_data, "퀵_수동")
-                    self.statusBar().showMessage(
-                        f"퀵 엑셀 생성 완료: {output_file.name}", 3000
-                    )
                     return
 
             clipboard = QApplication.clipboard()
@@ -7542,7 +7527,6 @@ class MainWindow(QMainWindow):
                 if not self._confirm_quick_excel_info(invoice_data[0]):
                     return
                 output_file = self.save_invoice_excel(invoice_data, "퀵_쿠팡")
-                self.statusBar().showMessage(f"퀵 엑셀 생성 완료: {output_file.name}", 3000)
                 return
 
             if store_type == "naver":
@@ -7581,7 +7565,6 @@ class MainWindow(QMainWindow):
                 if not self._confirm_quick_excel_info(invoice_data[0]):
                     return
                 output_file = self.save_invoice_excel(invoice_data, "퀵_네이버")
-                self.statusBar().showMessage(f"퀵 엑셀 생성 완료: {output_file.name}", 3000)
                 return
 
             if store_type == "gmarket":
@@ -7620,7 +7603,6 @@ class MainWindow(QMainWindow):
                 if not self._confirm_quick_excel_info(invoice_data[0]):
                     return
                 output_file = self.save_invoice_excel(invoice_data, "퀵_지마켓")
-                self.statusBar().showMessage(f"퀵 엑셀 생성 완료: {output_file.name}", 3000)
                 return
 
             if store_type == "generic":
@@ -7657,7 +7639,6 @@ class MainWindow(QMainWindow):
                 if not self._confirm_quick_excel_info(invoice_data[0]):
                     return
                 output_file = self.save_invoice_excel(invoice_data, "퀵_일반")
-                self.statusBar().showMessage(f"퀵 엑셀 생성 완료: {output_file.name}", 3000)
                 return
 
             QMessageBox.information(
@@ -8438,9 +8419,7 @@ class MainWindow(QMainWindow):
         rows = self._filter_new_naver_order_rows(payload.get("rows") or [])
         if not rows:
             self._hide_busy_processing_overlay()
-            QMessageBox.information(
-                self, "API 불러오기",
-                "새로 불러올 발송 전 주문이 없습니다.\n(이미 오늘 불러온 주문은 제외됩니다.)")
+            self.notify("warn", "API 불러오기: 새로 불러올 발송 전 주문이 없습니다(이미 오늘 불러온 주문은 제외).")
             return
         self._api_order_rows = rows
         self._naver_order_source = "api"
@@ -9541,7 +9520,7 @@ class MainWindow(QMainWindow):
         """공유 설정 탭의 로그인 정보로 전용 Chromium 포털 세션을 연결한다."""
         running = getattr(self, "_epost_portal_process", None)
         if running is not None and running.state() != QProcess.ProcessState.NotRunning:
-            QMessageBox.information(self, "우체국 포털 로그인", "우체국 포털 로그인 창이 이미 열려 있습니다.")
+            self.statusBar().showMessage("우체국 포털 로그인: 우체국 포털 로그인 창이 이미 열려 있습니다.", 5000)
             return
 
         QMessageBox.information(
@@ -9608,7 +9587,7 @@ class MainWindow(QMainWindow):
             return
         running = getattr(self, "_epost_portal_diagnostic_process", None)
         if running is not None and running.state() != QProcess.ProcessState.NotRunning:
-            QMessageBox.information(self, "우체국 출력 화면 진단", "출력 화면 진단 창이 이미 열려 있습니다.")
+            self.statusBar().showMessage("우체국 출력 화면 진단: 출력 화면 진단 창이 이미 열려 있습니다.", 5000)
             return
 
         QMessageBox.information(
@@ -9680,7 +9659,7 @@ class MainWindow(QMainWindow):
                 return
         running = getattr(self, "_epost_portal_lookup_process", None)
         if running is not None and running.state() != QProcess.ProcessState.NotRunning:
-            QMessageBox.information(self, "우체국 신규출력 대조", "신규출력 대조 창이 이미 열려 있습니다.")
+            self.statusBar().showMessage("우체국 신규출력 대조: 신규출력 대조 창이 이미 열려 있습니다.", 5000)
             return
 
         QMessageBox.information(
@@ -9792,7 +9771,7 @@ class MainWindow(QMainWindow):
                 return
         running = getattr(self, "_epost_portal_print_popup_process", None)
         if running is not None and running.state() != QProcess.ProcessState.NotRunning:
-            QMessageBox.information(self, "우체국 운송장출력 팝업", "운송장출력 팝업 단계가 이미 진행 중입니다.")
+            self.statusBar().showMessage("우체국 운송장출력 팝업: 운송장출력 팝업 단계가 이미 진행 중입니다.", 5000)
             return
 
         answer = QMessageBox.question(
@@ -9881,7 +9860,7 @@ class MainWindow(QMainWindow):
                 return
         running = getattr(self, "_epost_portal_oz_viewer_process", None)
         if running is not None and running.state() != QProcess.ProcessState.NotRunning:
-            QMessageBox.information(self, "우체국 OZ 뷰어 확인", "OZ 뷰어 확인 단계가 이미 진행 중입니다.")
+            self.statusBar().showMessage("우체국 OZ 뷰어 확인: OZ 뷰어 확인 단계가 이미 진행 중입니다.", 5000)
             return
 
         message = "주의: 이 단계는 포털 팝업의 빨간 ‘인쇄’ 버튼을 누릅니다.\n\n"
@@ -9986,7 +9965,7 @@ class MainWindow(QMainWindow):
                 return
         running = getattr(self, "_epost_portal_output_confirm_process", None)
         if running is not None and running.state() != QProcess.ProcessState.NotRunning:
-            QMessageBox.information(self, "우체국 포털 출력여부 확인", "포털 출력여부 확인이 이미 진행 중입니다.")
+            self.statusBar().showMessage("우체국 포털 출력여부 확인: 포털 출력여부 확인이 이미 진행 중입니다.", 5000)
             return
 
         QMessageBox.information(
@@ -10068,7 +10047,7 @@ class MainWindow(QMainWindow):
                 return
         running = getattr(self, "_epost_portal_reprint_popup_process", None)
         if running is not None and running.state() != QProcess.ProcessState.NotRunning:
-            QMessageBox.information(self, "우체국 단건 재출력", "단건 재출력 팝업 단계가 이미 진행 중입니다.")
+            self.statusBar().showMessage("우체국 단건 재출력: 단건 재출력 팝업 단계가 이미 진행 중입니다.", 5000)
             return
 
         answer = QMessageBox.question(
@@ -10154,7 +10133,7 @@ class MainWindow(QMainWindow):
                 return
         running = getattr(self, "_epost_oz_print_dialog_process", None)
         if running is not None and running.state() != QProcess.ProcessState.NotRunning:
-            QMessageBox.information(self, "우체국 인쇄 창 확인", "인쇄 창 확인 단계가 이미 진행 중입니다.")
+            self.statusBar().showMessage("우체국 인쇄 창 확인: 인쇄 창 확인 단계가 이미 진행 중입니다.", 5000)
             return
 
         batch_count = 0

@@ -103,7 +103,7 @@ def run_scenario(name):
             app.processEvents()
             time.sleep(0.02)
     result = {"handled": handled, "returned_after": returned_after, "client": window._gspread_client,
-              "interactive": calls, "dialogs": dialogs}
+              "interactive": calls, "dialogs": dialogs, "notice": window.notice_bar.text()}
     print("RESULT " + json.dumps(result, ensure_ascii=False), flush=True)
     os._exit(0)
 
@@ -123,7 +123,9 @@ class ReauthButtonTests(unittest.TestCase):
         self.assertLess(result["returned_after"], 0.5)  # 수정 전에는 로그인이 끝날 때까지(1초) 멈춤
         self.assertEqual(result["client"], "CLIENT")
         self.assertEqual(result["interactive"], [True])
-        self.assertEqual(result["dialogs"], ["재인증"])
+        # 완료는 확인 창 대신 알림 띠로 알린다(알림·상태바 계획 C-3).
+        self.assertEqual(result["dialogs"], [])
+        self.assertIn("연동이 완료", result["notice"])
 
 
 if __name__ == "__main__":

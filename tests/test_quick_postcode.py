@@ -62,10 +62,14 @@ class QuickPostcodeTests(unittest.TestCase):
             patch.object(requests, "get", side_effect=search) as get,
             patch.object(QInputDialog, "getText", return_value=("postcode-key", True)),
             patch.object(QMessageBox, "information") as information,
+            patch.object(self.admin, "notify", create=True) as notify,
         ):
             self.assertEqual(self.operator._kpost_postnew_lookup_items("세종대로 110")[1][0], "ERR-123")
             self.admin._on_kpost_postcode_key_edit_clicked()
-            information.assert_called_once()
+            # 저장 성공은 확인 창 대신 알림 띠로 알린다(알림·상태바 계획 C-3).
+            information.assert_not_called()
+            notify.assert_called_once()
+            self.assertEqual(notify.call_args.args[0], "ok")
             self.assertEqual(self.rows, [["키", "값"], [TRACE_KEY, "trace-key"], [POSTCODE_KEY, "postcode-key"]])
             self.assertEqual(self.admin._get_kpost_regkey(), "trace-key")
             self.http.calls.clear()
@@ -90,9 +94,11 @@ class QuickPostcodeTests(unittest.TestCase):
             patch.object(requests, "get", return_value=postal_response()) as get,
             patch.object(QInputDialog, "getText", return_value=("replacement-key", True)),
             patch.object(QMessageBox, "information") as information,
+            patch.object(self.admin, "notify", create=True) as notify,
         ):
             self.admin._on_kpost_postcode_key_edit_clicked()
-            information.assert_called_once()
+            information.assert_not_called()
+            notify.assert_called_once()
             self.operator._kpost_postnew_lookup_items("세종대로 110")
             self.assertEqual(get.call_args.kwargs["params"]["regkey"], "replacement-key")
         self.assertEqual(self.rows[1:], [[TRACE_KEY, "trace-key"], [POSTCODE_KEY, "replacement-key"]])
