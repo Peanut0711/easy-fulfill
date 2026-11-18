@@ -33,6 +33,7 @@ from PySide6.QtCore import (
     Signal,
     QPropertyAnimation,
     QEasingCurve,
+    QRect,
     QRectF,
     QEvent,
     QProcess,
@@ -51,6 +52,7 @@ from PySide6.QtGui import (
     QPalette,
     QTextCursor,
     QKeySequence,
+    QGuiApplication,
 )
 from PySide6.QtWebEngineCore import QWebEngineSettings
 from PySide6.QtWebEngineWidgets import QWebEngineView
@@ -58,6 +60,9 @@ from shiboken6 import isValid
 from shared.paths import APP_ROOT
 from shared.lazy_import import deferred_module, optional_deferred_module, preload_modules_in_background
 from shared.qt_background import run_in_background
+from shared.window_geometry import (
+    centered_position, default_window_size, geometry_to_setting, is_restorable, parse_saved_geometry,
+)
 from product_detail.detail_image_upload import upload_image_for_editor, validated_cdn_url
 # 첫 화면에 필요 없는 네트워크·복호화 모듈은 처음 쓸 때 불러온다(시작 시간 단축).
 requests = deferred_module("requests")
@@ -262,6 +267,8 @@ INQUIRY_SHEET_HEADERS = [
     "감지시각", "최근알림시각", "상태",
 ]
 NAVER_INQUIRY_POLL_MS = 300_000  # 5분
+# 메인 창 위치·크기(이 PC의 database/app_settings.json에만 저장)
+WINDOW_GEOMETRY_SETTING_KEY = "main_window_geometry"
 NAVER_INQUIRY_LOOKBACK_DAYS = 30  # 미답변은 오래 묵을 수 있어 넉넉히(페이지네이션 안전)
 NAVER_INQUIRY_REMIND_MIN = 60  # 미답변 리마인더 재알림 주기(분)
 # 문의 조회 주기 선점: 다른 PC가 이 시간 안에 조회를 시작했으면 이번 주기는 건너뛴다(중복 발송 방지).
@@ -4510,8 +4517,47 @@ class MainWindow(QMainWindow):
         
         self.setStatusBar(window.statusbar)
         self.setWindowTitle(f"{window.windowTitle()} · v{APP_VERSION}")
-        self.resize(window.size())
+        self._apply_initial_window_geometry()
         self._order_ship_splitter_initialized = False
+
+    def _apply_initial_window_geometry(self):
+        """이 PC에 저장한 창 위치를 되살린다. 없거나 화면 구성이 바뀌어 쓸 수 없으면
+        작업 영역에 맞춘 기본 크기(FHD 100%에서 900×800)로 주 화면 가운데에 둔다."""
+        screen = QGuiApplication.primaryScreen()
+        if screen is None:
+            return
+        hint = self.minimumSizeHint()
+        minimum = (hint.width(), hint.height())
+        saved = parse_saved_geometry(self.get_app_setting(WINDOW_GEOMETRY_SETTING_KEY))
+        if saved is not None:
+            rect, maximized = saved
+            areas = []
+            for item in QGuiApplication.screens():
+                area = item.availableGeometry()
+                areas.append((area.x(), area.y(), area.width(), area.height()))
+            if is_restorable(rect, areas, minimum):
+                self.setGeometry(QRect(*rect))
+                if maximized:
+                    self.setWindowState(self.windowState() | Qt.WindowState.WindowMaximized)
+                return
+        area = screen.availableGeometry()
+        width, height = default_window_size((area.width(), area.height()), minimum)
+        x, y = centered_position((area.x(), area.y(), area.width(), area.height()), (width, height))
+        self.setGeometry(QRect(x, y, width, height))
+
+    def _save_window_geometry(self):
+        """창 위치·크기·최대화 여부를 이 PC의 앱 설정에만 저장한다(공유 시트에는 쓰지 않음)."""
+        if not getattr(self, "_window_shown_once", False):
+            return
+        state = self.windowState()
+        maximized = bool(state & Qt.WindowState.WindowMaximized)
+        rect = self.normalGeometry() if (maximized or state & Qt.WindowState.WindowMinimized) else self.geometry()
+        if rect.width() <= 0 or rect.height() <= 0:
+            return
+        self.set_app_setting(
+            WINDOW_GEOMETRY_SETTING_KEY,
+            geometry_to_setting((rect.x(), rect.y(), rect.width(), rect.height()), maximized),
+        )
 
     def _apply_tab_order(self):
         """합의된 7개 상위 탭 순서를 런타임에서 보장합니다.
@@ -4537,6 +4583,7 @@ class MainWindow(QMainWindow):
 
     def showEvent(self, event):
         super().showEvent(event)
+        self._window_shown_once = True
         if not self._order_ship_splitter_initialized:
             QTimer.singleShot(0, self._on_first_show_splitter)
         if not self._startup_order_index_sync_started:
@@ -4713,6 +4760,9 @@ class MainWindow(QMainWindow):
         if getattr(self, "_close_ready", False):
             event.accept()
             return
+        if not getattr(self, "_window_geometry_saved", False):
+            self._window_geometry_saved = True  # 종료 대기 중 다시 불려도 처음 닫은 위치를 남긴다
+            self._save_window_geometry()
         self._stop_background_timers()
         if not self._pending_sheet_writes():
             self._close_ready = True
