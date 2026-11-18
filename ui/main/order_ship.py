@@ -27,11 +27,21 @@ from ui.order_ship_panel import (
     STORE_NAMES,
 )
 
+from shared import theme
+from shared.ui_components import fixed_width_button, make_step_badge, set_props, set_step_badge_done
+
 
 class OrderShipMixin:
     """MainWindow 믹스인. 메인 창 「주문·발송」 탭 화면: ①② 패널 분할 비율, 주문 미리보기 표, 패널별 버튼 줄과 다음 동작 강조, 끌어다 놓기, 진행 요약, 파일 상태 라벨, 스토어 로고."""
 
+    ORDER_SHIP_BUTTON_NAMES = (
+        "pushButton_load_order", "pushButton_copy_order", "pushButton_intake_excel", "pushButton_clear_order",
+        "pushButton_load_invoice", "pushButton_courier_receipt",
+    )
+
     def _on_first_show_splitter(self):
+        # 창을 만들 때는 앱 스타일시트가 아직 다 적용되지 않아 버튼 폭이 작게 잡힌다. 처음 보일 때 다시 잰다.
+        stabilize_widths(getattr(self.ui, name, None) for name in self.ORDER_SHIP_BUTTON_NAMES)
         self._apply_order_ship_splitter_sizes()
         self._order_ship_splitter_initialized = True
 
@@ -96,8 +106,87 @@ class OrderShipMixin:
             legend.setText("&nbsp;&nbsp;&nbsp;".join(parts))
             legend.setVisible(bool(parts))
 
+    def _apply_order_ship_design(self):
+        """주문·발송 탭을 디자인 가이드 모양으로 짠다(계획 4-1).
+
+        - ①② 패널을 카드로, 단계 문자(①②)를 완료가 보이는 단계 배지로 바꾼다.
+        - 「초기화」는 작업 순서 버튼 줄에서 빼 ① 카드 제목 줄 오른쪽에 둔다(버튼 줄이 짧아져
+          좁은 창에서도 겹치지 않는다).
+        - 버튼은 글자 폭보다 늘리지 않고, 빈 미리보기 안내는 빈 상태 글자로 보인다.
+        """
+        ui = self.ui
+        tab_layout = getattr(ui, "verticalLayout_tab_order_ship", None)
+        if tab_layout is not None:
+            tab_layout.setContentsMargins(theme.SPACE_MD, theme.SPACE_MD, theme.SPACE_MD, theme.SPACE_MD)
+        splitter = getattr(ui, "splitter_order_ship", None)
+        if splitter is not None:
+            splitter.setHandleWidth(theme.SPACE_MD)
+        for name in ("widget_order_panel", "widget_ship_panel"):
+            panel = getattr(ui, name, None)
+            if panel is None:
+                continue
+            panel.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+            set_props(panel, card=True)
+            panel.setMinimumWidth(0)  # .ui의 320 고정 대신 레이아웃이 계산한 최소 폭(버튼 줄 등)을 따른다
+            if panel.layout() is not None:
+                panel.layout().setContentsMargins(
+                    theme.SPACE_MD, theme.SPACE_MD, theme.SPACE_MD, theme.SPACE_MD)
+                panel.layout().setSpacing(theme.SPACE_SM)
+        self._order_step_badges = {}
+        for step, label_name, layout_name, title in (
+                (1, "label_step_order", "horizontalLayout_order_title", "주문 불러오기"),
+                (2, "label_step_ship", "horizontalLayout_ship_title", "송장·발송 생성")):
+            label, layout = getattr(ui, label_name, None), getattr(ui, layout_name, None)
+            if label is None or layout is None:
+                continue
+            label.setText(title)
+            set_props(label, sectionTitle=True)
+            badge = make_step_badge(step)
+            layout.insertWidget(0, badge)
+            layout.setSpacing(theme.SPACE_SM)
+            self._order_step_badges[step] = badge
+        clear = getattr(ui, "pushButton_clear_order", None)
+        buttons_row = getattr(ui, "horizontalLayout_order_buttons", None)
+        title_row = getattr(ui, "horizontalLayout_order_title", None)
+        if clear is not None and buttons_row is not None and title_row is not None:
+            buttons_row.removeWidget(clear)
+            title_row.addWidget(clear)
+        for row_name in ("horizontalLayout_order_buttons", "horizontalLayout_ship_buttons"):
+            row = getattr(ui, row_name, None)
+            if row is None:
+                continue
+            row.setSpacing(theme.SPACE_SM)
+            for i in range(row.count()):
+                widget = row.itemAt(i).widget()
+                if widget is not None:
+                    fixed_width_button(widget)
+            row.addStretch(1)
+        if clear is not None:
+            fixed_width_button(clear)
+        for name in ("filePathLabel", "label_invoice"):  # 파일 칸은 긴 이름을 말줄임으로 보이므로 좁아져도 된다
+            drop = getattr(ui, name, None)
+            if drop is not None:
+                drop.setMinimumWidth(120)
+        invoice_caption = getattr(ui, "label", None)  # 「송장 정보」: 파일 칸 하나뿐이라 라벨 없이 둔다
+        if invoice_caption is not None:
+            invoice_caption.hide()
+        empty = getattr(ui, "label_order_empty", None)
+        if empty is not None:
+            set_props(empty, emptyText=True)
+        stack = getattr(ui, "stackedWidget_order_preview", None)
+        if stack is not None:
+            stack.setFrameShape(QFrame.Shape.NoFrame)
+        empty_page = getattr(ui, "page_order_empty", None)
+        if empty_page is not None:  # 비어 있을 때는 끌어다 놓을 수 있는 점선 영역으로 보인다
+            empty_page.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+            set_props(empty_page, emptyPanel=True)
+        legend = getattr(ui, "label_order_legend", None)
+        if legend is not None:
+            set_props(legend, hint="true")
+
     def _setup_order_ship_buttons(self):
         """주문·발송 탭 패널별 버튼 줄: 아이콘·툴팁을 메뉴 동작과 맞추고 연결한다."""
+        self._apply_order_ship_design()
         specs = (
             ("pushButton_load_order", self.act_load, "주문 엑셀 불러오기 (Ctrl+O)", None),
             ("pushButton_copy_order", self.act_copy, "주문 정보를 마크다운으로 복사 (Ctrl+C)", self.act_copy.trigger),
@@ -163,6 +252,11 @@ class OrderShipMixin:
             batch_done=self._ship_batch_done,
         )
         self._order_ship_stage = stage
+        badges = getattr(self, "_order_step_badges", {})
+        if 1 in badges:
+            set_step_badge_done(badges[1], has_orders)
+        if 2 in badges:
+            set_step_badge_done(badges[2], bool(self._ship_batch_done))
         apply_primary({
             STAGE_ORDER: getattr(self.ui, "pushButton_load_order", None),
             STAGE_INTAKE: getattr(self.ui, "pushButton_intake_excel", None),

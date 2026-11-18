@@ -222,7 +222,7 @@ QSplitter::handle {{ background: {BG_APP}; }}
 QScrollArea {{ border: none; }}
 
 /* ── 공통 부품(shared/ui_components.py) ───────────────── */
-QFrame[card="true"] {{
+QFrame[card="true"], QWidget[card="true"] {{
     background: {BG_SURFACE}; border: 1px solid {BORDER}; border-radius: {RADIUS_CARD}px;
 }}
 QLabel[sectionTitle="true"] {{ color: {TEXT}; font-weight: bold; font-size: {FONT_SIZE + 0.5:g}pt; }}
@@ -234,6 +234,9 @@ QLabel[formLabel="true"] {{ color: {TEXT_SECONDARY}; }}
 QLabel[formLabel="true"][status="warn"] {{ color: {WARN}; }}
 QLabel[fieldError="true"] {{ color: {DANGER}; font-size: {FONT_SIZE_SMALL:g}pt; }}
 QLabel[emptyText="true"] {{ color: {TEXT_MUTED}; }}
+QWidget[emptyPanel="true"] {{
+    background: {BG_SUBTLE}; border: 1px dashed {BORDER_STRONG}; border-radius: {RADIUS_CONTROL}px;
+}}
 QTableView[dataTable="true"]::item {{ border-bottom: 1px solid {BORDER}; padding: 0 {SPACE_SM}px; }}
 QTableView[dataTable="true"]::item:selected {{ background: {PRIMARY_SUBTLE}; color: {TEXT}; }}
 

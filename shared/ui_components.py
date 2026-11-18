@@ -33,12 +33,39 @@ def _repolish(widget):
     widget.update()
 
 
+def set_props(widget, **props):
+    """동적 속성을 붙이고 스타일을 다시 적용한다(.ui에서 불러와 이미 그려진 위젯에도 바로 반영)."""
+    for name, value in props.items():
+        widget.setProperty(name, value)
+    _repolish(widget)
+    return widget
+
+
 def fixed_width_button(button):
     """버튼이 레이아웃에서 글자 폭보다 늘어나지 않게 한다(폭 나누기 금지)."""
     policy = button.sizePolicy()
     policy.setHorizontalPolicy(QSizePolicy.Policy.Fixed)
     button.setSizePolicy(policy)
     return button
+
+
+def make_step_badge(step):
+    """단계 번호 배지(원). 완료 표시는 ``set_step_badge_done``."""
+    badge = QLabel(str(step))
+    badge.setProperty("stepBadge", True)
+    badge.setProperty("step", str(step))
+    badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    badge.setFixedSize(22, 22)
+    return badge
+
+
+def set_step_badge_done(badge, done):
+    """단계 배지를 완료(✓, 초록) 또는 원래 번호로 보인다."""
+    badge.setText("✓" if done else str(badge.property("step") or ""))
+    state = "done" if done else ""
+    if (badge.property("stepState") or "") != state:
+        badge.setProperty("stepState", state)
+        _repolish(badge)
 
 
 class SectionCard(QFrame):
@@ -56,10 +83,7 @@ class SectionCard(QFrame):
         self.header.setContentsMargins(0, 0, 0, 0)
         self.header.setSpacing(theme.SPACE_SM)
         self._step = step
-        self.step_badge = QLabel("" if step is None else str(step))
-        self.step_badge.setProperty("stepBadge", True)
-        self.step_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.step_badge.setFixedSize(22, 22)
+        self.step_badge = make_step_badge("" if step is None else step)
         self.step_badge.setVisible(step is not None)
         self.title_label = QLabel(title)
         self.title_label.setProperty("sectionTitle", True)
@@ -94,13 +118,8 @@ class SectionCard(QFrame):
 
     def set_step_done(self, done):
         """단계 배지를 완료(✓, 초록) 또는 원래 번호로 보인다."""
-        if self._step is None:
-            return
-        self.step_badge.setText("✓" if done else str(self._step))
-        state = "done" if done else ""
-        if (self.step_badge.property("stepState") or "") != state:
-            self.step_badge.setProperty("stepState", state)
-            _repolish(self.step_badge)
+        if self._step is not None:
+            set_step_badge_done(self.step_badge, done)
 
 
 class ButtonRow(QWidget):

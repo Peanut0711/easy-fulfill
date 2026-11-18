@@ -209,10 +209,14 @@ def stabilize_widths(buttons) -> None:
     for button in buttons:
         if button is None:
             continue
+        button.ensurePolished()  # 앱 스타일시트(여백·굵기)가 적용된 뒤의 폭을 잰다
+        original = button.property("role") or None
         set_button_role(button, "primary")
         primary_width = button.sizeHint().width()
         set_button_role(button, None)
-        button.setMinimumWidth(max(primary_width, button.sizeHint().width()))
+        normal_width = button.sizeHint().width()
+        set_button_role(button, original)  # 재는 동안 바꾼 역할(다음 동작 강조)을 되돌린다
+        button.setMinimumWidth(max(primary_width, normal_width))
 
 
 def apply_primary(buttons: dict, stage: str) -> None:

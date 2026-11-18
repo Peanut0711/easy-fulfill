@@ -192,6 +192,13 @@ def run_scenario(name):
                     "stage": window._order_ship_stage,
                     "primary": [n for n in names if getattr(window.ui, n).property("primaryAction")],
                     "enabled": {n: getattr(window.ui, n).isEnabled() for n in names},
+                    # 디자인 개편 4-1: 단계 배지(완료면 ✓), 초기화 위치, 버튼 겹침
+                    "badges": [window._order_step_badges[i].text() for i in (1, 2)],
+                    "clear_in_title": window.ui.horizontalLayout_order_title.indexOf(
+                        window.ui.pushButton_clear_order) >= 0,
+                    "overlap": _buttons_overlap([getattr(window.ui, n) for n in names if n != "pushButton_clear_order"]),
+                    "clipped": [n for n in names if getattr(window.ui, n).isVisible()
+                                and getattr(window.ui, n).width() < getattr(window.ui, n).sizeHint().width()],
                 }
             flow = {"start": stage_snapshot()}
             path = work / "DeliveryList(2026-11-17)_(0).xlsx"
@@ -342,6 +349,17 @@ def run_scenario(name):
     os._exit(0)
 
 
+def _buttons_overlap(buttons):
+    """같은 부모 안에서 화면에 보이는 버튼끼리 겹치는 쌍 이름."""
+    shown = [b for b in buttons if b.isVisible()]
+    pairs = []
+    for i, first in enumerate(shown):
+        for second in shown[i + 1:]:
+            if first.parent() is second.parent() and first.geometry().intersects(second.geometry()):
+                pairs.append([first.objectName(), second.objectName()])
+    return pairs
+
+
 def scenario(name):
     with tempfile.TemporaryDirectory() as directory:
         env = dict(os.environ, QT_QPA_PLATFORM="offscreen", PYTHONIOENCODING="utf-8")
@@ -480,6 +498,19 @@ class OrderShipStageTests(unittest.TestCase):
         self.assertEqual(flow["receipt_clicked"], ["receipt"])
         self.assertEqual(flow["cleared"]["primary"], ["pushButton_load_order"])
         self.assertFalse(flow["cleared"]["enabled"]["pushButton_copy_order"])
+
+    def test_step_badges_and_button_row(self):
+        flow = scenario("flow")["flow"]
+        self.assertEqual(flow["start"]["badges"], ["1", "2"])
+        self.assertEqual(flow["loaded"]["badges"], ["✓", "2"])
+        # 발송 파일을 만들면 ① 패널은 비워지고 ② 단계가 끝난다
+        self.assertEqual(flow["shipped"]["badges"], ["1", "✓"])
+        self.assertEqual(flow["cleared"]["badges"], ["1", "2"])
+        for stage in ("start", "loaded", "intake", "shipped"):
+            with self.subTest(stage=stage):
+                self.assertTrue(flow[stage]["clear_in_title"])
+                self.assertEqual(flow[stage]["overlap"], [])
+                self.assertEqual(flow[stage]["clipped"], [])
 
 
 class FileDropTests(unittest.TestCase):

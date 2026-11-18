@@ -33,6 +33,7 @@ def _repolish(widget) -> None:
     style = widget.style()
     style.unpolish(widget)
     style.polish(widget)
+    widget.updateGeometry()  # 역할(굵은 글씨·여백)이 바뀌면 크기도 바뀌므로 레이아웃이 다시 계산하게 한다
     widget.update()
 
 

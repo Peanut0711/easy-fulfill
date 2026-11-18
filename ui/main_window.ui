@@ -98,9 +98,6 @@
               </property>
               <item>
                <widget class="QLabel" name="label_step_order">
-                <property name="styleSheet">
-                 <string>font-weight: 600; color: #1a73e8; padding: 2px 0;</string>
-                </property>
                 <property name="text">
                  <string>① 주문 불러오기</string>
                 </property>
@@ -286,9 +283,6 @@
                   <property name="frameShape">
                    <enum>QFrame::Shape::StyledPanel</enum>
                   </property>
-                  <property name="styleSheet">
-                   <string>color: #9e9e9e; background: palette(base);</string>
-                  </property>
                   <property name="text">
                    <string>주문 엑셀을 불러오거나 이 패널에 끌어다 놓으면 여기에 주문 미리보기가 표시됩니다.</string>
                   </property>
@@ -328,9 +322,6 @@
                 </item>
                 <item>
                  <widget class="QLabel" name="label_order_legend">
-                  <property name="styleSheet">
-                   <string>color: #666666;</string>
-                  </property>
                   <property name="text">
                    <string/>
                   </property>
@@ -369,9 +360,6 @@
               </property>
               <item>
                <widget class="QLabel" name="label_step_ship">
-                <property name="styleSheet">
-                 <string>font-weight: 600; color: #1a73e8; padding: 2px 0;</string>
-                </property>
                 <property name="text">
                  <string>② 송장·발송 생성</string>
                 </property>
@@ -1272,9 +1260,6 @@
                  </property>
                  <property name="wordWrap">
                   <bool>true</bool>
-                 </property>
-                 <property name="styleSheet">
-                  <string>color: #888;</string>
                  </property>
                 </widget>
                </item>
