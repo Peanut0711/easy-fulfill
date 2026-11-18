@@ -39,10 +39,13 @@ def measure(platform="windows"):
     if str(ROOT) not in sys.path:
         sys.path.insert(0, str(ROOT))
     from PySide6.QtCore import Qt
-    from PySide6.QtWidgets import QApplication, QMessageBox
+    from PySide6.QtWidgets import QApplication, QLayout, QMessageBox
 
     QApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
     app = QApplication.instance() or QApplication([])
+    from shared.ui_style import apply_app_style
+
+    apply_app_style(app)  # main()과 같은 앱 스타일로 잰다
     import sheets.google_sheets_oauth as oauth
 
     spec = importlib.util.spec_from_file_location("easy_fulfill_measure", ROOT / "easy-fulfill.py")
@@ -66,6 +69,11 @@ def measure(platform="windows"):
         for index in range(tabs.count()):
             tabs.setCurrentIndex(index)  # 탭 첫 진입 때 만드는 화면(문서 만들기 등)까지 포함
             app.processEvents()
+        # 숨겨진 탭은 자식이 바뀌어도 레이아웃 크기 캐시가 갱신되지 않는다(화면에 보일 때 갱신되어
+        # 그때 창이 커진다). 모든 레이아웃 캐시를 비워 실제로 보일 때의 값을 잰다.
+        for layout in window.findChildren(QLayout):
+            layout.invalidate()
+        for index in range(tabs.count()):
             page = tabs.widget(index)
             result["tabs"].append({
                 "name": page.objectName(),

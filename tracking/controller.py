@@ -13,6 +13,7 @@ from datetime import date, datetime
 from pathlib import Path
 
 from shared.lazy_import import optional_deferred_module
+from shared.ui_style import clear_status, set_status
 
 gspread = optional_deferred_module("gspread")  # 설치 여부만 확인하고 처음 쓸 때 불러온다.
 
@@ -283,9 +284,12 @@ class TrackingController(QObject):
         label = getattr(self.ui, "label_tracking_count", None)
         if label is None:
             return
-        label.setStyleSheet("color:#c0392b;" if error else "")
-        label.setText(text)
-        label.setToolTip(detail)
+        if error:
+            set_status(label, "error", text, detail, mark=False)
+        else:
+            clear_status(label)
+            label.setText(text)
+            label.setToolTip(detail)
 
     def _load_tracking_list(self):
         """현재 목록 모드에 필요한 송장추적 행만 백그라운드로 읽어온다."""
@@ -471,11 +475,11 @@ class TrackingController(QObject):
                 txt += (f"  ·  ⚠️ 위험 {total_risk}건"
                         f" (허브 {counts['허브정체']} · 수거누락 {counts['수거누락']}"
                         f" · 이동 {counts['이동정체']})")
-                self.ui.label_tracking_count.setStyleSheet("color:#c0392b; font-weight:bold;")
+                set_status(self.ui.label_tracking_count, "error", txt, txt, emphasis=True, mark=False)
             else:
-                self.ui.label_tracking_count.setStyleSheet("")
-            self.ui.label_tracking_count.setText(txt)
-            self.ui.label_tracking_count.setToolTip(txt)
+                clear_status(self.ui.label_tracking_count)
+                self.ui.label_tracking_count.setText(txt)
+                self.ui.label_tracking_count.setToolTip(txt)
 
     @staticmethod
     def _parse_event_dt(s):

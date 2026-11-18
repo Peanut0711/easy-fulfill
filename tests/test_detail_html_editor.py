@@ -27,6 +27,7 @@ from PySide6.QtWebEngineWidgets import QWebEngineView
 from shiboken6 import isValid
 from product_detail.detail_preview_server import DetailPreviewServer
 from product_detail.detail_image_upload import upload_image_for_editor, validated_cdn_url
+from shared.ui_style import set_status  # 편집기 클래스(_refresh)가 쓰는 전역
 
 
 # MainWindow의 주문·설정 초기화를 실행하지 않고 실제 편집창 클래스 전체를 사용한다.

@@ -13,18 +13,13 @@ from PySide6.QtCore import QEvent, QObject, QRectF, Qt, QTimer
 from PySide6.QtGui import QColor, QFont, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import QLabel
 
+from shared.ui_style import set_button_role
+
 STAGE_ORDER = "order"        # 주문을 불러올 차례
 STAGE_INTAKE = "intake"      # 우체국 접수 엑셀을 만들 차례
 STAGE_INVOICE = "invoice"    # 송장을 불러올 차례
 STAGE_RECEIPT = "receipt"    # 발송 파일까지 만들었으니 접수목록을 내보낼 차례
 
-PRIMARY_BUTTON_STYLE = (
-    "QPushButton { background: #1a73e8; color: white; font-weight: 600;"
-    " border: 1px solid #1765cc; border-radius: 4px; padding: 4px 10px; }"
-    "QPushButton:hover { background: #1765cc; }"
-    "QPushButton:pressed { background: #155ab6; }"
-    "QPushButton:disabled { background: #9fbff0; border-color: #9fbff0; }"
-)
 
 
 STORE_NAMES = {"naver": "네이버", "coupang": "쿠팡", "gmarket": "지마켓", "11st": "11번가"}
@@ -217,9 +212,9 @@ def stabilize_widths(buttons) -> None:
     for button in buttons:
         if button is None:
             continue
-        button.setStyleSheet(PRIMARY_BUTTON_STYLE)
+        set_button_role(button, "primary")
         primary_width = button.sizeHint().width()
-        button.setStyleSheet("")
+        set_button_role(button, None)
         button.setMinimumWidth(max(primary_width, button.sizeHint().width()))
 
 
@@ -229,6 +224,6 @@ def apply_primary(buttons: dict, stage: str) -> None:
         if button is None:
             continue
         primary = key == stage
-        button.setStyleSheet(PRIMARY_BUTTON_STYLE if primary else "")
+        set_button_role(button, "primary" if primary else None)
         button.setDefault(False)
         button.setProperty("primaryAction", primary)

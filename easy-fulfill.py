@@ -60,6 +60,7 @@ from shiboken6 import isValid
 from shared.paths import APP_ROOT
 from shared.lazy_import import deferred_module, optional_deferred_module, preload_modules_in_background
 from shared.qt_background import run_in_background
+from shared.ui_style import apply_app_style, clear_status, set_button_role, set_status
 from shared.window_geometry import (
     centered_position, default_window_size, geometry_to_setting, is_restorable, parse_saved_geometry,
 )
@@ -2100,10 +2101,9 @@ class DetailHtmlEditorDialog(QDialog):
             self.warning.setText(
                 f"⚠ 네이버 스마트스토어 주소 {len(urls)}건이 포함되어 있습니다. 쿠팡 등록 전 삭제 또는 수정하세요.\n{shown}{more}"
             )
-            self.warning.setStyleSheet("color:#b00020;font-weight:600")
+            set_status(self.warning, "error", self.warning.text(), emphasis=True, mark=False, single_line=False)
         else:
-            self.warning.setText("네이버 스마트스토어 주소가 없습니다.")
-            self.warning.setStyleSheet("color:#237804")
+            set_status(self.warning, "ok", "네이버 스마트스토어 주소가 없습니다.", mark=False)
         self._update_block_controls()
 
     def _queue_preview_refresh(self, source):
@@ -3364,6 +3364,8 @@ class MainWindow(QMainWindow):
         self._refresh_google_auth_status_ui()
         self._refresh_db_sheet_sync_path_labels()
         self._init_naver_inquiry_polling()
+        # 모든 탭 내용을 만든 뒤에 창 크기를 정한다(최소 크기를 정확히 알 수 있게).
+        self._apply_initial_window_geometry()
 
         print("초기화 완료")
 
@@ -4517,7 +4519,6 @@ class MainWindow(QMainWindow):
         
         self.setStatusBar(window.statusbar)
         self.setWindowTitle(f"{window.windowTitle()} · v{APP_VERSION}")
-        self._apply_initial_window_geometry()
         self._order_ship_splitter_initialized = False
 
     def _apply_initial_window_geometry(self):
@@ -11100,6 +11101,7 @@ def main():
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
     )
     app = QApplication(sys.argv)
+    apply_app_style(app)  # 버튼 역할·상태 색(속성 선택자만 쓰는 앱 공통 스타일)
     # 앱의 백그라운드 작업은 Google 브라우저 로그인을 열지 않는다(재인증 버튼에서만 연다).
     try:
         from sheets.google_sheets_oauth import set_interactive_login_default
