@@ -77,3 +77,15 @@ def parse_saved_geometry(value):
 def geometry_to_setting(rect, maximized):
     x, y, width, height = rect
     return {"x": int(x), "y": int(y), "w": int(width), "h": int(height), "maximized": bool(maximized)}
+
+
+# 팝업 창(상세 HTML 편집기·이미지 보기): 원래 크기를 넘지 않고 작업 영역의 이 비율 안에 들어가게 한다.
+DIALOG_AREA_RATIO = 0.9
+
+
+def dialog_default_size(available, base, ratio=DIALOG_AREA_RATIO):
+    """팝업 창 기본 크기(프레임 제외). ``base``(원래 크기)보다 크지 않고 작업 영역의 ``ratio`` 안에 든다."""
+    avail_w, avail_h = available
+    width = min(base[0], int(avail_w * ratio) - FRAME_ESTIMATE[0])
+    height = min(base[1], int(avail_h * ratio) - FRAME_ESTIMATE[1])
+    return max(width, 1), max(height, 1)

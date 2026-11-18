@@ -1627,8 +1627,9 @@ class ImageDialog(QDialog):
         # 이미지 로드
         self.load_image(image_url)
         
-        # 창 크기 설정
-        self.resize(1024, 768)  # 더 큰 초기 크기로 설정
+        # 창 크기: 1024×768을 넘지 않고 화면에 맞춘다. 옮기거나 바꾼 크기는 이 PC에 기억한다.
+        from shared.dialog_geometry import IMAGE_DIALOG_GEOMETRY_KEY, apply_dialog_geometry
+        apply_dialog_geometry(self, IMAGE_DIALOG_GEOMETRY_KEY, (1024, 768))
         
         # 이전/다음 버튼 상태 업데이트
         self.update_navigation_buttons()
@@ -1744,6 +1745,11 @@ class ImageDialog(QDialog):
         self.prev_button.setEnabled(self.current_index > 0)
         self.next_button.setEnabled(self.current_index < len(self.all_images) - 1)
     
+    def done(self, result):
+        from shared.dialog_geometry import IMAGE_DIALOG_GEOMETRY_KEY, save_dialog_geometry
+        save_dialog_geometry(self, IMAGE_DIALOG_GEOMETRY_KEY)
+        super().done(result)
+
     def closeEvent(self, event):
         """창이 닫힐 때 호출되는 이벤트"""
         # 소분류 값 업데이트
@@ -1849,7 +1855,9 @@ class DetailHtmlEditorDialog(QDialog):
         self._pending_restored_range = None
         self.setWindowTitle("상세페이지 HTML 편집 및 미리보기")
         self.setWindowFlag(Qt.WindowMaximizeButtonHint, True)
-        self.resize(1280, 760)
+        # 1280×760을 넘지 않고 화면에 맞춘다(125% FHD에서도 화면 밖으로 나가지 않게). 위치·크기는 이 PC에 기억한다.
+        from shared.dialog_geometry import DETAIL_EDITOR_GEOMETRY_KEY, apply_dialog_geometry
+        apply_dialog_geometry(self, DETAIL_EDITOR_GEOMETRY_KEY, (1280, 760))
 
         layout = QVBoxLayout(self)
         self.warning = QLabel()
@@ -2221,6 +2229,11 @@ class DetailHtmlEditorDialog(QDialog):
             return true;
         }
     """
+
+    def done(self, result):
+        from shared.dialog_geometry import DETAIL_EDITOR_GEOMETRY_KEY, save_dialog_geometry
+        save_dialog_geometry(self, DETAIL_EDITOR_GEOMETRY_KEY)
+        super().done(result)
 
     def closeEvent(self, event):
         self._http_preview.close()
