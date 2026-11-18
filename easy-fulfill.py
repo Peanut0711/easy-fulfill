@@ -6175,6 +6175,9 @@ class MainWindow(QMainWindow):
         content = QWidget()
         content.setObjectName("widget_detail_page_content")
         scroll.setWidget(content)
+        # 스크롤 영역이 창 배경색(회색)을 칠해 다른 탭(흰색)과 달라 보이지 않게 한다(설정·문서 탭과 같은 방식).
+        scroll.viewport().setAutoFillBackground(False)
+        content.setAutoFillBackground(False)
         page_layout.addWidget(scroll)
         layout = QVBoxLayout(content)
         layout.setContentsMargins(18, 18, 18, 18)
@@ -7570,6 +7573,9 @@ class MainWindow(QMainWindow):
             scroll.setWidgetResizable(True)
             scroll.setFrameShape(QFrame.Shape.NoFrame)
             scroll.setWidget(self._document_widget)
+            # 스크롤 영역이 창 배경색(회색)을 칠해 다른 탭(흰색)과 달라 보이지 않게 한다(설정 탭과 같은 방식).
+            scroll.viewport().setAutoFillBackground(False)
+            self._document_widget.setAutoFillBackground(False)
             layout.setContentsMargins(6, 6, 6, 6)
             layout.addWidget(scroll)
         except Exception as exc:

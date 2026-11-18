@@ -132,5 +132,38 @@ class OrderImportWidgetTests(unittest.TestCase):
         self.assertFalse(self.widget.free_shipping_check.isHidden())
 
 
+class DocumentActionLayoutTests(unittest.TestCase):
+    """문서 만들기 하단 버튼과 필수 칸 표시(알림·상태바 계획 D-3)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def setUp(self):
+        self.widget = QuotationStatementWidget(on_created=Mock())
+
+    def tearDown(self):
+        self.widget.close()
+        self.widget.deleteLater()
+
+    def test_reset_is_apart_and_pdf_is_primary(self):
+        from PySide6.QtWidgets import QHBoxLayout
+        row = next(layout for layout in self.widget.findChildren(QHBoxLayout)
+                   if layout.indexOf(self.widget.pdf_button) >= 0)
+        order = [row.itemAt(i).widget() or "stretch" for i in range(row.count())]
+        self.assertEqual(order, [self.widget.reset_button, "stretch", self.widget.create_button, self.widget.pdf_button])
+        self.assertEqual(self.widget.pdf_button.property("role"), "primary")
+        self.assertFalse(self.widget.create_button.property("role"))
+
+    def test_name_label_marks_required(self):
+        label = self.widget.name_label
+        self.assertEqual(label.text(), "성명 *")
+        self.assertEqual(label.property("status"), "warn")
+        self.widget.name_edit.setText("홍길동")
+        self.assertFalse(label.property("status"))
+        self.widget.name_edit.clear()  # 비우면 다시 주의 색(초기화는 확인 창이 떠서 직접 비운다)
+        self.assertEqual(label.property("status"), "warn")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
 )
 
 from shared.paths import APP_ROOT
+from shared.ui_style import clear_status, set_button_role, set_status
 
 from .quotation_statement import (
     DocumentValidationError,
@@ -304,7 +305,11 @@ class QuotationStatementWidget(QWidget):
         input_mode_layout.addStretch(1)
         form.addRow(self.input_mode_label, self.input_mode_widget)
         form.addRow("소속", self.organization_edit)
-        form.addRow("성명", self.name_edit)
+        # 성명은 문서 만들기의 필수 칸이다(create_document 입력 확인). 비어 있으면 라벨을 주의 색으로.
+        self.name_label = QLabel("성명 *")
+        self.name_label.setObjectName("label_document_name")
+        self.name_label.setToolTip("필수 입력")
+        form.addRow(self.name_label, self.name_edit)
         form.addRow("거래일자", self.trade_date)
         form.addRow("결제 방법", self.payment_method)
         form.addRow(self.delivery_label, self.delivery_edit)
@@ -446,15 +451,17 @@ class QuotationStatementWidget(QWidget):
         root.addWidget(summary_group)
 
         action_row = QHBoxLayout()
-        action_row.addStretch(1)
         self.reset_button = QPushButton("초기화")
         self.create_button = QPushButton("엑셀 만들기")
         self.create_button.setMinimumWidth(120)
         self.pdf_button = QPushButton("PDF 만들기")
         self.pdf_button.setMinimumWidth(120)
+        # 「초기화」는 만들기 버튼과 떨어뜨려 왼쪽 끝에, 주 동작 「PDF 만들기」는 강조(알림·상태바 계획 D-3).
         action_row.addWidget(self.reset_button)
+        action_row.addStretch(1)
         action_row.addWidget(self.create_button)
         action_row.addWidget(self.pdf_button)
+        set_button_role(self.pdf_button, "primary")
         root.addLayout(action_row)
 
         self.add_button.clicked.connect(self.add_item_row)
@@ -473,10 +480,19 @@ class QuotationStatementWidget(QWidget):
         self.negotiated_check.toggled.connect(self.refresh_summary)
         self.free_shipping_check.toggled.connect(self.refresh_summary)
         self.reset_button.clicked.connect(self.reset_form)
+        self.name_edit.textChanged.connect(self._update_required_marks)
         self.create_button.clicked.connect(self.create_document)
         self.pdf_button.clicked.connect(lambda: self.create_document(as_pdf=True))
         self._on_discount_mode_changed()
         self._on_document_type_changed(self.document_type.currentText())
+        self._update_required_marks()
+
+    def _update_required_marks(self, *_args):
+        if self.name_edit.text().strip():
+            clear_status(self.name_label)
+            self.name_label.setToolTip("필수 입력")
+        else:
+            set_status(self.name_label, "warn", "성명 *", "필수 입력: 성명을 넣어야 문서를 만들 수 있습니다.", mark=False)
 
     def _on_document_type_changed(self, document_type):
         quote = document_type == "견적서"
