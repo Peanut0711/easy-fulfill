@@ -24,6 +24,7 @@ from PySide6.QtGui import QColor, QDesktopServices
 from PySide6.QtWidgets import (
     QCheckBox,
     QFileDialog,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QInputDialog,
@@ -1599,14 +1600,27 @@ class TrackingController(QObject):
         # 위험 판정 기준(전원 공유). 좁은 컬럼이라 2행으로: 정체기준 3종 / 도서산간 가산.
         gb_risk = QGroupBox("위험 판정 기준 · 전원 공유")
         rv = QVBoxLayout(gb_risk)
-        rv.addWidget(QLabel("분류별 정체시간(토·일 제외 영업시간 기준)"))
+        caption = QLabel("분류별 정체시간(토·일 제외 영업시간 기준)")
+        caption.setProperty("hint", "true")
+        rv.addWidget(caption)
         _risk_tip = ("미완료 송장이 이 시간 이상 우체국 이벤트가 없으면 '정체'로 표시합니다. "
                      "토·일은 제외한 영업시간 기준이며, 변경 시 공유 시트에 저장되어 "
                      "전원에게 적용됩니다.")
-        rrow = QHBoxLayout()
+        # 디자인 개편 4-6: 숫자 칸 4개를 두 칸씩 2줄 격자로(한 줄 3칸이면 좁은 창에서 가로 스크롤이 생겼다).
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(theme.SPACE_SM)
+        grid.setVerticalSpacing(theme.SPACE_SM)
+        grid.setColumnStretch(4, 1)
+
+        def put(index, caption, spin):
+            row, column = divmod(index, 2)
+            label = QLabel(caption)
+            label.setProperty("formLabel", True)
+            grid.addWidget(label, row, column * 2)
+            grid.addWidget(spin, row, column * 2 + 1)
+
         self._dlg_stale_boxes = {}
-        for cat, cap in (("허브정체", "허브"), ("수거누락", "수거누락"), ("이동정체", "이동")):
-            rrow.addWidget(QLabel(f"{cap}:"))
+        for index, (cat, cap) in enumerate((("허브정체", "허브"), ("수거누락", "수거누락"), ("이동정체", "이동"))):
             sb = QSpinBox()
             sb.setMinimum(1)
             sb.setMaximum(168)
@@ -1615,12 +1629,8 @@ class TrackingController(QObject):
             sb.setToolTip(_risk_tip)
             sb.valueChanged.connect(
                 lambda v, c=cat: self._on_stale_threshold_changed(c, v))
-            rrow.addWidget(sb)
+            put(index, cap, sb)
             self._dlg_stale_boxes[cat] = sb
-        rrow.addStretch(1)
-        rv.addLayout(rrow)
-        brow = QHBoxLayout()
-        brow.addWidget(QLabel("도서산간 가산:"))
         self._dlg_remote_bonus = QSpinBox()
         self._dlg_remote_bonus.setMinimum(0)
         self._dlg_remote_bonus.setMaximum(168)
@@ -1630,9 +1640,8 @@ class TrackingController(QObject):
             "마지막위치가 제주·울릉 등 도서산간이면 이동정체 기준에 이 시간을 더합니다. "
             "(종추적 API엔 목적지가 없어 현재 위치 텍스트로 판별) 0이면 가산 없음.")
         self._dlg_remote_bonus.valueChanged.connect(self._on_remote_bonus_changed)
-        brow.addWidget(self._dlg_remote_bonus)
-        brow.addStretch(1)
-        rv.addLayout(brow)
+        put(3, "도서산간 가산", self._dlg_remote_bonus)
+        rv.addLayout(grid)
         outer.addWidget(gb_risk)
 
         # 배송추적 자동 새로고침 간격(전원 공유). 0이면 자동 새로고침 끔.

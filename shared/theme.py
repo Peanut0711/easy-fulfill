@@ -244,6 +244,17 @@ QWidget[emptyPanel="true"] {{
 QTableView[dataTable="true"]::item {{ border-bottom: 1px solid {BORDER}; padding: 0 {SPACE_SM}px; }}
 QTableView[dataTable="true"]::item:selected {{ background: {PRIMARY_SUBTLE}; color: {TEXT}; }}
 
+/* ── 설정 탭 분류 목록(사이드바) ───────────────────────── */
+QListWidget#listWidget_settings_nav {{
+    background: transparent; border: none; border-right: 1px solid {BORDER};
+    padding: 0 {SPACE_SM}px 0 0; outline: none;
+}}
+QListWidget#listWidget_settings_nav::item {{
+    color: {TEXT_SECONDARY}; padding: {SPACE_SM}px {SPACE_MD}px; margin: 1px 0; border-radius: {RADIUS_CONTROL}px;
+}}
+QListWidget#listWidget_settings_nav::item:hover {{ background: {BG_PRESSED}; }}
+QListWidget#listWidget_settings_nav::item:selected {{ background: {PRIMARY_SUBTLE}; color: {PRIMARY}; }}
+
 /* ── 오버레이(시작·작업 중, 배송추적 목록 전환, 파일 끌어다 놓기) ── */
 QFrame#startupLoadingOverlay, QFrame#busyProcessingOverlay {{ background: {SCRIM}; border: none; }}
 QFrame#startupLoadingCard, QFrame#busyProcessingCard {{

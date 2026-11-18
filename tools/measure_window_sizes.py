@@ -24,8 +24,8 @@ ROOT = Path(__file__).resolve().parents[1]
 # docs/gui-window-settings-plan.md 「크기 기준」
 WINDOW_MIN_BUDGET = (680, 560)
 PAGE_MIN_BUDGET = (670, 440)
-# 「설정」 탭 페이지 내용 최소 폭: 탭 예산 폭에서 분류 목록(110)·구분선·여백을 뺀 값. 넘으면 가로 스크롤이 생긴다.
-SETTINGS_CONTENT_MAX_WIDTH = 540  # 창 최소 높이 = 탭 최소 높이 + 약 117(메뉴·탭바·상태바·여백)
+# 「설정」 탭 페이지 내용 최소 폭: 탭 예산 폭에서 분류 목록(140, 디자인 개편 4-6)·여백을 뺀 값. 넘으면 가로 스크롤이 생긴다.
+SETTINGS_CONTENT_MAX_WIDTH = 510  # 창 최소 높이 = 탭 최소 높이 + 약 117(메뉴·탭바·상태바·여백)
 
 
 def _size(widget_size):

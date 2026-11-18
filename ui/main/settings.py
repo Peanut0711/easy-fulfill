@@ -33,7 +33,13 @@ from tracking.service import (
 )
 from ui.gift_event_settings import GiftEventSettingsDialog
 from ui.gift_history import GiftHistoryDialog
+from shared import theme
+from shared.ui_components import fixed_width_button
 from ui.main import host as _host
+
+
+SETTINGS_NAV_WIDTH = 140
+SETTINGS_PAGE_MAX_WIDTH = 760
 
 
 class SettingsMixin:
@@ -565,6 +571,26 @@ class SettingsMixin:
                 area.viewport().setAutoFillBackground(False)
                 if area.widget() is not None:
                     area.widget().setAutoFillBackground(False)
+        # 디자인 개편 4-6: 분류 목록은 사이드바 모양(테마 #listWidget_settings_nav 규칙), 페이지 최대 폭 620→760.
+        tab_layout = getattr(self.ui, "horizontalLayout_settings_tab", None)
+        if tab_layout is not None:
+            tab_layout.setContentsMargins(theme.SPACE_MD, theme.SPACE_MD, 0, 0)
+            tab_layout.setSpacing(theme.SPACE_SM)
+        nav.setFixedWidth(SETTINGS_NAV_WIDTH)
+        slack_status = getattr(self.ui, "label_slack_webhook_status", None)
+        if slack_status is not None:  # 긴 미설정 안내가 좁은 창에서 버튼을 밀어내지 않게 줄바꿈
+            slack_status.setWordWrap(True)
+        slack_button = getattr(self.ui, "pushButton_cfg_slack_webhook", None)
+        if slack_button is not None:
+            fixed_width_button(slack_button)
+        separator = getattr(self.ui, "line_settings_nav", None)
+        if separator is not None:  # 분류 목록 오른쪽 경계선은 테마가 그린다(선이 두 줄로 보이지 않게)
+            separator.hide()
+        for index in range(stack.count()):
+            area = stack.widget(index)
+            page = area.widget() if isinstance(area, QScrollArea) else None
+            if page is not None and page.maximumWidth() < SETTINGS_PAGE_MAX_WIDTH:
+                page.setMaximumWidth(SETTINGS_PAGE_MAX_WIDTH)
         nav.currentRowChanged.connect(self._on_settings_nav_changed)
         nav.setCurrentRow(0)
         stack.setCurrentIndex(0)
