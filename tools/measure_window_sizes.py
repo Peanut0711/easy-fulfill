@@ -23,7 +23,9 @@ ROOT = Path(__file__).resolve().parents[1]
 
 # docs/gui-window-settings-plan.md 「크기 기준」
 WINDOW_MIN_BUDGET = (680, 560)
-PAGE_MIN_BUDGET = (670, 440)  # 창 최소 높이 = 탭 최소 높이 + 약 117(메뉴·탭바·상태바·여백)
+PAGE_MIN_BUDGET = (670, 440)
+# 「설정」 탭 페이지 내용 최소 폭: 탭 예산 폭에서 분류 목록(110)·구분선·여백을 뺀 값. 넘으면 가로 스크롤이 생긴다.
+SETTINGS_CONTENT_MAX_WIDTH = 540  # 창 최소 높이 = 탭 최소 높이 + 약 117(메뉴·탭바·상태바·여백)
 
 
 def _size(widget_size):
@@ -39,7 +41,7 @@ def measure(platform="windows"):
     if str(ROOT) not in sys.path:
         sys.path.insert(0, str(ROOT))
     from PySide6.QtCore import Qt
-    from PySide6.QtWidgets import QApplication, QLayout, QMessageBox
+    from PySide6.QtWidgets import QApplication, QLayout, QMessageBox, QWidget
 
     QApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
     app = QApplication.instance() or QApplication([])
@@ -70,7 +72,9 @@ def measure(platform="windows"):
             tabs.setCurrentIndex(index)  # 탭 첫 진입 때 만드는 화면(문서 만들기 등)까지 포함
             app.processEvents()
         # 숨겨진 탭은 자식이 바뀌어도 레이아웃 크기 캐시가 갱신되지 않는다(화면에 보일 때 갱신되어
-        # 그때 창이 커진다). 모든 레이아웃 캐시를 비워 실제로 보일 때의 값을 잰다.
+        # 그때 창이 커진다). 위젯별 크기 캐시와 레이아웃 캐시를 모두 비워 실제로 보일 때의 값을 잰다.
+        for widget in window.findChildren(QWidget):
+            widget.updateGeometry()
         for layout in window.findChildren(QLayout):
             layout.invalidate()
         for index in range(tabs.count()):
@@ -84,7 +88,13 @@ def measure(platform="windows"):
         if stack is not None:
             for index in range(stack.count()):
                 page = stack.widget(index)
-                result["settings_pages"].append({"name": page.objectName(), "min": _size(page.minimumSizeHint())})
+                content = page.widget() if hasattr(page, "widget") else None
+                result["settings_pages"].append({
+                    "name": page.objectName(),
+                    "min": _size(page.minimumSizeHint()),
+                    # 스크롤 없이 다 보이려면 필요한 크기(가로 스크롤은 없어야 한다)
+                    "content": _size(content.minimumSizeHint()) if content is not None else None,
+                })
         tabs.setCurrentIndex(0)
         app.processEvents()
         result["window_min"] = _size(window.minimumSizeHint())
@@ -97,10 +107,16 @@ def _print_table(result):
           f"창 최소 {result['window_min'][0]}×{result['window_min'][1]}  "
           f"(예산 {WINDOW_MIN_BUDGET[0]}×{WINDOW_MIN_BUDGET[1]})")
     print(f"탭 최소 크기 (예산 {PAGE_MIN_BUDGET[0]}×{PAGE_MIN_BUDGET[1]})")
-    for row in result["tabs"] + [dict(item, title="설정 페이지") for item in result["settings_pages"]]:
+    for row in result["tabs"]:
         width, height = row["min"]
         over = width > PAGE_MIN_BUDGET[0] or height > PAGE_MIN_BUDGET[1]
         print(f"  {row['name']:24s} {row['title']:10s} {width:4d}×{height:<4d}{'  ← 예산 초과' if over else ''}")
+    if result["settings_pages"]:
+        print(f"설정 페이지 내용 크기 (가로 예산 {SETTINGS_CONTENT_MAX_WIDTH}, 세로는 스크롤)")
+        for row in result["settings_pages"]:
+            width, height = row["content"] or row["min"]
+            over = width > SETTINGS_CONTENT_MAX_WIDTH
+            print(f"  {row['name']:36s} {width:4d}×{height:<4d}{'  ← 가로 초과' if over else ''}")
 
 
 def main(argv=None):

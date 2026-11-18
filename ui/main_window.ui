@@ -545,203 +545,6 @@
          </spacer>
         </item>
        </layout>
-      </widget>
-      <widget class="QWidget" name="tab_2">
-       <attribute name="title"><string>환경설정</string></attribute>
-       <layout class="QHBoxLayout" name="horizontalLayout_settings_outer">
-        <item>
-         <widget class="QWidget" name="widget_settings_content" native="true">
-          <property name="maximumSize">
-           <size><width>470</width><height>16777215</height></size>
-          </property>
-          <layout class="QVBoxLayout" name="verticalLayout_settings">
-           <property name="leftMargin"><number>0</number></property>
-           <property name="topMargin"><number>0</number></property>
-           <property name="rightMargin"><number>0</number></property>
-           <property name="bottomMargin"><number>0</number></property>
-           <item>
-            <widget class="QGroupBox" name="groupBox_order_index">
-             <property name="title">
-              <string>주문번호 시작값 (스토어별)</string>
-             </property>
-             <layout class="QVBoxLayout" name="verticalLayout_order_index">
-              <item>
-               <layout class="QFormLayout" name="formLayout_order_index">
-                <property name="fieldGrowthPolicy">
-                 <enum>QFormLayout::FieldGrowthPolicy::FieldsStayAtSizeHint</enum>
-                </property>
-                <item row="0" column="0">
-                 <widget class="QLabel" name="label_3">
-                  <property name="text">
-                   <string>네이버</string>
-                  </property>
-                 </widget>
-                </item>
-                <item row="0" column="1">
-                 <widget class="QLineEdit" name="lineEdit_idx_naver">
-                  <property name="maximumSize">
-                   <size>
-                    <width>70</width>
-                    <height>16777215</height>
-                   </size>
-                  </property>
-                 </widget>
-                </item>
-                <item row="1" column="0">
-                 <widget class="QLabel" name="label_4">
-                  <property name="text">
-                   <string>쿠팡</string>
-                  </property>
-                 </widget>
-                </item>
-                <item row="1" column="1">
-                 <widget class="QLineEdit" name="lineEdit_idx_coupang">
-                  <property name="maximumSize">
-                   <size>
-                    <width>70</width>
-                    <height>16777215</height>
-                   </size>
-                  </property>
-                 </widget>
-                </item>
-                <item row="2" column="0">
-                 <widget class="QLabel" name="label_5">
-                  <property name="text">
-                   <string>지마켓</string>
-                  </property>
-                 </widget>
-                </item>
-                <item row="2" column="1">
-                 <widget class="QLineEdit" name="lineEdit_idx_gmarket">
-                  <property name="maximumSize">
-                   <size>
-                    <width>70</width>
-                    <height>16777215</height>
-                   </size>
-                  </property>
-                 </widget>
-                </item>
-                <item row="3" column="0">
-                 <widget class="QLabel" name="label_idx_11st">
-                  <property name="text">
-                   <string>11번가</string>
-                  </property>
-                 </widget>
-                </item>
-                <item row="3" column="1">
-                 <widget class="QLineEdit" name="lineEdit_idx_11st">
-                  <property name="maximumSize">
-                   <size>
-                    <width>70</width>
-                    <height>16777215</height>
-                   </size>
-                  </property>
-                 </widget>
-                </item>
-               </layout>
-              </item>
-              <item>
-               <layout class="QHBoxLayout" name="horizontalLayout_index_refresh">
-                <item>
-                 <widget class="QPushButton" name="pushButton_index_sheet_refresh">
-                  <property name="text">
-                   <string>스프레드시트에서 다시 읽기</string>
-                  </property>
-                 </widget>
-                </item>
-                <item>
-                 <widget class="QPushButton" name="pushButton_index_undo">
-                  <property name="text">
-                   <string>마지막 변경 되돌리기</string>
-                  </property>
-                  <property name="toolTip">
-                   <string>오늘 마지막 인덱스 변경(실수로 올라간 값 등)을 직전 값으로 1클릭 복구합니다. 전원 적용.</string>
-                  </property>
-                 </widget>
-                </item>
-                <item>
-                 <spacer name="horizontalSpacer_index_refresh">
-                  <property name="orientation">
-                   <enum>Qt::Orientation::Horizontal</enum>
-                  </property>
-                  <property name="sizeHint" stdset="0">
-                   <size>
-                    <width>10</width>
-                    <height>20</height>
-                   </size>
-                  </property>
-                 </spacer>
-                </item>
-               </layout>
-              </item>
-              <item>
-               <widget class="QLabel" name="label_index_sheet_sync">
-                <property name="text">
-                 <string>스프레드시트 동기화 상태</string>
-                </property>
-                <property name="wordWrap">
-                 <bool>true</bool>
-                </property>
-                <property name="styleSheet">
-                 <string>color: #888;</string>
-                </property>
-               </widget>
-              </item>
-             </layout>
-            </widget>
-           </item>
-           <item>
-            <widget class="QGroupBox" name="groupBox_app_version">
-             <property name="title">
-              <string>프로그램 버전</string>
-             </property>
-             <layout class="QVBoxLayout" name="verticalLayout_app_version">
-              <item>
-               <widget class="QLabel" name="label_app_version">
-                <property name="text">
-                 <string>현재 버전 확인 중…</string>
-                </property>
-                <property name="wordWrap">
-                 <bool>true</bool>
-                </property>
-               </widget>
-              </item>
-              <item>
-               <widget class="QCheckBox" name="checkBox_ignore_version_update">
-                <property name="text">
-                 <string>새 버전 안내 무시</string>
-                </property>
-                <property name="toolTip">
-                 <string>이 PC에서 「새 버전 안내」 창을 띄우지 않습니다. 공유 시트가 요구하는 최소 버전보다 낮아 시트 쓰기가 멈춘 경우의 안내는 계속 표시됩니다.</string>
-                </property>
-                <property name="checked">
-                 <bool>false</bool>
-                </property>
-               </widget>
-              </item>
-             </layout>
-            </widget>
-           </item>
-           <item>
-            <spacer name="verticalSpacer_settings">
-             <property name="orientation">
-              <enum>Qt::Orientation::Vertical</enum>
-             </property>
-             <property name="sizeHint" stdset="0">
-              <size><width>20</width><height>40</height></size>
-             </property>
-            </spacer>
-           </item>
-          </layout>
-         </widget>
-        </item>
-        <item>
-         <spacer name="horizontalSpacer_settings_outer">
-          <property name="orientation"><enum>Qt::Orientation::Horizontal</enum></property>
-          <property name="sizeHint" stdset="0"><size><width>40</width><height>20</height></size></property>
-         </spacer>
-        </item>
-       </layout>
        <widget class="QGroupBox" name="groupBox">
         <property name="geometry">
          <rect>
@@ -1076,545 +879,6 @@
         </widget>
        </widget>
       </widget>
-      <widget class="QWidget" name="tab_admin">
-       <attribute name="title"><string>관리자</string></attribute>
-       <layout class="QHBoxLayout" name="horizontalLayout_admin_outer">
-        <item>
-         <widget class="QWidget" name="widget_admin_content" native="true">
-          <property name="maximumSize">
-           <size><width>470</width><height>16777215</height></size>
-          </property>
-          <layout class="QVBoxLayout" name="verticalLayout_admin">
-           <property name="leftMargin"><number>0</number></property>
-           <property name="topMargin"><number>0</number></property>
-           <property name="rightMargin"><number>0</number></property>
-           <property name="bottomMargin"><number>0</number></property>
-           <item>
-            <widget class="QGroupBox" name="groupBox_google_sheets">
-             <property name="title">
-              <string>연동 · Google Sheets</string>
-             </property>
-             <layout class="QVBoxLayout" name="verticalLayout_google_sheets">
-              <item>
-               <widget class="QLabel" name="label_google_auth_status">
-                <property name="text">
-                 <string>상태를 불러오는 중…</string>
-                </property>
-                <property name="wordWrap">
-                 <bool>true</bool>
-                </property>
-                <property name="alignment">
-                 <set>Qt::AlignmentFlag::AlignLeft|Qt::AlignmentFlag::AlignTop</set>
-                </property>
-               </widget>
-              </item>
-              <item>
-               <layout class="QHBoxLayout" name="horizontalLayout_google_buttons">
-                <item>
-                 <widget class="QPushButton" name="pushButton_google_reauth">
-                  <property name="text">
-                   <string>재인증</string>
-                  </property>
-                  <property name="toolTip">
-                   <string>저장된 로그인을 지우고 브라우저에서 다시 Google 계정 연결</string>
-                  </property>
-                 </widget>
-                </item>
-                <item>
-                 <widget class="QPushButton" name="pushButton_google_disconnect">
-                  <property name="text">
-                   <string>연결 해제</string>
-                  </property>
-                  <property name="toolTip">
-                   <string>이 PC의 token.json만 삭제합니다. (계정 비밀번호 변경과는 별개)</string>
-                  </property>
-                 </widget>
-                </item>
-                <item>
-                 <widget class="QPushButton" name="pushButton_google_open_oauth_folder">
-                  <property name="text">
-                   <string>인증 폴더 열기</string>
-                  </property>
-                 </widget>
-                </item>
-                <item>
-                 <spacer name="horizontalSpacer_google_buttons">
-                  <property name="orientation">
-                   <enum>Qt::Orientation::Horizontal</enum>
-                  </property>
-                  <property name="sizeHint" stdset="0">
-                   <size>
-                    <width>10</width>
-                    <height>20</height>
-                   </size>
-                  </property>
-                 </spacer>
-                </item>
-               </layout>
-              </item>
-              <item>
-               <widget class="QLabel" name="label_google_auth_tip">
-                <property name="font">
-                 <font>
-                  <family>맑은 고딕</family>
-                  <pointsize>8</pointsize>
-                 </font>
-                </property>
-                <property name="text">
-                 <string>invalid_scope 등 Google 인증 오류가 나면 「연결 해제」 후 「재인증」을 눌러 주세요. (google-oauth 폴더의 token.json 갱신)</string>
-                </property>
-                <property name="wordWrap">
-                 <bool>true</bool>
-                </property>
-                <property name="styleSheet">
-                 <string>color: #888;</string>
-                </property>
-               </widget>
-              </item>
-             </layout>
-            </widget>
-           </item>
-           <item>
-            <widget class="QGroupBox" name="groupBox_api_keys">
-             <property name="title">
-              <string>연동 · API 키 (관리자)</string>
-             </property>
-             <layout class="QVBoxLayout" name="verticalLayout_api_keys">
-              <item>
-               <widget class="QLabel" name="label_settings_api_status">
-                <property name="text">
-                 <string>상태 확인 중…</string>
-                </property>
-                <property name="wordWrap">
-                 <bool>true</bool>
-                </property>
-                <property name="styleSheet">
-                 <string>color: #888;</string>
-                </property>
-               </widget>
-              </item>
-              <item>
-               <layout class="QHBoxLayout" name="horizontalLayout_api_keys">
-                <item>
-                 <widget class="QPushButton" name="pushButton_cfg_kpost_key">
-                  <property name="text">
-                   <string>우체국 종추적 키</string>
-                  </property>
-                  <property name="toolTip">
-                   <string>공유 우체국 국내우편물 종추적 인증키를 등록하거나 변경합니다.</string>
-                  </property>
-                 </widget>
-                </item>
-                <item>
-                 <widget class="QPushButton" name="pushButton_cfg_slack_webhook">
-                  <property name="text">
-                   <string>슬랙 Webhook</string>
-                  </property>
-                  <property name="toolTip">
-                   <string>관리자용: 슬랙 알림 Webhook URL 설정(전원 공유).</string>
-                  </property>
-                 </widget>
-                </item>
-                <item>
-                 <widget class="QPushButton" name="pushButton_cfg_naver_key">
-                  <property name="text">
-                   <string>네이버 키</string>
-                  </property>
-                  <property name="toolTip">
-                   <string>관리자용: 네이버 커머스API client_id/secret 입력(검증 후 전원 공유).</string>
-                  </property>
-                 </widget>
-                </item>
-                <item>
-                 <widget class="QPushButton" name="pushButton_cfg_coupang_key">
-                  <property name="text">
-                   <string>쿠팡 키</string>
-                  </property>
-                  <property name="toolTip">
-                   <string>관리자용: 쿠팡 WING OpenAPI vendorId/accessKey/secretKey 입력(검증 후 전원 공유).</string>
-                  </property>
-                 </widget>
-                </item>
-                <item>
-                 <spacer name="horizontalSpacer_api_keys">
-                  <property name="orientation">
-                   <enum>Qt::Orientation::Horizontal</enum>
-                  </property>
-                  <property name="sizeHint" stdset="0">
-                   <size>
-                    <width>10</width>
-                    <height>20</height>
-                   </size>
-                  </property>
-                 </spacer>
-                </item>
-               </layout>
-              </item>
-              <item alignment="Qt::AlignLeft">
-               <widget class="QPushButton" name="pushButton_cfg_kpost_postcode_key">
-                <property name="text">
-                 <string>주소 검색용 우편번호 API 키</string>
-                </property>
-                <property name="toolTip">
-                 <string>단건 송장의 주소 검색과 우편번호 조회에 사용할 우체국 인증키를 공유 시트에 등록합니다.</string>
-                </property>
-               </widget>
-              </item>
-             </layout>
-            </widget>
-           </item>
-           <item>
-            <widget class="QGroupBox" name="groupBox_gift_event">
-             <property name="title">
-              <string>사은품 이벤트</string>
-             </property>
-             <layout class="QHBoxLayout" name="horizontalLayout_gift_event">
-              <item>
-               <widget class="QPushButton" name="pushButton_gift_event_settings">
-                <property name="text">
-                 <string>구간 설정</string>
-                </property>
-               </widget>
-              </item>
-              <item>
-               <widget class="QPushButton" name="pushButton_gift_history">
-                <property name="text">
-                 <string>일별 집계 · 엑셀</string>
-                </property>
-               </widget>
-              </item>
-              <item>
-               <spacer name="horizontalSpacer_gift_event">
-                <property name="orientation"><enum>Qt::Orientation::Horizontal</enum></property>
-                <property name="sizeHint" stdset="0"><size><width>20</width><height>20</height></size></property>
-               </spacer>
-              </item>
-             </layout>
-            </widget>
-           </item>
-           <item>
-            <widget class="QWidget" name="widget_admin_tracking" native="true">
-             <layout class="QVBoxLayout" name="verticalLayout_admin_tracking">
-              <property name="leftMargin"><number>0</number></property>
-              <property name="topMargin"><number>0</number></property>
-              <property name="rightMargin"><number>0</number></property>
-              <property name="bottomMargin"><number>0</number></property>
-             </layout>
-            </widget>
-           </item>
-           <item>
-            <spacer name="verticalSpacer_admin">
-             <property name="orientation">
-              <enum>Qt::Orientation::Vertical</enum>
-             </property>
-             <property name="sizeHint" stdset="0">
-              <size><width>20</width><height>40</height></size>
-             </property>
-            </spacer>
-           </item>
-          </layout>
-         </widget>
-        </item>
-        <item>
-         <spacer name="horizontalSpacer_admin_outer">
-          <property name="orientation"><enum>Qt::Orientation::Horizontal</enum></property>
-          <property name="sizeHint" stdset="0"><size><width>40</width><height>20</height></size></property>
-         </spacer>
-        </item>
-       </layout>
-      </widget>
-      <widget class="QWidget" name="tab_db_sheet_sync">
-       <attribute name="title">
-        <string>DB동기화</string>
-       </attribute>
-       <layout class="QVBoxLayout" name="verticalLayout_db_sync">
-        <property name="spacing">
-         <number>8</number>
-        </property>
-        <property name="leftMargin">
-         <number>8</number>
-        </property>
-        <property name="topMargin">
-         <number>8</number>
-        </property>
-        <property name="rightMargin">
-         <number>8</number>
-        </property>
-        <property name="bottomMargin">
-         <number>8</number>
-        </property>
-        <item>
-         <widget class="QLabel" name="label_db_sync_intro">
-          <property name="text">
-           <string>기본은 database 폴더에서 최신 Product_*.csv·price_inventory_*.xlsx를 찾습니다.&#10;각 행 끝 「직접지정」으로 다른 위치의 파일을 지정할 수 있습니다(새로고침 시 자동 탐지로 복귀).&#10;구글 시트의 네이버·쿠팡 탭에 아직 없는 상품만 행으로 추가하며, 기존 행의 가격·재고는 갱신하지 않습니다.</string>
-          </property>
-          <property name="wordWrap">
-           <bool>true</bool>
-          </property>
-         </widget>
-        </item>
-        <item>
-         <layout class="QHBoxLayout" name="horizontalLayout_db_naver_row">
-          <property name="spacing">
-           <number>8</number>
-          </property>
-          <item>
-           <widget class="QCheckBox" name="checkBox_db_sync_naver">
-            <property name="text">
-             <string/>
-            </property>
-            <property name="checked">
-             <bool>true</bool>
-            </property>
-           </widget>
-          </item>
-          <item>
-           <widget class="QLabel" name="label_db_sync_naver_file">
-            <property name="sizePolicy">
-             <sizepolicy hsizetype="Expanding" vsizetype="Preferred">
-              <horstretch>1</horstretch>
-              <verstretch>0</verstretch>
-             </sizepolicy>
-            </property>
-            <property name="text">
-             <string>네이버 DB [ — ] : (없음)</string>
-            </property>
-            <property name="wordWrap">
-             <bool>true</bool>
-            </property>
-            <property name="textInteractionFlags">
-             <set>Qt::TextInteractionFlag::TextSelectableByMouse</set>
-            </property>
-           </widget>
-          </item>
-          <item>
-           <widget class="QPushButton" name="pushButton_db_sync_naver_browse">
-            <property name="sizePolicy">
-             <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
-              <horstretch>0</horstretch>
-              <verstretch>0</verstretch>
-             </sizepolicy>
-            </property>
-            <property name="minimumSize">
-             <size>
-              <width>72</width>
-              <height>0</height>
-             </size>
-            </property>
-            <property name="text">
-             <string>직접지정</string>
-            </property>
-            <property name="toolTip">
-             <string>CSV 파일을 직접 선택합니다. 새로고침을 누르면 database 폴더 자동 탐지로 돌아갑니다.</string>
-            </property>
-           </widget>
-          </item>
-         </layout>
-        </item>
-        <item>
-         <layout class="QHBoxLayout" name="horizontalLayout_db_coupang_row">
-          <property name="spacing">
-           <number>8</number>
-          </property>
-          <item>
-           <widget class="QCheckBox" name="checkBox_db_sync_coupang">
-            <property name="text">
-             <string/>
-            </property>
-            <property name="checked">
-             <bool>true</bool>
-            </property>
-           </widget>
-          </item>
-          <item>
-           <widget class="QLabel" name="label_db_sync_coupang_file">
-            <property name="sizePolicy">
-             <sizepolicy hsizetype="Expanding" vsizetype="Preferred">
-              <horstretch>1</horstretch>
-              <verstretch>0</verstretch>
-             </sizepolicy>
-            </property>
-            <property name="text">
-             <string>쿠팡 DB [ — ] : (없음)</string>
-            </property>
-            <property name="wordWrap">
-             <bool>true</bool>
-            </property>
-            <property name="textInteractionFlags">
-             <set>Qt::TextInteractionFlag::TextSelectableByMouse</set>
-            </property>
-           </widget>
-          </item>
-          <item>
-           <widget class="QPushButton" name="pushButton_db_sync_coupang_browse">
-            <property name="sizePolicy">
-             <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
-              <horstretch>0</horstretch>
-              <verstretch>0</verstretch>
-             </sizepolicy>
-            </property>
-            <property name="minimumSize">
-             <size>
-              <width>72</width>
-              <height>0</height>
-             </size>
-            </property>
-            <property name="text">
-             <string>직접지정</string>
-            </property>
-            <property name="toolTip">
-             <string>엑셀(.xlsx) 파일을 직접 선택합니다. 새로고침을 누르면 database 폴더 자동 탐지로 돌아갑니다.</string>
-            </property>
-           </widget>
-          </item>
-         </layout>
-        </item>
-        <item>
-         <layout class="QHBoxLayout" name="horizontalLayout_db_options">
-          <property name="spacing">
-           <number>20</number>
-          </property>
-          <item>
-           <widget class="QCheckBox" name="checkBox_db_sync_preview">
-            <property name="sizePolicy">
-             <sizepolicy hsizetype="Minimum" vsizetype="Fixed">
-              <horstretch>0</horstretch>
-              <verstretch>0</verstretch>
-             </sizepolicy>
-            </property>
-            <property name="text">
-             <string>테스트 모드 (적용 안함)</string>
-            </property>
-            <property name="checked">
-             <bool>false</bool>
-            </property>
-           </widget>
-          </item>
-          <item>
-           <widget class="QCheckBox" name="checkBox_db_sync_verbose_log">
-            <property name="toolTip">
-             <string>체크 시 기존·실시간 DB 샘플, 신제품 행 목록, 서식·교차 색상 적용 등 상세 메시지를 표시합니다. 끄면 결과·건수·요약 위주로만 표시합니다.</string>
-            </property>
-            <property name="text">
-             <string>로그 출력 (상세)</string>
-            </property>
-            <property name="checked">
-             <bool>false</bool>
-            </property>
-           </widget>
-          </item>
-          <item>
-           <spacer name="horizontalSpacer_db_options">
-            <property name="orientation">
-             <enum>Qt::Orientation::Horizontal</enum>
-            </property>
-            <property name="sizeHint" stdset="0">
-             <size>
-              <width>0</width>
-              <height>0</height>
-             </size>
-            </property>
-            <property name="sizeType">
-             <enum>QSizePolicy::Policy::Expanding</enum>
-            </property>
-           </spacer>
-          </item>
-         </layout>
-        </item>
-        <item>
-         <layout class="QHBoxLayout" name="horizontalLayout_db_run">
-          <property name="spacing">
-           <number>10</number>
-          </property>
-          <item>
-           <widget class="QPushButton" name="pushButton_db_sync_refresh_paths">
-            <property name="sizePolicy">
-             <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
-              <horstretch>0</horstretch>
-              <verstretch>0</verstretch>
-             </sizepolicy>
-            </property>
-            <property name="minimumSize">
-             <size>
-              <width>140</width>
-              <height>36</height>
-             </size>
-            </property>
-            <property name="maximumSize">
-             <size>
-              <width>140</width>
-              <height>16777215</height>
-             </size>
-            </property>
-            <property name="text">
-             <string>새로고침</string>
-            </property>
-            <property name="toolTip">
-             <string>수동으로 고른 파일 지정을 해제하고, database 폴더에서 네이버·쿠팡 최신 파일 경로를 다시 찾아 라벨을 갱신합니다.</string>
-            </property>
-           </widget>
-          </item>
-          <item>
-           <widget class="QPushButton" name="pushButton_db_sync_run">
-            <property name="sizePolicy">
-             <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
-              <horstretch>0</horstretch>
-              <verstretch>0</verstretch>
-             </sizepolicy>
-            </property>
-            <property name="minimumSize">
-             <size>
-              <width>140</width>
-              <height>36</height>
-             </size>
-            </property>
-            <property name="maximumSize">
-             <size>
-              <width>140</width>
-              <height>16777215</height>
-             </size>
-            </property>
-            <property name="text">
-             <string>실행</string>
-            </property>
-           </widget>
-          </item>
-          <item>
-           <spacer name="horizontalSpacer_db_run_trailing">
-            <property name="orientation">
-             <enum>Qt::Orientation::Horizontal</enum>
-            </property>
-            <property name="sizeHint" stdset="0">
-             <size>
-              <width>0</width>
-              <height>0</height>
-             </size>
-            </property>
-            <property name="sizeType">
-             <enum>QSizePolicy::Policy::Expanding</enum>
-            </property>
-           </spacer>
-          </item>
-         </layout>
-        </item>
-        <item>
-         <widget class="QPlainTextEdit" name="plainTextEdit_db_sync_log">
-          <property name="readOnly">
-           <bool>true</bool>
-          </property>
-          <property name="minimumSize">
-           <size>
-            <width>0</width>
-            <height>200</height>
-           </size>
-          </property>
-          <property name="placeholderText">
-           <string>실행 결과 로그가 여기에 표시됩니다.</string>
-          </property>
-         </widget>
-        </item>
-       </layout>
-      </widget>
       <widget class="QWidget" name="tab_tracking">
        <attribute name="title">
         <string>배송추적</string>
@@ -1853,6 +1117,925 @@
         </property>
        </layout>
       </widget>
+      <widget class="QWidget" name="tab_settings">
+       <attribute name="title">
+        <string>⚙ 설정</string>
+       </attribute>
+       <layout class="QHBoxLayout" name="horizontalLayout_settings_tab">
+        <property name="spacing"><number>0</number></property>
+        <property name="leftMargin"><number>6</number></property>
+        <property name="topMargin"><number>6</number></property>
+        <property name="rightMargin"><number>0</number></property>
+        <property name="bottomMargin"><number>0</number></property>
+        <item>
+         <widget class="QListWidget" name="listWidget_settings_nav">
+          <property name="minimumSize">
+           <size><width>110</width><height>0</height></size>
+          </property>
+          <property name="maximumSize">
+           <size><width>110</width><height>16777215</height></size>
+          </property>
+          <property name="frameShape">
+           <enum>QFrame::Shape::NoFrame</enum>
+          </property>
+          <property name="horizontalScrollBarPolicy">
+           <enum>Qt::ScrollBarPolicy::ScrollBarAlwaysOff</enum>
+          </property>
+          <property name="spacing">
+           <number>2</number>
+          </property>
+          <property name="currentRow">
+           <number>0</number>
+          </property>
+          <item>
+           <property name="text">
+            <string>연동</string>
+           </property>
+          </item>
+          <item>
+           <property name="text">
+            <string>알림</string>
+           </property>
+          </item>
+          <item>
+           <property name="text">
+            <string>배송추적</string>
+           </property>
+          </item>
+          <item>
+           <property name="text">
+            <string>주문·사은품</string>
+           </property>
+          </item>
+          <item>
+           <property name="text">
+            <string>DB 동기화</string>
+           </property>
+          </item>
+          <item>
+           <property name="text">
+            <string>프로그램</string>
+           </property>
+          </item>
+
+         </widget>
+        </item>
+        <item>
+         <widget class="Line" name="line_settings_nav">
+          <property name="orientation">
+           <enum>Qt::Orientation::Vertical</enum>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QStackedWidget" name="stackedWidget_settings">
+          <property name="currentIndex">
+           <number>0</number>
+          </property>
+          <widget class="QScrollArea" name="scrollArea_settings_integration">
+           <property name="frameShape">
+            <enum>QFrame::Shape::NoFrame</enum>
+           </property>
+           <property name="widgetResizable">
+            <bool>true</bool>
+           </property>
+           <widget class="QWidget" name="page_settings_integration">
+            <property name="maximumSize">
+             <size><width>620</width><height>16777215</height></size>
+            </property>
+           <layout class="QVBoxLayout" name="verticalLayout_settings_integration">
+            <property name="spacing"><number>10</number></property>
+            <property name="leftMargin"><number>12</number></property>
+            <property name="topMargin"><number>8</number></property>
+            <property name="rightMargin"><number>12</number></property>
+            <property name="bottomMargin"><number>12</number></property>
+            <item>
+             <widget class="QGroupBox" name="groupBox_google_sheets">
+              <property name="title">
+               <string>연동 · Google Sheets</string>
+              </property>
+              <layout class="QVBoxLayout" name="verticalLayout_google_sheets">
+               <item>
+                <widget class="QLabel" name="label_google_auth_status">
+                 <property name="text">
+                  <string>상태를 불러오는 중…</string>
+                 </property>
+                 <property name="wordWrap">
+                  <bool>true</bool>
+                 </property>
+                 <property name="alignment">
+                  <set>Qt::AlignmentFlag::AlignLeft|Qt::AlignmentFlag::AlignTop</set>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <layout class="QHBoxLayout" name="horizontalLayout_google_buttons">
+                 <item>
+                  <widget class="QPushButton" name="pushButton_google_reauth">
+                   <property name="text">
+                    <string>재인증</string>
+                   </property>
+                   <property name="toolTip">
+                    <string>저장된 로그인을 지우고 브라우저에서 다시 Google 계정 연결</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QPushButton" name="pushButton_google_disconnect">
+                   <property name="text">
+                    <string>연결 해제</string>
+                   </property>
+                   <property name="toolTip">
+                    <string>이 PC의 token.json만 삭제합니다. (계정 비밀번호 변경과는 별개)</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QPushButton" name="pushButton_google_open_oauth_folder">
+                   <property name="text">
+                    <string>인증 폴더 열기</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <spacer name="horizontalSpacer_google_buttons">
+                   <property name="orientation">
+                    <enum>Qt::Orientation::Horizontal</enum>
+                   </property>
+                   <property name="sizeHint" stdset="0">
+                    <size>
+                     <width>10</width>
+                     <height>20</height>
+                    </size>
+                   </property>
+                  </spacer>
+                 </item>
+                </layout>
+               </item>
+               <item>
+                <widget class="QLabel" name="label_google_auth_tip">
+                 <property name="font">
+                  <font>
+                   <family>맑은 고딕</family>
+                   <pointsize>8</pointsize>
+                  </font>
+                 </property>
+                 <property name="text">
+                  <string>invalid_scope 등 Google 인증 오류가 나면 「연결 해제」 후 「재인증」을 눌러 주세요. (google-oauth 폴더의 token.json 갱신)</string>
+                 </property>
+                 <property name="wordWrap">
+                  <bool>true</bool>
+                 </property>
+                 <property name="styleSheet">
+                  <string>color: #888;</string>
+                 </property>
+                </widget>
+               </item>
+              </layout>
+             </widget>
+            </item>
+            <item>
+             <widget class="QGroupBox" name="groupBox_api_keys">
+              <property name="title">
+               <string>연동 · API 키 (관리자)</string>
+              </property>
+              <layout class="QVBoxLayout" name="verticalLayout_api_keys">
+               <item>
+                <widget class="QLabel" name="label_settings_api_status">
+                 <property name="text">
+                  <string>상태 확인 중…</string>
+                 </property>
+                 <property name="wordWrap">
+                  <bool>true</bool>
+                 </property>
+                 <property name="styleSheet">
+                  <string>color: #888;</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <layout class="QHBoxLayout" name="horizontalLayout_api_keys">
+                 <item>
+                  <widget class="QPushButton" name="pushButton_cfg_kpost_key">
+                   <property name="text">
+                    <string>우체국 종추적 키</string>
+                   </property>
+                   <property name="toolTip">
+                    <string>공유 우체국 국내우편물 종추적 인증키를 등록하거나 변경합니다.</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QPushButton" name="pushButton_cfg_slack_webhook">
+                   <property name="text">
+                    <string>슬랙 Webhook</string>
+                   </property>
+                   <property name="toolTip">
+                    <string>관리자용: 슬랙 알림 Webhook URL 설정(전원 공유).</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QPushButton" name="pushButton_cfg_naver_key">
+                   <property name="text">
+                    <string>네이버 키</string>
+                   </property>
+                   <property name="toolTip">
+                    <string>관리자용: 네이버 커머스API client_id/secret 입력(검증 후 전원 공유).</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QPushButton" name="pushButton_cfg_coupang_key">
+                   <property name="text">
+                    <string>쿠팡 키</string>
+                   </property>
+                   <property name="toolTip">
+                    <string>관리자용: 쿠팡 WING OpenAPI vendorId/accessKey/secretKey 입력(검증 후 전원 공유).</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <spacer name="horizontalSpacer_api_keys">
+                   <property name="orientation">
+                    <enum>Qt::Orientation::Horizontal</enum>
+                   </property>
+                   <property name="sizeHint" stdset="0">
+                    <size>
+                     <width>10</width>
+                     <height>20</height>
+                    </size>
+                   </property>
+                  </spacer>
+                 </item>
+                </layout>
+               </item>
+               <item alignment="Qt::AlignLeft">
+                <widget class="QPushButton" name="pushButton_cfg_kpost_postcode_key">
+                 <property name="text">
+                  <string>주소 검색용 우편번호 API 키</string>
+                 </property>
+                 <property name="toolTip">
+                  <string>단건 송장의 주소 검색과 우편번호 조회에 사용할 우체국 인증키를 공유 시트에 등록합니다.</string>
+                 </property>
+                </widget>
+               </item>
+              </layout>
+             </widget>
+            </item>
+            <item>
+             <spacer name="verticalSpacer_settings_integration">
+              <property name="orientation">
+               <enum>Qt::Orientation::Vertical</enum>
+              </property>
+              <property name="sizeHint" stdset="0">
+               <size><width>20</width><height>0</height></size>
+              </property>
+             </spacer>
+            </item>
+           </layout>
+           </widget>
+          </widget>
+          <widget class="QScrollArea" name="scrollArea_settings_alerts">
+           <property name="frameShape">
+            <enum>QFrame::Shape::NoFrame</enum>
+           </property>
+           <property name="widgetResizable">
+            <bool>true</bool>
+           </property>
+           <widget class="QWidget" name="page_settings_alerts">
+            <property name="maximumSize">
+             <size><width>620</width><height>16777215</height></size>
+            </property>
+           <layout class="QVBoxLayout" name="verticalLayout_settings_alerts">
+            <property name="spacing"><number>10</number></property>
+            <property name="leftMargin"><number>12</number></property>
+            <property name="topMargin"><number>8</number></property>
+            <property name="rightMargin"><number>12</number></property>
+            <property name="bottomMargin"><number>12</number></property>
+            <item>
+             <widget class="QWidget" name="widget_settings_alerts_host" native="true">
+              <layout class="QVBoxLayout" name="verticalLayout_widget_settings_alerts_host">
+               <property name="spacing"><number>10</number></property>
+               <property name="leftMargin"><number>0</number></property>
+               <property name="topMargin"><number>0</number></property>
+               <property name="rightMargin"><number>0</number></property>
+               <property name="bottomMargin"><number>0</number></property>
+              </layout>
+             </widget>
+            </item>
+            <item>
+             <spacer name="verticalSpacer_settings_alerts">
+              <property name="orientation">
+               <enum>Qt::Orientation::Vertical</enum>
+              </property>
+              <property name="sizeHint" stdset="0">
+               <size><width>20</width><height>0</height></size>
+              </property>
+             </spacer>
+            </item>
+           </layout>
+           </widget>
+          </widget>
+          <widget class="QScrollArea" name="scrollArea_settings_tracking">
+           <property name="frameShape">
+            <enum>QFrame::Shape::NoFrame</enum>
+           </property>
+           <property name="widgetResizable">
+            <bool>true</bool>
+           </property>
+           <widget class="QWidget" name="page_settings_tracking">
+            <property name="maximumSize">
+             <size><width>620</width><height>16777215</height></size>
+            </property>
+           <layout class="QVBoxLayout" name="verticalLayout_settings_tracking">
+            <property name="spacing"><number>10</number></property>
+            <property name="leftMargin"><number>12</number></property>
+            <property name="topMargin"><number>8</number></property>
+            <property name="rightMargin"><number>12</number></property>
+            <property name="bottomMargin"><number>12</number></property>
+            <item>
+             <widget class="QWidget" name="widget_settings_tracking_host" native="true">
+              <layout class="QVBoxLayout" name="verticalLayout_widget_settings_tracking_host">
+               <property name="spacing"><number>10</number></property>
+               <property name="leftMargin"><number>0</number></property>
+               <property name="topMargin"><number>0</number></property>
+               <property name="rightMargin"><number>0</number></property>
+               <property name="bottomMargin"><number>0</number></property>
+              </layout>
+             </widget>
+            </item>
+            <item>
+             <spacer name="verticalSpacer_settings_tracking">
+              <property name="orientation">
+               <enum>Qt::Orientation::Vertical</enum>
+              </property>
+              <property name="sizeHint" stdset="0">
+               <size><width>20</width><height>0</height></size>
+              </property>
+             </spacer>
+            </item>
+           </layout>
+           </widget>
+          </widget>
+          <widget class="QScrollArea" name="scrollArea_settings_orders">
+           <property name="frameShape">
+            <enum>QFrame::Shape::NoFrame</enum>
+           </property>
+           <property name="widgetResizable">
+            <bool>true</bool>
+           </property>
+           <widget class="QWidget" name="page_settings_orders">
+            <property name="maximumSize">
+             <size><width>620</width><height>16777215</height></size>
+            </property>
+           <layout class="QVBoxLayout" name="verticalLayout_settings_orders">
+            <property name="spacing"><number>10</number></property>
+            <property name="leftMargin"><number>12</number></property>
+            <property name="topMargin"><number>8</number></property>
+            <property name="rightMargin"><number>12</number></property>
+            <property name="bottomMargin"><number>12</number></property>
+            <item>
+             <widget class="QGroupBox" name="groupBox_order_index">
+              <property name="title">
+               <string>주문번호 시작값 (스토어별)</string>
+              </property>
+              <layout class="QVBoxLayout" name="verticalLayout_order_index">
+               <item>
+                <layout class="QFormLayout" name="formLayout_order_index">
+                 <property name="fieldGrowthPolicy">
+                  <enum>QFormLayout::FieldGrowthPolicy::FieldsStayAtSizeHint</enum>
+                 </property>
+                 <item row="0" column="0">
+                  <widget class="QLabel" name="label_3">
+                   <property name="text">
+                    <string>네이버</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item row="0" column="1">
+                  <widget class="QLineEdit" name="lineEdit_idx_naver">
+                   <property name="maximumSize">
+                    <size>
+                     <width>70</width>
+                     <height>16777215</height>
+                    </size>
+                   </property>
+                  </widget>
+                 </item>
+                 <item row="1" column="0">
+                  <widget class="QLabel" name="label_4">
+                   <property name="text">
+                    <string>쿠팡</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item row="1" column="1">
+                  <widget class="QLineEdit" name="lineEdit_idx_coupang">
+                   <property name="maximumSize">
+                    <size>
+                     <width>70</width>
+                     <height>16777215</height>
+                    </size>
+                   </property>
+                  </widget>
+                 </item>
+                 <item row="2" column="0">
+                  <widget class="QLabel" name="label_5">
+                   <property name="text">
+                    <string>지마켓</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item row="2" column="1">
+                  <widget class="QLineEdit" name="lineEdit_idx_gmarket">
+                   <property name="maximumSize">
+                    <size>
+                     <width>70</width>
+                     <height>16777215</height>
+                    </size>
+                   </property>
+                  </widget>
+                 </item>
+                 <item row="3" column="0">
+                  <widget class="QLabel" name="label_idx_11st">
+                   <property name="text">
+                    <string>11번가</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item row="3" column="1">
+                  <widget class="QLineEdit" name="lineEdit_idx_11st">
+                   <property name="maximumSize">
+                    <size>
+                     <width>70</width>
+                     <height>16777215</height>
+                    </size>
+                   </property>
+                  </widget>
+                 </item>
+                </layout>
+               </item>
+               <item>
+                <layout class="QHBoxLayout" name="horizontalLayout_index_refresh">
+                 <item>
+                  <widget class="QPushButton" name="pushButton_index_sheet_refresh">
+                   <property name="text">
+                    <string>스프레드시트에서 다시 읽기</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QPushButton" name="pushButton_index_undo">
+                   <property name="text">
+                    <string>마지막 변경 되돌리기</string>
+                   </property>
+                   <property name="toolTip">
+                    <string>오늘 마지막 인덱스 변경(실수로 올라간 값 등)을 직전 값으로 1클릭 복구합니다. 전원 적용.</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <spacer name="horizontalSpacer_index_refresh">
+                   <property name="orientation">
+                    <enum>Qt::Orientation::Horizontal</enum>
+                   </property>
+                   <property name="sizeHint" stdset="0">
+                    <size>
+                     <width>10</width>
+                     <height>20</height>
+                    </size>
+                   </property>
+                  </spacer>
+                 </item>
+                </layout>
+               </item>
+               <item>
+                <widget class="QLabel" name="label_index_sheet_sync">
+                 <property name="text">
+                  <string>스프레드시트 동기화 상태</string>
+                 </property>
+                 <property name="wordWrap">
+                  <bool>true</bool>
+                 </property>
+                 <property name="styleSheet">
+                  <string>color: #888;</string>
+                 </property>
+                </widget>
+               </item>
+              </layout>
+             </widget>
+            </item>
+            <item>
+             <widget class="QGroupBox" name="groupBox_gift_event">
+              <property name="title">
+               <string>사은품 이벤트</string>
+              </property>
+              <layout class="QHBoxLayout" name="horizontalLayout_gift_event">
+               <item>
+                <widget class="QPushButton" name="pushButton_gift_event_settings">
+                 <property name="text">
+                  <string>구간 설정</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QPushButton" name="pushButton_gift_history">
+                 <property name="text">
+                  <string>일별 집계 · 엑셀</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <spacer name="horizontalSpacer_gift_event">
+                 <property name="orientation"><enum>Qt::Orientation::Horizontal</enum></property>
+                 <property name="sizeHint" stdset="0"><size><width>20</width><height>20</height></size></property>
+                </spacer>
+               </item>
+              </layout>
+             </widget>
+            </item>
+            <item>
+             <spacer name="verticalSpacer_settings_orders">
+              <property name="orientation">
+               <enum>Qt::Orientation::Vertical</enum>
+              </property>
+              <property name="sizeHint" stdset="0">
+               <size><width>20</width><height>0</height></size>
+              </property>
+             </spacer>
+            </item>
+           </layout>
+           </widget>
+          </widget>
+          <widget class="QScrollArea" name="scrollArea_settings_db_sync">
+           <property name="frameShape">
+            <enum>QFrame::Shape::NoFrame</enum>
+           </property>
+           <property name="widgetResizable">
+            <bool>true</bool>
+           </property>
+           <widget class="QWidget" name="page_settings_db_sync">
+            <property name="maximumSize">
+             <size><width>620</width><height>16777215</height></size>
+            </property>
+            <layout class="QVBoxLayout" name="verticalLayout_db_sync">
+             <property name="spacing">
+              <number>8</number>
+             </property>
+             <property name="leftMargin">
+              <number>12</number>
+             </property>
+             <property name="topMargin">
+              <number>8</number>
+             </property>
+             <property name="rightMargin">
+              <number>12</number>
+             </property>
+             <property name="bottomMargin">
+              <number>8</number>
+             </property>
+             <item>
+              <widget class="QLabel" name="label_db_sync_intro">
+               <property name="text">
+                <string>기본은 database 폴더에서 최신 Product_*.csv·price_inventory_*.xlsx를 찾습니다.&#10;각 행 끝 「직접지정」으로 다른 위치의 파일을 지정할 수 있습니다(새로고침 시 자동 탐지로 복귀).&#10;구글 시트의 네이버·쿠팡 탭에 아직 없는 상품만 행으로 추가하며, 기존 행의 가격·재고는 갱신하지 않습니다.</string>
+               </property>
+               <property name="wordWrap">
+                <bool>true</bool>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <layout class="QHBoxLayout" name="horizontalLayout_db_naver_row">
+               <property name="spacing">
+                <number>8</number>
+               </property>
+               <item>
+                <widget class="QCheckBox" name="checkBox_db_sync_naver">
+                 <property name="text">
+                  <string/>
+                 </property>
+                 <property name="checked">
+                  <bool>true</bool>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QLabel" name="label_db_sync_naver_file">
+                 <property name="sizePolicy">
+                  <sizepolicy hsizetype="Expanding" vsizetype="Preferred">
+                   <horstretch>1</horstretch>
+                   <verstretch>0</verstretch>
+                  </sizepolicy>
+                 </property>
+                 <property name="text">
+                  <string>네이버 DB [ — ] : (없음)</string>
+                 </property>
+                 <property name="wordWrap">
+                  <bool>true</bool>
+                 </property>
+                 <property name="textInteractionFlags">
+                  <set>Qt::TextInteractionFlag::TextSelectableByMouse</set>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QPushButton" name="pushButton_db_sync_naver_browse">
+                 <property name="sizePolicy">
+                  <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+                   <horstretch>0</horstretch>
+                   <verstretch>0</verstretch>
+                  </sizepolicy>
+                 </property>
+                 <property name="minimumSize">
+                  <size>
+                   <width>72</width>
+                   <height>0</height>
+                  </size>
+                 </property>
+                 <property name="text">
+                  <string>직접지정</string>
+                 </property>
+                 <property name="toolTip">
+                  <string>CSV 파일을 직접 선택합니다. 새로고침을 누르면 database 폴더 자동 탐지로 돌아갑니다.</string>
+                 </property>
+                </widget>
+               </item>
+              </layout>
+             </item>
+             <item>
+              <layout class="QHBoxLayout" name="horizontalLayout_db_coupang_row">
+               <property name="spacing">
+                <number>8</number>
+               </property>
+               <item>
+                <widget class="QCheckBox" name="checkBox_db_sync_coupang">
+                 <property name="text">
+                  <string/>
+                 </property>
+                 <property name="checked">
+                  <bool>true</bool>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QLabel" name="label_db_sync_coupang_file">
+                 <property name="sizePolicy">
+                  <sizepolicy hsizetype="Expanding" vsizetype="Preferred">
+                   <horstretch>1</horstretch>
+                   <verstretch>0</verstretch>
+                  </sizepolicy>
+                 </property>
+                 <property name="text">
+                  <string>쿠팡 DB [ — ] : (없음)</string>
+                 </property>
+                 <property name="wordWrap">
+                  <bool>true</bool>
+                 </property>
+                 <property name="textInteractionFlags">
+                  <set>Qt::TextInteractionFlag::TextSelectableByMouse</set>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QPushButton" name="pushButton_db_sync_coupang_browse">
+                 <property name="sizePolicy">
+                  <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+                   <horstretch>0</horstretch>
+                   <verstretch>0</verstretch>
+                  </sizepolicy>
+                 </property>
+                 <property name="minimumSize">
+                  <size>
+                   <width>72</width>
+                   <height>0</height>
+                  </size>
+                 </property>
+                 <property name="text">
+                  <string>직접지정</string>
+                 </property>
+                 <property name="toolTip">
+                  <string>엑셀(.xlsx) 파일을 직접 선택합니다. 새로고침을 누르면 database 폴더 자동 탐지로 돌아갑니다.</string>
+                 </property>
+                </widget>
+               </item>
+              </layout>
+             </item>
+             <item>
+              <layout class="QHBoxLayout" name="horizontalLayout_db_options">
+               <property name="spacing">
+                <number>20</number>
+               </property>
+               <item>
+                <widget class="QCheckBox" name="checkBox_db_sync_preview">
+                 <property name="sizePolicy">
+                  <sizepolicy hsizetype="Minimum" vsizetype="Fixed">
+                   <horstretch>0</horstretch>
+                   <verstretch>0</verstretch>
+                  </sizepolicy>
+                 </property>
+                 <property name="text">
+                  <string>테스트 모드 (적용 안함)</string>
+                 </property>
+                 <property name="checked">
+                  <bool>false</bool>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QCheckBox" name="checkBox_db_sync_verbose_log">
+                 <property name="toolTip">
+                  <string>체크 시 기존·실시간 DB 샘플, 신제품 행 목록, 서식·교차 색상 적용 등 상세 메시지를 표시합니다. 끄면 결과·건수·요약 위주로만 표시합니다.</string>
+                 </property>
+                 <property name="text">
+                  <string>로그 출력 (상세)</string>
+                 </property>
+                 <property name="checked">
+                  <bool>false</bool>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <spacer name="horizontalSpacer_db_options">
+                 <property name="orientation">
+                  <enum>Qt::Orientation::Horizontal</enum>
+                 </property>
+                 <property name="sizeHint" stdset="0">
+                  <size>
+                   <width>0</width>
+                   <height>0</height>
+                  </size>
+                 </property>
+                 <property name="sizeType">
+                  <enum>QSizePolicy::Policy::Expanding</enum>
+                 </property>
+                </spacer>
+               </item>
+              </layout>
+             </item>
+             <item>
+              <layout class="QHBoxLayout" name="horizontalLayout_db_run">
+               <property name="spacing">
+                <number>10</number>
+               </property>
+               <item>
+                <widget class="QPushButton" name="pushButton_db_sync_refresh_paths">
+                 <property name="sizePolicy">
+                  <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+                   <horstretch>0</horstretch>
+                   <verstretch>0</verstretch>
+                  </sizepolicy>
+                 </property>
+                 <property name="minimumSize">
+                  <size>
+                   <width>140</width>
+                   <height>36</height>
+                  </size>
+                 </property>
+                 <property name="maximumSize">
+                  <size>
+                   <width>140</width>
+                   <height>16777215</height>
+                  </size>
+                 </property>
+                 <property name="text">
+                  <string>새로고침</string>
+                 </property>
+                 <property name="toolTip">
+                  <string>수동으로 고른 파일 지정을 해제하고, database 폴더에서 네이버·쿠팡 최신 파일 경로를 다시 찾아 라벨을 갱신합니다.</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QPushButton" name="pushButton_db_sync_run">
+                 <property name="sizePolicy">
+                  <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+                   <horstretch>0</horstretch>
+                   <verstretch>0</verstretch>
+                  </sizepolicy>
+                 </property>
+                 <property name="minimumSize">
+                  <size>
+                   <width>140</width>
+                   <height>36</height>
+                  </size>
+                 </property>
+                 <property name="maximumSize">
+                  <size>
+                   <width>140</width>
+                   <height>16777215</height>
+                  </size>
+                 </property>
+                 <property name="text">
+                  <string>실행</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <spacer name="horizontalSpacer_db_run_trailing">
+                 <property name="orientation">
+                  <enum>Qt::Orientation::Horizontal</enum>
+                 </property>
+                 <property name="sizeHint" stdset="0">
+                  <size>
+                   <width>0</width>
+                   <height>0</height>
+                  </size>
+                 </property>
+                 <property name="sizeType">
+                  <enum>QSizePolicy::Policy::Expanding</enum>
+                 </property>
+                </spacer>
+               </item>
+              </layout>
+             </item>
+             <item>
+              <widget class="QPlainTextEdit" name="plainTextEdit_db_sync_log">
+               <property name="readOnly">
+                <bool>true</bool>
+               </property>
+               <property name="minimumSize">
+                <size>
+                 <width>0</width>
+                 <height>200</height>
+                </size>
+               </property>
+               <property name="placeholderText">
+                <string>실행 결과 로그가 여기에 표시됩니다.</string>
+               </property>
+              </widget>
+             </item>
+            </layout>
+           </widget>
+          </widget>
+          <widget class="QScrollArea" name="scrollArea_settings_program">
+           <property name="frameShape">
+            <enum>QFrame::Shape::NoFrame</enum>
+           </property>
+           <property name="widgetResizable">
+            <bool>true</bool>
+           </property>
+           <widget class="QWidget" name="page_settings_program">
+            <property name="maximumSize">
+             <size><width>620</width><height>16777215</height></size>
+            </property>
+           <layout class="QVBoxLayout" name="verticalLayout_settings_program">
+            <property name="spacing"><number>10</number></property>
+            <property name="leftMargin"><number>12</number></property>
+            <property name="topMargin"><number>8</number></property>
+            <property name="rightMargin"><number>12</number></property>
+            <property name="bottomMargin"><number>12</number></property>
+            <item>
+             <widget class="QGroupBox" name="groupBox_app_version">
+              <property name="title">
+               <string>프로그램 버전</string>
+              </property>
+              <layout class="QVBoxLayout" name="verticalLayout_app_version">
+               <item>
+                <widget class="QLabel" name="label_app_version">
+                 <property name="text">
+                  <string>현재 버전 확인 중…</string>
+                 </property>
+                 <property name="wordWrap">
+                  <bool>true</bool>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QCheckBox" name="checkBox_ignore_version_update">
+                 <property name="text">
+                  <string>새 버전 안내 무시</string>
+                 </property>
+                 <property name="toolTip">
+                  <string>이 PC에서 「새 버전 안내」 창을 띄우지 않습니다. 공유 시트가 요구하는 최소 버전보다 낮아 시트 쓰기가 멈춘 경우의 안내는 계속 표시됩니다.</string>
+                 </property>
+                 <property name="checked">
+                  <bool>false</bool>
+                 </property>
+                </widget>
+               </item>
+              </layout>
+             </widget>
+            </item>
+            <item>
+             <spacer name="verticalSpacer_settings_program">
+              <property name="orientation">
+               <enum>Qt::Orientation::Vertical</enum>
+              </property>
+              <property name="sizeHint" stdset="0">
+               <size><width>20</width><height>0</height></size>
+              </property>
+             </spacer>
+            </item>
+           </layout>
+           </widget>
+          </widget>
+
+         </widget>
+        </item>
+       </layout>
+      </widget>
+
      </widget>
     </item>
    </layout>

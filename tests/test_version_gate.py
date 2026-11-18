@@ -344,7 +344,7 @@ class StartupNoticeTests(unittest.TestCase):
         self.assertIsNotNone(box)
         checked = box.find("./property[@name='checked']/bool")
         self.assertTrue(checked is None or checked.text == "false")
-        self.assertIsNotNone(tree.find(".//widget[@name='tab_2']//widget[@name='checkBox_ignore_version_update']"))
+        self.assertIsNotNone(tree.find(".//widget[@name='scrollArea_settings_program']//widget[@name='checkBox_ignore_version_update']"))
 
 
 if __name__ == "__main__":

@@ -1175,7 +1175,7 @@ def run_naver_order_fetch_worker(days):
         if not (client_id and client_secret):
             return {"ok": False,
                     "error": "네이버 client_id/secret 이 설정되지 않았습니다. "
-                             "관리자 「키 설정」에서 등록하세요."}
+                             "「⚙ 설정 › 연동」의 API 키에서 등록하세요."}
         now_dt = datetime.now()
         from_dt = now_dt - timedelta(days=max(1, int(days)))
         rows = naver_commerce.fetch_orders_for_shipping(
@@ -1231,7 +1231,7 @@ def run_naver_product_search_worker(query):
             if not (client_id and client_secret):
                 return _document_product_search_failure(
                     stage,
-                    "네이버 client_id/secret 이 설정되지 않았습니다. 관리자 ‘키 설정’에서 등록하세요.",
+                    "네이버 client_id/secret 이 설정되지 않았습니다. 「⚙ 설정 › 연동」의 API 키에서 등록하세요.",
                 )
             stage = "네이버 토큰 발급"
             token = naver_commerce.get_access_token(client_id, client_secret)
@@ -1268,7 +1268,7 @@ def run_naver_order_lookup_worker(order_id):
         if not (client_id and client_secret):
             return {
                 "ok": False,
-                "error": "네이버 client_id/secret 이 설정되지 않았습니다. 관리자 ‘키 설정’에서 등록하세요.",
+                "error": "네이버 client_id/secret 이 설정되지 않았습니다. 「⚙ 설정 › 연동」의 API 키에서 등록하세요.",
             }
         token = naver_commerce.get_access_token(client_id, client_secret)
         order = naver_commerce.fetch_order_for_transaction_statement(token, normalized_order_id)
@@ -1300,7 +1300,7 @@ def run_coupang_order_lookup_worker(order_id):
         if not (vendor_id and access_key and secret_key):
             return {
                 "ok": False,
-                "error": "쿠팡 vendorId/accessKey/secretKey가 설정되지 않았습니다. 관리자 ‘키 설정’에서 등록하세요.",
+                "error": "쿠팡 vendorId/accessKey/secretKey가 설정되지 않았습니다. 「⚙ 설정 › 연동」의 API 키에서 등록하세요.",
             }
         order = coupang_commerce.fetch_order_for_transaction_statement(
             vendor_id, access_key, secret_key, normalized_order_id
@@ -3464,7 +3464,7 @@ class MainWindow(QMainWindow):
 
     def load_app_settings(self):
         """앱 설정 로드. (일괄 발송 자동 생성은 상시 ON으로 고정 — 설정 항목 없음)"""
-        # 슬랙 상태 텍스트 갱신(자동 알림·정체기준은 관리자 탭에서 로드)
+        # 슬랙 상태 텍스트 갱신(자동 알림·정체기준은 설정 탭에서 로드)
         self._refresh_slack_status()
 
     def _stale_threshold(self, category):
@@ -3550,7 +3550,7 @@ class MainWindow(QMainWindow):
         return t
 
     def _update_status_displays(self):
-        """밖(작은 한 줄)·팝업 라벨·환경설정 탭 API키 상태를 함께 갱신."""
+        """밖(작은 한 줄)·팝업 라벨·설정 탭 API키 상태를 함께 갱신."""
         if hasattr(self.ui, "label_tracking_status_compact"):
             self.ui.label_tracking_status_compact.setText(
                 f"우체국 API: {self._key_status_short()}  ·  슬랙: {self._slack_status_text}"
@@ -3570,10 +3570,12 @@ class MainWindow(QMainWindow):
         return self._tracking_controller.show_help()
 
     def _build_admin_tracking_settings(self):
-        """배송추적 운영 토글·알림·위험 판정 기준을 「관리자」 탭에 구성(기존 팝업 대체).
+        """슬랙·문의 알림은 「설정 › 알림」, 위험 판정 기준·자동 새로고침은 「설정 › 배송추적」에 구성.
         시작 시 1회 호출. PC별 토글은 '이 PC' 라벨로 구분, 공유 튜닝값은 전원 적용."""
-        host = getattr(self.ui, "widget_admin_tracking", None)
-        if host is None or host.layout() is None or self._admin_tracking_built:
+        host = getattr(self.ui, "widget_settings_alerts_host", None)
+        tracking_host = getattr(self.ui, "widget_settings_tracking_host", None)
+        if (host is None or host.layout() is None or tracking_host is None
+                or tracking_host.layout() is None or self._admin_tracking_built):
             return
         outer = host.layout()
         self._admin_tracking_built = True
@@ -3601,7 +3603,7 @@ class MainWindow(QMainWindow):
         btn_npoll = QPushButton("지금 확인")
         btn_npoll.setToolTip(
             "토글과 무관하게 지금 한 번 조회합니다. "
-            "네이버·쿠팡 키 입력은 위 「연동 · API 키」에서 합니다.")
+            "네이버·쿠팡 키 입력은 「설정 › 연동」의 API 키에서 합니다.")
         btn_npoll.clicked.connect(self._on_naver_inquiry_manual_poll)
         nrow.addWidget(self._dlg_naver_enable)
         nrow.addStretch(1)
@@ -3633,7 +3635,7 @@ class MainWindow(QMainWindow):
         ndl.addLayout(hrow)
         outer.addWidget(gb_naver)
 
-        self._tracking_controller.build_admin_risk_controls(outer)
+        self._tracking_controller.build_admin_risk_controls(tracking_host.layout())
 
         self._update_naver_inquiry_status_label()
         self._update_status_displays()
@@ -3859,7 +3861,7 @@ class MainWindow(QMainWindow):
     def _update_naver_inquiry_status_label(self):
         if self._dlg_naver_status is not None:
             self._dlg_naver_status.setText(f"문의 알림: {self._naver_inquiry_status_text}")
-        # 환경설정 탭 API키 상태 줄에도 문의 키 상태를 반영
+        # 설정 탭 API키 상태 줄에도 문의 키 상태를 반영
         if hasattr(self.ui, "label_settings_api_status"):
             self._update_status_displays()
 
@@ -4561,14 +4563,14 @@ class MainWindow(QMainWindow):
         )
 
     def _apply_tab_order(self):
-        """합의된 7개 상위 탭 순서를 런타임에서 보장합니다.
+        """합의된 6개 상위 탭 순서를 런타임에서 보장합니다.
         (UI 파일의 정의 순서와 무관하게 런타임에서 보장)"""
         tw = getattr(self.ui, "tabWidget", None)
         if tw is None:
             return
         desired = [
             "tab", "tab_tracking", "tab_quick_invoice", "tab_documents",
-            "tab_detail_page", "tab_db_sheet_sync", "tab_admin", "tab_2",
+            "tab_detail_page", "tab_settings",
         ]
         bar = tw.tabBar()
         for target in range(len(desired)):
@@ -4693,7 +4695,7 @@ class MainWindow(QMainWindow):
             "새 버전 안내", QMessageBox.Information,
             f"현재 {APP_VERSION} → 새 버전 {html.escape(latest)}",
             "다른 PC에서 새 버전을 쓰고 있습니다. <b>업데이트 전에도 계속 사용할 수 있습니다.</b>",
-            "<p>「환경설정」→「프로그램 버전」에서 이 안내를 끌 수 있습니다.</p>",
+            "<p>「⚙ 설정」→「프로그램」에서 이 안내를 끌 수 있습니다.</p>",
         )
         snooze = box.addButton("오늘 더 이상 묻지 않음", QMessageBox.ActionRole)
         close = box.addButton("닫기", QMessageBox.RejectRole)
@@ -5858,7 +5860,7 @@ class MainWindow(QMainWindow):
         self._setup_order_ship_drop_targets()
         # 「생성」 버튼/체크박스 제거: 송장 로드 성공 시 자동 생성(상시).
 
-        # 관리자 사은품 이벤트와 환경설정 탭 버튼 연결
+        # 설정 탭(주문·사은품, 프로그램) 버튼 연결
         self._gift_history_sync = GiftHistorySync(
             _open_gift_history_spreadsheet, GiftRecordOutbox(Path("database") / "gift_history.sqlite3"), self,
         )
@@ -5879,7 +5881,7 @@ class MainWindow(QMainWindow):
         self._mount_quick_excel_inline()
         if hasattr(self.ui, "pushButton_quick_excel_reset"):
             self.ui.pushButton_quick_excel_reset.clicked.connect(self._reset_quick_excel_fields)
-        # 관리자 탭의 연동·API 키 버튼을 연결한다.
+        # 설정 › 연동의 API 키 버튼을 연결한다.
         for _bn, _h in (("pushButton_cfg_kpost_key", self._on_tracking_key_edit_clicked),
                         ("pushButton_cfg_kpost_postcode_key", self._on_kpost_postcode_key_edit_clicked),
                         ("pushButton_cfg_slack_webhook", self._on_slack_config_clicked),
@@ -5887,7 +5889,7 @@ class MainWindow(QMainWindow):
                         ("pushButton_cfg_coupang_key", self._on_coupang_creds_edit_clicked)):
             if hasattr(self.ui, _bn):
                 getattr(self.ui, _bn).clicked.connect(_h)
-        # 키 검증 중 비활성화 대상 버튼을 환경설정 탭 버튼으로 지정
+        # 키 검증 중 비활성화 대상 버튼을 설정 탭 버튼으로 지정
         if hasattr(self.ui, "pushButton_cfg_kpost_key"):
             self._dlg_key_btn = self.ui.pushButton_cfg_kpost_key
         if hasattr(self.ui, 'comboBox_store_select'):
@@ -5920,7 +5922,8 @@ class MainWindow(QMainWindow):
         self.ui.actionAbout.triggered.connect(self.show_about)
 
         self._tracking_controller.bind_ui()
-        # 배송추적 설정은 「관리자」 탭에 상시 구성(팝업·설정 버튼 제거). 시작 시 1회 빌드.
+        self._setup_settings_tab()
+        # 배송추적·알림 설정은 「설정」 탭 페이지에 상시 구성(팝업·설정 버튼 제거). 시작 시 1회 빌드.
         self._build_admin_tracking_settings()
         # 주문·발송 탭 초기 상태: 앱 로고 + 회색 상태 텍스트 + 생성 버튼 비활성
         self._reset_idle_logo()
@@ -6405,14 +6408,61 @@ class MainWindow(QMainWindow):
         except Exception as e:
             self.ui.label_google_auth_status.setText(f"상태를 표시할 수 없습니다.\n{e}")
 
+    def _setup_settings_tab(self):
+        """「설정」 탭: 왼쪽 분류 목록과 오른쪽 페이지(QStackedWidget)를 잇는다."""
+        nav = getattr(self.ui, "listWidget_settings_nav", None)
+        stack = getattr(self.ui, "stackedWidget_settings", None)
+        if nav is None or stack is None:
+            return
+        # 페이지(스크롤 영역)는 탭 배경색을 그대로 쓴다(내용 폭 밖이 다른 색으로 보이지 않게).
+        for index in range(stack.count()):
+            area = stack.widget(index)
+            if isinstance(area, QScrollArea):
+                area.viewport().setAutoFillBackground(False)
+                if area.widget() is not None:
+                    area.widget().setAutoFillBackground(False)
+        nav.currentRowChanged.connect(self._on_settings_nav_changed)
+        nav.setCurrentRow(0)
+        stack.setCurrentIndex(0)
+
+    def _on_settings_nav_changed(self, row):
+        stack = getattr(self.ui, "stackedWidget_settings", None)
+        if stack is None or row < 0 or row >= stack.count():
+            return
+        stack.setCurrentIndex(row)
+        self._on_settings_page_shown(row)
+
+    def show_settings_page(self, key):
+        """다른 곳에서 「설정」의 특정 분류로 이동한다. key: integration·alerts·tracking·orders·db_sync·program."""
+        stack = getattr(self.ui, "stackedWidget_settings", None)
+        nav = getattr(self.ui, "listWidget_settings_nav", None)
+        tab = getattr(self.ui, "tab_settings", None)
+        if stack is None or nav is None or tab is None:
+            return
+        for index in range(stack.count()):
+            if stack.widget(index).objectName() == f"scrollArea_settings_{key}":
+                self.ui.tabWidget.setCurrentWidget(tab)
+                nav.setCurrentRow(index)
+                return
+
+    def _on_settings_page_shown(self, index):
+        """분류 페이지를 열 때 그 페이지의 상태를 다시 읽는다(페이지 객체 이름으로 분기)."""
+        stack = getattr(self.ui, "stackedWidget_settings", None)
+        page = stack.widget(index) if stack is not None else None
+        name = page.objectName() if page is not None else ""
+        if name == "scrollArea_settings_integration":
+            self._refresh_google_auth_status_ui()
+        elif name == "scrollArea_settings_db_sync":
+            self._refresh_db_sheet_sync_path_labels()
+
     def _on_main_tab_changed(self, index):
         # 탭 순서가 바뀌어도 동작하도록 인덱스가 아닌 objectName으로 분기
         w = self.ui.tabWidget.widget(index) if hasattr(self.ui, "tabWidget") else None
         name = w.objectName() if w is not None else ""
-        if name == "tab_2":
-            self._refresh_google_auth_status_ui()
-        elif name == "tab_db_sheet_sync":
-            self._refresh_db_sheet_sync_path_labels()
+        if name == "tab_settings":
+            stack = getattr(self.ui, "stackedWidget_settings", None)
+            if stack is not None:
+                self._on_settings_page_shown(stack.currentIndex())
         elif name == "tab_tracking":
             self._enter_tracking_tab()
         elif name == "tab_documents":
@@ -6703,7 +6753,7 @@ class MainWindow(QMainWindow):
     @staticmethod
     def _oauth_error_dialog_hint() -> str:
         return (
-            "「환경설정」탭 → 「Google Sheets 연동」에서 "
+            "「⚙ 설정」탭 → 「연동」에서 "
             "「연결 해제」 후 「재인증」을 눌러 보세요."
         )
 
@@ -6808,7 +6858,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(
                 parent,
                 "우편번호 API 키가 없습니다",
-                "「관리자」 탭에서 「주소 검색용 우편번호 API 키」를 등록해 주세요.\n\n"
+                "「⚙ 설정 › 연동」에서 「주소 검색용 우편번호 API 키」를 등록해 주세요.\n\n"
                 "주소와 우편번호를 직접 입력해 엑셀을 만들 수도 있습니다.",
             )
             return
@@ -6817,14 +6867,14 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(
                 parent, "공유 키 확인 실패",
                 "공유 시트에서 우편번호 API 키를 읽지 못했습니다.\n"
-                "「관리자」 탭에서 Google Sheets 연결과 시트 접근 권한을 확인해 주세요.",
+                "「⚙ 설정 › 연동」에서 Google Sheets 연결과 시트 접근 권한을 확인해 주세요.",
             )
             return
 
         if code == "ERR-123":
             msg = (
                 "우체국에서 우편번호 조회용 인증키를 확인하지 못했습니다.\n"
-                "우편번호 조회에 등록된 키를 「관리자」 → 「주소 검색용 우편번호 API 키」에 입력해 주세요."
+                "우편번호 조회에 등록된 키를 「⚙ 설정 › 연동」 → 「주소 검색용 우편번호 API 키」에 입력해 주세요."
             )
 
         QMessageBox.warning(

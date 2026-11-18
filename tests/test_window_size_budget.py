@@ -14,10 +14,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from tools.measure_window_sizes import PAGE_MIN_BUDGET, WINDOW_MIN_BUDGET  # noqa: E402
+from tools.measure_window_sizes import (  # noqa: E402
+    PAGE_MIN_BUDGET, SETTINGS_CONTENT_MAX_WIDTH, WINDOW_MIN_BUDGET,
+)
 
-# 아직 예산을 넘는 탭(B단계 「설정」 탭으로 옮기면 없어진다)
-KNOWN_OVER_BUDGET = {"tab_admin"}
+# 아직 예산을 넘는 탭(옮기거나 줄이기 전까지만 둔다)
+KNOWN_OVER_BUDGET = set()
 
 _cached = None
 
@@ -52,6 +54,12 @@ class WindowSizeBudgetTests(unittest.TestCase):
         # 예외 목록이 실제로 남은 탭만 가리키게 한다(옮긴 뒤에는 목록에서 지운다).
         names = {tab["name"] for tab in measured()["tabs"]}
         self.assertLessEqual(KNOWN_OVER_BUDGET, names)
+
+    def test_settings_pages_need_no_horizontal_scroll(self):
+        pages = measured()["settings_pages"]
+        self.assertEqual(len(pages), 6)
+        wide = {page["name"]: page["content"] for page in pages if page["content"][0] > SETTINGS_CONTENT_MAX_WIDTH}
+        self.assertEqual(wide, {}, f"설정 페이지 내용 폭 {SETTINGS_CONTENT_MAX_WIDTH} 초과(가로 스크롤)")
 
     @unittest.skipIf(KNOWN_OVER_BUDGET, "예산을 넘는 탭이 남아 있는 동안은 창 최소 크기도 넘는다")
     def test_window_minimum_fits_budget(self):

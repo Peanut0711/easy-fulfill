@@ -187,7 +187,7 @@ class TrackingController(QObject):
             self.host, "배송추적 사용 안내",
             "우체국 OpenAPI(종추적조회)로 공유 시트(「송장추적」 탭)의 배송 상태를 갱신합니다.\n"
             "송장 불러오기·일괄발송 시 등기번호가 자동으로 누적됩니다.\n"
-            "종추적 인증키는 「관리자」 탭에서 등록합니다.\n\n"
+            "종추적 인증키는 「⚙ 설정 › 연동」에서 등록합니다.\n\n"
             "※ 표에서 행을 더블클릭하면 해당 등기번호의 우체국 배송조회(상세) 웹페이지가 열립니다.",
         )
 
@@ -1300,7 +1300,7 @@ class TrackingController(QObject):
         self._tracking_config_read_thread = None
 
     def build_admin_slack_controls(self, outer):
-        """관리자 탭에 배송 위험 Slack 알림 제어를 추가한다."""
+        """설정 › 알림 페이지에 배송 위험 Slack 알림 제어를 추가한다."""
         # 슬랙 위험 알림(체크는 PC별, Webhook 설정은 「연동 · API 키」에 있음)
         gb_slack = QGroupBox("슬랙 위험 알림")
         sl = QVBoxLayout(gb_slack)
@@ -1321,7 +1321,7 @@ class TrackingController(QObject):
         outer.addWidget(gb_slack)
 
     def build_admin_risk_controls(self, outer):
-        """관리자 탭에 배송 위험 기준과 자동 갱신 제어를 추가한다."""
+        """설정 › 배송추적 페이지에 배송 위험 기준과 자동 갱신 제어를 추가한다."""
         # 위험 판정 기준(전원 공유). 좁은 컬럼이라 2행으로: 정체기준 3종 / 도서산간 가산.
         gb_risk = QGroupBox("위험 판정 기준 (분류별 정체시간, 영업시간)")
         rv = QVBoxLayout(gb_risk)

@@ -36,7 +36,7 @@ class GoogleLoginRequiredError(RuntimeError):
     def __init__(self, message: str | None = None):
         super().__init__(message or (
             "Google 로그인이 필요합니다. 저장된 로그인(token.json)이 없거나 만료되었습니다. "
-            "「환경설정」→「Google Sheets 연동」에서 「재인증」을 눌러 주세요."))
+            "「⚙ 설정」→「연동」에서 「재인증」을 눌러 주세요."))
 
 
 def set_interactive_login_default(enabled: bool) -> bool:
@@ -129,7 +129,7 @@ def delete_oauth_token_file() -> bool:
 
 
 def get_oauth_status_description() -> str:
-    """환경설정 등에 표시할 Google Sheets OAuth 상태 설명(짧은 단락)."""
+    """설정 탭 등에 표시할 Google Sheets OAuth 상태 설명(짧은 단락)."""
     if not OAUTH_CREDENTIAL_PATH.exists():
         return (
             "OAuth 클라이언트 파일(credentials.json)이 없습니다.\n"

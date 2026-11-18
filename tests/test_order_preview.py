@@ -317,7 +317,7 @@ def run_scenario(name):
         result["tree"] = _tree_snapshot(window)
         outbox = window._gift_history_sync._outbox
         result["gift_records"] = sorted((record.store, record.gift) for record in outbox.list_pending())
-        result["gift_history_in_admin"] = window.ui.tab_admin.isAncestorOf(window.ui.pushButton_gift_history)
+        result["gift_history_in_admin"] = window.ui.scrollArea_settings_orders.isAncestorOf(window.ui.pushButton_gift_history)
         # 메뉴 복사(Ctrl+C 액션)
         clipboard.setText("")
         window.act_copy.trigger()

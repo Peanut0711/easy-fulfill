@@ -10,7 +10,7 @@
 - 시작할 때와 실행 중 1시간마다(startup_check) 공유 최소 버전이 이 앱의 MIN_COMPATIBLE_VERSION보다
   낮으면 그 값으로 올리고(낮추지는 않는다), 「PC버전」 탭에 PC·버전·마지막 확인 시각을 기록한다.
   다른 PC가 더 새 버전을 쓰고 있으면 그 버전을 알려 화면이 「새 버전 안내」를 띄우게 한다
-  (닫기 / 오늘 더 이상 묻지 않음, 환경설정의 「새 버전 안내 무시」로 끌 수 있음).
+  (닫기 / 오늘 더 이상 묻지 않음, 설정 › 프로그램의 「새 버전 안내 무시」로 끌 수 있음).
 
 릴리스 규칙: 배포할 때마다 APP_VERSION을 올린다. 공유 시트 쓰기 방식이 바뀌어 이전 버전과 함께
 쓰면 데이터가 덮어써지는 변경이면 MIN_COMPATIBLE_VERSION도 그 버전으로 올린다. 그러면 새 버전
@@ -24,7 +24,7 @@ import threading
 import time
 from datetime import datetime
 
-APP_VERSION = "0.0.11"
+APP_VERSION = "0.0.12"
 MIN_COMPATIBLE_VERSION = "2026.11.17.1"
 # 기존 앱도 min_app_version의 숫자 비교만으로 향후 호환성 변경을 감지할 수 있게 한다.
 _VERSION_RESET_PREFIX = (2026, 11, 18, 1)
