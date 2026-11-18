@@ -25,10 +25,11 @@ class DetailPageTabTests(unittest.TestCase):
 
     def window(self):
         from PySide6.QtWidgets import QTabWidget, QWidget
-        names = [name for name in vars(self.app.MainWindow)
-                 if "detail" in name.lower() and not name.startswith("__")]
-        # staticmethod 등 설명자를 그대로 옮기려고 클래스 __dict__에서 꺼낸다.
-        attrs = {name: vars(self.app.MainWindow)[name] for name in names}
+        from tests.test_order_load_sheets import main_window_members
+        # staticmethod 등 설명자를 그대로 옮기려고 클래스 __dict__(믹스인 포함)에서 꺼낸다.
+        members = main_window_members(self.app)
+        names = [name for name in members if "detail" in name.lower() and not name.startswith("__")]
+        attrs = {name: members[name] for name in names}
         window = type("FakeWindow", (QWidget,), attrs)()
         window.ui = type("Ui", (), {})()
         window.ui.tabWidget = QTabWidget(window)

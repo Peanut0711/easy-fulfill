@@ -1,0 +1,794 @@
+"""메인 창 공통 틀: 메뉴바, 상태바·상태 칩, 알림 띠, 시작·작업 중 오버레이, 탭 순서, 단축키·도움말."""
+
+import time
+from pathlib import Path
+
+from PySide6.QtCore import QEasingCurve, QPropertyAnimation, QRectF, Qt, QTimer, QUrl
+from PySide6.QtGui import (
+    QAction,
+    QColor,
+    QDesktopServices,
+    QFont,
+    QIcon,
+    QKeySequence,
+    QPainter,
+    QPen,
+    QShortcut,
+)
+from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QApplication,
+    QDialog,
+    QFrame,
+    QGraphicsOpacityEffect,
+    QHBoxLayout,
+    QLabel,
+    QMenu,
+    QMessageBox,
+    QProgressBar,
+    QPushButton,
+    QSizePolicy,
+    QStyle,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
+
+from shared.ui_notice import StatusChip
+from shared.ui_style import set_status, STATUS_MARKS
+from sheets.version_gate import APP_VERSION
+
+# 시작 시 DB동기화 로딩 바: 약 2초+여유 안에 99%까지 선형 증가, 완료 시 즉시 100%
+STARTUP_SYNC_PROGRESS_CAP_MS = 2200
+STARTUP_SYNC_PROGRESS_TICK_MS = 40
+# 100% 도달 후 오버레이를 닫기까지 대기(너무 짧으면 급하게 사라진 느낌, 너무 길면 지루)
+STARTUP_SYNC_PROGRESS_HIDE_DELAY_MS = 500
+
+
+class CircularBusySpinner(QWidget):
+    """Google 시트·처리 대기용 무한 회전 링 스피너."""
+
+    def __init__(self, parent=None, size: int = 58, line_width: int = 4, color: str = "#21838a"):
+        super().__init__(parent)
+        self._line_width = line_width
+        self._color = QColor(color)
+        self._rotation = 0
+        self.setFixedSize(size, size)
+        self._timer = QTimer(self)
+        self._timer.setInterval(40)
+        self._timer.timeout.connect(self._on_tick)
+
+    def _on_tick(self):
+        self._rotation = (self._rotation + 24) % 360
+        self.update()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._timer.start()
+
+    def hideEvent(self, event):
+        self._timer.stop()
+        super().hideEvent(event)
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        s = min(self.width(), self.height())
+        m = self._line_width + 1
+        rf = (s - 2 * m) / 2.0
+        p.translate(self.width() / 2.0, self.height() / 2.0)
+        p.rotate(self._rotation)
+        pen = QPen(self._color)
+        pen.setWidth(self._line_width)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        p.setPen(pen)
+        rect = QRectF(-rf, -rf, 2 * rf, 2 * rf)
+        p.drawArc(rect, 40 * 16, 290 * 16)
+
+
+class ChromeMixin:
+    """MainWindow 믹스인. 메인 창 공통 틀: 메뉴바, 상태바·상태 칩, 알림 띠, 시작·작업 중 오버레이, 탭 순서, 단축키·도움말."""
+
+    def _apply_tab_order(self):
+        """합의된 6개 상위 탭 순서를 런타임에서 보장합니다.
+        (UI 파일의 정의 순서와 무관하게 런타임에서 보장)"""
+        tw = getattr(self.ui, "tabWidget", None)
+        if tw is None:
+            return
+        desired = [
+            "tab", "tab_tracking", "tab_quick_invoice", "tab_documents",
+            "tab_detail_page", "tab_settings",
+        ]
+        bar = tw.tabBar()
+        for target in range(len(desired)):
+            name = desired[target]
+            cur = -1
+            for i in range(tw.count()):
+                if tw.widget(i).objectName() == name:
+                    cur = i
+                    break
+            if cur != -1 and cur != target:
+                bar.moveTab(cur, target)
+        tw.setCurrentIndex(0)
+
+    def _setup_status_chips(self):
+        """상태바 오른쪽 상시 표시(계획 C-2): Google 연결 · 인덱스 동기화 · 앱 버전. 누르면 해당 설정 페이지.
+
+        값은 이미 있는 상태(인증 확인, 인덱스 동기화, 버전 확인)를 갱신할 때 함께 바꾼다. 새 읽기·호출은 없다.
+        """
+        bar = self.statusBar()
+        chips = (
+            ("statusChip_google", "Google", "integration"),
+            ("statusChip_index", "인덱스 —", "orders"),
+            ("statusChip_version", f"v{APP_VERSION}", "program"),
+        )
+        for name, text, page in chips:
+            chip = StatusChip(name, text, bar)
+            set_status(chip, "idle", text)
+            chip.clicked.connect(lambda key=page: self.show_settings_page(key))
+            bar.addPermanentWidget(chip)
+            setattr(self, name, chip)
+        self.statusChip_google.setToolTip("Google Sheets 연결 확인 중 · 누르면 「설정 › 연동」")
+        self.statusChip_index.setToolTip("주문번호 인덱스 동기화 · 누르면 「설정 › 주문·사은품」")
+        self.statusChip_version.setToolTip("앱 버전 · 누르면 「설정 › 프로그램」")
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        ov = getattr(self, "_startup_overlay", None)
+        if ov is not None and ov.isVisible():
+            self._layout_startup_overlay_full()
+        bov = getattr(self, "_busy_overlay", None)
+        if bov is not None and bov.isVisible():
+            self._layout_busy_overlay_full()
+
+    def _layout_startup_overlay_full(self):
+        if getattr(self, "_startup_overlay", None) is None:
+            return
+        self._startup_overlay.setGeometry(
+            0, 0, max(1, self.width()), max(1, self.height())
+        )
+
+    def _setup_startup_loading_overlay(self):
+        accent = "#21838a"
+        accent_soft = "#e8f4f5"
+
+        self._startup_overlay = QFrame(self)
+        self._startup_overlay.setObjectName("startupLoadingOverlay")
+        self._startup_overlay.hide()
+        outer = QVBoxLayout(self._startup_overlay)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.addStretch(1)
+
+        row = QHBoxLayout()
+        row.addStretch(1)
+
+        card = QFrame()
+        card.setObjectName("startupLoadingCard")
+        card.setMaximumWidth(480)
+        card.setMinimumWidth(320)
+
+        self._startup_card_opacity_effect = QGraphicsOpacityEffect(card)
+        self._startup_card_opacity_effect.setOpacity(1.0)
+        card.setGraphicsEffect(self._startup_card_opacity_effect)
+
+        card_lay = QVBoxLayout(card)
+        card_lay.setContentsMargins(32, 28, 32, 28)
+        card_lay.setSpacing(12)
+
+        badge = QLabel("Easy Fulfill")
+        badge.setAlignment(Qt.AlignCenter)
+        bf = QFont()
+        bf.setFamilies(
+            ["맑은 고딕", "Malgun Gothic", "Segoe UI Semibold", "Bahnschrift", "sans-serif"]
+        )
+        bf.setPointSize(12)
+        bf.setWeight(QFont.Weight.DemiBold)
+        bf.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 2.2)
+        badge.setFont(bf)
+        badge.setStyleSheet(f"color: {accent}; margin-bottom: 4px;")
+
+        title = QLabel("초기 데이터를 불러오는 중…")
+        title.setAlignment(Qt.AlignCenter)
+        title_font = QFont()
+        title_font.setFamilies(
+            ["맑은 고딕", "Malgun Gothic", "Segoe UI", "Bahnschrift", "Segoe UI Variable Display", "sans-serif"]
+        )
+        title_font.setPointSize(18)
+        title_font.setWeight(QFont.Weight.DemiBold)
+        title_font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 1.0)
+        title.setFont(title_font)
+        title.setStyleSheet("color: #1a202c;")
+
+        sub = QLabel("Google 시트와 주문 인덱스를 동기화합니다.")
+        sub.setAlignment(Qt.AlignCenter)
+        sub_font = QFont(title_font)
+        sub_font.setPointSize(11)
+        sub_font.setWeight(QFont.Weight.Normal)
+        sub_font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 0.25)
+        sub.setFont(sub_font)
+        sub.setStyleSheet("color: #5c6b7a;")
+        sub.setWordWrap(True)
+
+        self._startup_progress_bar = QProgressBar()
+        self._startup_progress_bar.setRange(0, 100)
+        self._startup_progress_bar.setValue(0)
+        self._startup_progress_bar.setTextVisible(True)
+        self._startup_progress_bar.setFormat("%p%")
+        self._startup_progress_bar.setFixedSize(300, 28)
+        self._startup_progress_bar.setStyleSheet(
+            f"""
+            QProgressBar {{
+                border: 1px solid #c5d0d8;
+                border-radius: 12px;
+                background-color: {accent_soft};
+                text-align: center;
+                color: #2c3e50;
+                font-size: 11px;
+                font-weight: 600;
+            }}
+            QProgressBar::chunk {{
+                background-color: {accent};
+                border-radius: 11px;
+            }}
+            """
+        )
+        self._startup_progress_timer = QTimer(self)
+        self._startup_progress_timer.setInterval(STARTUP_SYNC_PROGRESS_TICK_MS)
+        self._startup_progress_timer.timeout.connect(self._on_startup_progress_tick)
+        self._startup_sync_progress_done = False
+
+        bar_row = QHBoxLayout()
+        bar_row.addStretch(1)
+        bar_row.addWidget(self._startup_progress_bar)
+        bar_row.addStretch(1)
+
+        hint = QLabel("환경에 따라 수 초 걸릴 수 있습니다.")
+        hint.setAlignment(Qt.AlignCenter)
+        hf = QFont(sub_font)
+        hf.setPointSize(9)
+        hint.setFont(hf)
+        hint.setStyleSheet("color: #8896a3; margin-top: 4px;")
+        hint.setWordWrap(True)
+
+        card_lay.addWidget(badge)
+        card_lay.addWidget(title)
+        card_lay.addWidget(sub)
+        card_lay.addSpacing(8)
+        card_lay.addLayout(bar_row)
+        card_lay.addWidget(hint)
+
+        row.addWidget(card, alignment=Qt.AlignmentFlag.AlignHCenter)
+        row.addStretch(1)
+        outer.addLayout(row)
+        outer.addStretch(1)
+
+        self._startup_overlay.setStyleSheet(
+            """
+            QFrame#startupLoadingOverlay {
+                background-color: rgba(28, 34, 42, 0.52);
+                border: none;
+            }
+            QFrame#startupLoadingCard {
+                background-color: #fbfbfc;
+                border: 1px solid rgba(200, 210, 220, 0.95);
+                border-radius: 18px;
+            }
+            """
+        )
+        self._startup_card_entrance_anim = None
+
+    def _setup_busy_processing_overlay(self):
+        accent = "#21838a"
+        self._busy_overlay = QFrame(self)
+        self._busy_overlay.setObjectName("busyProcessingOverlay")
+        self._busy_overlay.hide()
+        outer = QVBoxLayout(self._busy_overlay)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.addStretch(1)
+        row = QHBoxLayout()
+        row.addStretch(1)
+
+        card = QFrame()
+        card.setObjectName("busyProcessingCard")
+        card.setMaximumWidth(440)
+        card.setMinimumWidth(280)
+
+        card_lay = QVBoxLayout(card)
+        card_lay.setContentsMargins(28, 24, 28, 24)
+        card_lay.setSpacing(14)
+
+        spin_row = QHBoxLayout()
+        spin_row.addStretch(1)
+        self._busy_spinner = CircularBusySpinner(card, size=56, line_width=4, color=accent)
+        spin_row.addWidget(self._busy_spinner)
+        spin_row.addStretch(1)
+
+        self._busy_overlay_title = QLabel("처리 중…")
+        self._busy_overlay_title.setAlignment(Qt.AlignCenter)
+        tf = QFont()
+        tf.setFamilies(
+            ["맑은 고딕", "Malgun Gothic", "Segoe UI", "Bahnschrift", "Segoe UI Variable Display", "sans-serif"]
+        )
+        tf.setPointSize(13)
+        tf.setWeight(QFont.Weight.DemiBold)
+        self._busy_overlay_title.setFont(tf)
+        self._busy_overlay_title.setStyleSheet("color: #1a202c;")
+
+        self._busy_overlay_sub = QLabel("")
+        self._busy_overlay_sub.setAlignment(Qt.AlignCenter)
+        sf = QFont(tf)
+        sf.setPointSize(10)
+        sf.setWeight(QFont.Weight.Normal)
+        self._busy_overlay_sub.setFont(sf)
+        self._busy_overlay_sub.setStyleSheet("color: #5c6b7a;")
+        self._busy_overlay_sub.setWordWrap(True)
+
+        card_lay.addLayout(spin_row)
+        card_lay.addWidget(self._busy_overlay_title)
+        card_lay.addWidget(self._busy_overlay_sub)
+
+        row.addWidget(card, alignment=Qt.AlignmentFlag.AlignHCenter)
+        row.addStretch(1)
+        outer.addLayout(row)
+        outer.addStretch(1)
+
+        self._busy_overlay.setStyleSheet(
+            """
+            QFrame#busyProcessingOverlay {
+                background-color: rgba(28, 34, 42, 0.48);
+                border: none;
+            }
+            QFrame#busyProcessingCard {
+                background-color: #fbfbfc;
+                border: 1px solid rgba(200, 210, 220, 0.95);
+                border-radius: 16px;
+            }
+            """
+        )
+
+    def _layout_busy_overlay_full(self):
+        if getattr(self, "_busy_overlay", None) is None:
+            return
+        self._busy_overlay.setGeometry(
+            0, 0, max(1, self.width()), max(1, self.height())
+        )
+
+    def _show_busy_processing_overlay(self, title: str, subtitle: str = ""):
+        if getattr(self, "_busy_overlay", None) is None:
+            return
+        self._busy_overlay_title.setText(title)
+        self._busy_overlay_sub.setText(subtitle)
+        self._busy_overlay_sub.setVisible(bool(subtitle and subtitle.strip()))
+        self._layout_busy_overlay_full()
+        self._busy_overlay.raise_()
+        if (
+            getattr(self, "_startup_overlay", None) is not None
+            and self._startup_overlay.isVisible()
+        ):
+            self._startup_overlay.raise_()
+        self._busy_overlay.show()
+
+    def _hide_busy_processing_overlay(self):
+        if getattr(self, "_busy_overlay", None) is not None:
+            self._busy_overlay.hide()
+
+    def _on_startup_progress_tick(self):
+        if getattr(self, "_startup_sync_progress_done", False):
+            return
+        t0 = getattr(self, "_startup_sync_debug_t0", None)
+        if t0 is None:
+            return
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        if elapsed_ms <= 0:
+            return
+        pct = min(99, int(elapsed_ms * 100 / STARTUP_SYNC_PROGRESS_CAP_MS))
+        pb = getattr(self, "_startup_progress_bar", None)
+        if pb is not None and pb.value() < pct:
+            pb.setValue(pct)
+
+    def _hide_startup_loading_overlay_deferred(self):
+        if getattr(self, "_startup_overlay", None) is not None:
+            self._startup_overlay.hide()
+
+    def _start_startup_overlay_entrance_anim(self):
+        self._startup_card_opacity_effect.setOpacity(0.0)
+        anim = QPropertyAnimation(self._startup_card_opacity_effect, b"opacity", self)
+        anim.setDuration(280)
+        anim.setStartValue(0.0)
+        anim.setEndValue(1.0)
+        anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._startup_card_entrance_anim = anim
+        anim.start()
+
+    def _set_startup_syncing_indicator(self):
+        """시작 동기화 진행 중임을 막지 않는 가벼운 라벨 표시로만 알립니다."""
+        if hasattr(self.ui, "label_index_sheet_sync"):
+            set_status(self.ui.label_index_sheet_sync, "idle", "Google 시트와 인덱스 동기화 중…")
+        self._update_index_status_chip(syncing=True)
+
+    def setup_menubar(self):
+        """메뉴/단축키용 액션을 정의하고 상단 메뉴바를 구성합니다(툴바 없음)."""
+
+        # ── 액션 정의(메뉴·단축키용) ─────────────────────────────
+        self.act_load = QAction(QIcon('image/open-file-icon.png'), '주문 불러오기', self)
+        self.act_load.setShortcut('Ctrl+O')
+        self.act_load.setStatusTip('주문 엑셀 파일 불러오기 (Ctrl+O)')
+        self.act_load.triggered.connect(self.select_excel_file)
+
+        self.act_load_invoice = QAction(QIcon('image/open-file-icon.png'), '송장 불러오기', self)
+        self.act_load_invoice.setStatusTip('우체국 송장 엑셀 파일 불러오기 (Ctrl+Shift+O)')
+        self.act_load_invoice.setShortcut('Ctrl+Shift+O')
+        self.act_load_invoice.triggered.connect(self.load_invoice_file)
+
+        self.act_copy = QAction(QIcon('image/copy-icon.png'), '복사', self)
+        self.act_copy.setShortcut('Ctrl+C')
+        self.act_copy.setStatusTip('주문 정보를 클립보드에 복사 (Ctrl+C)')
+        self.act_copy.triggered.connect(self.copy_to_clipboard)
+
+        self.act_export = QAction(QIcon('image/microsoft-excel-icon.png'), '송장 출력', self)
+        self.act_export.setShortcut('Ctrl+E')
+        self.act_export.setStatusTip('네이버 업로드용 엑셀 송장 출력 (Ctrl+E)')
+        self.act_export.triggered.connect(self.export_invoice_excel)
+
+        self.act_openfolder = QAction(QIcon('image/folder-icon.png'), '출력 폴더', self)
+        self.act_openfolder.setShortcut('Ctrl+F')
+        self.act_openfolder.setStatusTip('출력 폴더 열기 (Ctrl+F)')
+        self.act_openfolder.triggered.connect(self.open_output_folder)
+
+        self.act_courier_export = QAction(
+            QIcon('image/microsoft-excel-icon.png'), '택배사 접수목록 내보내기(당일)…', self)
+        self.act_courier_export.setStatusTip(
+            '오늘 「송장추적」에 등록된 송장을 순번/송장번호/이름 엑셀로 내보내기(택배사 제출용)')
+        self.act_courier_export.triggered.connect(self.export_courier_receipt)
+
+        self.act_clear = QAction(QIcon('image/reset-icon.png'), '초기화', self)
+        self.act_clear.setShortcut('Ctrl+R')
+        self.act_clear.setStatusTip('주문 정보 초기화 (Ctrl+R)')
+        self.act_clear.triggered.connect(self.clear_list)
+
+        # API 동작(개발 중) — 툴바엔 두지 않는다. 진입점·실제 동작은 메뉴, 확인·진단은 「설정 › 프로그램」 버튼
+        self.act_api_load = QAction(QIcon('image/open-file-icon.png'), 'API로 주문 불러오기', self)
+        self.act_api_load.setStatusTip('네이버 주문을 API로 직접 불러오기(발송 전 결제완료·발주확인)')
+        self.act_api_load.triggered.connect(self.load_naver_orders_via_api)
+
+        self.act_dispatch = QAction(QIcon('image/microsoft-excel-icon.png'), 'API 발송처리', self)
+        self.act_dispatch.setStatusTip('매칭된 송장번호를 네이버에 API로 발송처리(배송중 전환)')
+        self.act_dispatch.triggered.connect(self.dispatch_naver_via_api)
+
+        self.act_epost_test_receipt = QAction(
+            QIcon('image/korea-post-icon.png'), '우체국 테스트 접수(송장 엑셀)', self)
+        self.act_epost_test_receipt.setStatusTip(
+            '송장 엑셀 1건을 testYn=Y로 우체국 계약소포 API에 테스트 접수')
+        self.act_epost_test_receipt.triggered.connect(self.run_epost_test_receipt)
+
+        self.act_epost_real_receipt = QAction(
+            QIcon('image/korea-post-icon.png'), '우체국 실제 접수 확인(송장 엑셀)', self)
+        self.act_epost_real_receipt.setStatusTip(
+            '송장 엑셀 1건을 실제 접수하되 운송장 출력과 네이버 발송은 하지 않음')
+        self.act_epost_real_receipt.triggered.connect(self.run_epost_real_receipt)
+
+        self.act_epost_print_targets = QAction(
+            QIcon('image/korea-post-icon.png'), '우체국 출력 대상 확인', self)
+        self.act_epost_print_targets.setStatusTip(
+            '프로그램이 실제 접수한 미출력 등기번호 목록을 확인')
+        self.act_epost_print_targets.triggered.connect(self.show_epost_print_targets)
+
+        self.act_epost_portal_login = QAction(
+            QIcon('image/korea-post-icon.png'), '우체국 포털 로그인 연결', self)
+        self.act_epost_portal_login.setStatusTip(
+            '전용 Chromium 창에서 직접 로그인해 우체국 포털 세션을 이 PC에 연결')
+        self.act_epost_portal_login.triggered.connect(self.connect_epost_portal_login)
+
+        self.act_epost_portal_diagnostic = QAction(
+            QIcon('image/korea-post-icon.png'), '우체국 출력 화면 진단', self)
+        self.act_epost_portal_diagnostic.setStatusTip(
+            '전용 Chromium에서 운송장출력 화면의 컨트롤만 읽기 전용으로 점검')
+        self.act_epost_portal_diagnostic.triggered.connect(self.run_epost_portal_diagnostic)
+
+        self.act_epost_portal_lookup = QAction(
+            QIcon('image/korea-post-icon.png'), '우체국 신규출력 대조', self)
+        self.act_epost_portal_lookup.setStatusTip(
+            '오늘 신규출력 목록을 조회해 프로그램의 실제 접수 등기번호와 읽기 전용으로 대조')
+        self.act_epost_portal_lookup.triggered.connect(self.run_epost_portal_lookup)
+
+        self.act_epost_portal_print_popup = QAction(
+            QIcon('image/korea-post-icon.png'), '우체국 운송장출력 팝업 열기', self)
+        self.act_epost_portal_print_popup.setStatusTip(
+            '검증된 오늘 미출력 행만 선택해 포털 운송장출력 팝업을 열고 인쇄 전에서 멈춤')
+        self.act_epost_portal_print_popup.triggered.connect(self.run_epost_portal_print_popup)
+
+        self.act_epost_portal_oz_viewer = QAction(
+            QIcon('image/korea-post-icon.png'), '우체국 OZ 뷰어 열기 확인', self)
+        self.act_epost_portal_oz_viewer.setStatusTip(
+            '검증된 행의 포털 인쇄 요청 후 OZ Viewer 열림만 확인하고 실제 인쇄 전에서 멈춤')
+        self.act_epost_portal_oz_viewer.triggered.connect(self.run_epost_portal_oz_viewer)
+
+        self.act_epost_portal_output_confirm = QAction(
+            QIcon('image/korea-post-icon.png'), '우체국 포털 출력여부 확인', self)
+        self.act_epost_portal_output_confirm.setStatusTip(
+            '포털 인쇄 요청 건의 출력여부를 전체 조회로 읽기 전용 확인')
+        self.act_epost_portal_output_confirm.triggered.connect(self.run_epost_portal_output_confirm)
+
+        self.act_epost_portal_reprint_popup = QAction(
+            QIcon('image/korea-post-icon.png'), '우체국 단건 재출력 팝업 열기', self)
+        self.act_epost_portal_reprint_popup.setStatusTip(
+            '포털 출력 확인 이력의 정확한 단건만 선택해 재출력 팝업을 열고 인쇄 전에서 멈춤')
+        self.act_epost_portal_reprint_popup.triggered.connect(self.run_epost_portal_reprint_popup)
+
+        self.act_epost_portal_reprint_oz_viewer = QAction(
+            QIcon('image/korea-post-icon.png'), '우체국 단건 재출력 OZ 뷰어 확인', self)
+        self.act_epost_portal_reprint_oz_viewer.setStatusTip(
+            '출력 확인 단건의 포털 인쇄 요청 후 OZ Viewer 열림만 확인하고 실제 인쇄 전에서 멈춤')
+        self.act_epost_portal_reprint_oz_viewer.triggered.connect(
+            lambda: self.run_epost_portal_oz_viewer(reprint=True))
+
+        self.act_epost_oz_print_dialog = QAction(
+            QIcon('image/korea-post-icon.png'), '우체국 단건 재출력 인쇄 창 확인', self)
+        self.act_epost_oz_print_dialog.setStatusTip(
+            '출력 확인 단건의 OZ Viewer에서 Windows 인쇄 창 열림만 확인하고 확인 버튼 전에서 멈춤')
+        self.act_epost_oz_print_dialog.triggered.connect(self.run_epost_oz_print_dialog)
+
+        self.act_epost_actual_print = QAction(
+            QIcon('image/korea-post-icon.png'), '우체국 단건 실제 인쇄', self)
+        self.act_epost_actual_print.setStatusTip(
+            '확정된 단건의 Windows 인쇄 창 확인을 눌러 실제 프린터 요청을 전송')
+        self.act_epost_actual_print.triggered.connect(
+            lambda: self.run_epost_oz_print_dialog(execute_print=True))
+
+        self.act_epost_batch_actual_print = QAction(
+            QIcon('image/korea-post-icon.png'), '우체국 다건 실제 인쇄', self)
+        self.act_epost_batch_actual_print.setStatusTip(
+            '같은 접수일의 포털 출력 확인 건만 모두 선택해 실제 프린터 요청을 전송')
+        self.act_epost_batch_actual_print.triggered.connect(
+            lambda: self.run_epost_oz_print_dialog(execute_print=True, allow_batch=True))
+
+        # 외부 바로가기
+        self.act_db = QAction(QIcon('image/database-icon.png'), '데이터베이스 시트', self)
+        self.act_db.setShortcut('Ctrl+D')
+        self.act_db.setStatusTip('공유 데이터베이스 구글시트 열기 (Ctrl+D)')
+        self.act_db.triggered.connect(lambda: QDesktopServices.openUrl(QUrl(
+            "https://docs.google.com/spreadsheets/d/1F0l6FMjXvKXAR9WyDvxEWcRvji-TaJbBim_G12TJ2Pw/edit?gid=195401368#gid=195401368")))
+
+        self.act_epost = QAction(QIcon('image/korea-post-icon.png'), '우체국', self)
+        self.act_epost.setStatusTip('우체국 홈페이지로 이동')
+        self.act_epost.triggered.connect(lambda: QDesktopServices.openUrl(QUrl("https://biz.epost.go.kr/ui/index.jsp")))
+
+        self.act_naver_store = QAction(QIcon('image/smart-store-icon.png'), '네이버 스마트스토어', self)
+        self.act_naver_store.setStatusTip('네이버 스마트스토어 페이지로 이동')
+        self.act_naver_store.triggered.connect(lambda: QDesktopServices.openUrl(QUrl("https://sell.smartstore.naver.com/#/home/about")))
+
+        self.act_coupang_store = QAction(QIcon('image/coupang-wing-icon.png'), '쿠팡 윙', self)
+        self.act_coupang_store.setStatusTip('쿠팡 스토어 페이지로 이동')
+        self.act_coupang_store.triggered.connect(lambda: QDesktopServices.openUrl(QUrl("https://wing.coupang.com/")))
+
+        self.act_exit = QAction(QIcon('image/exit-icon.png'), '종료', self)
+        self.act_exit.setShortcut('Ctrl+Q')
+        self.act_exit.setStatusTip('프로그램 종료 (Ctrl+Q)')
+        self.act_exit.triggered.connect(QApplication.quit)
+
+        # 상단 메뉴바 구성
+        self._setup_menus()
+
+    def _real_api_actions(self):
+        """외부에 실제로 반영되는 동작(네이버 발송처리, 우체국 실제 접수·인쇄). 모두 실행 전 확인 창을 띄운다."""
+        return [self.act_dispatch, self.act_epost_real_receipt,
+                self.act_epost_actual_print, self.act_epost_batch_actual_print]
+
+    def _setup_menus(self):
+        """상단 메뉴바를 구성합니다(생성 UI의 기본 메뉴 대신 여기서 일괄 정의).
+
+        툴바엔 매일 쓰는 파일 기반 동작만 두고, 나머지(API·외부링크·종료)는
+        여기로 모은다. API 항목은 아직 개발 단계라 별도 그룹으로 분리.
+        """
+        mb = self.menuBar()
+        mb.clear()
+        # 메뉴바와 탭 사이 경계: 얇은 헤어라인 + 위아래 패딩(숨통)
+        mb.setStyleSheet("QMenuBar { border-bottom: 1px solid #e0e0e0; padding: 2px 0; }")
+        # 구분선과 탭 헤더 사이 여백(레이아웃 안 위젯은 stylesheet margin이 안 먹어
+        # 레이아웃 상단 마진으로 준다)
+        lay = getattr(self.ui, "verticalLayout", None)
+        if lay is not None:
+            m = lay.contentsMargins()
+            lay.setContentsMargins(m.left(), 14, m.right(), m.bottom())
+
+        m_file = mb.addMenu('파일(&F)')
+        m_file.addAction(self.act_load)
+        m_file.addAction(self.act_load_invoice)
+        m_file.addAction(self.act_openfolder)
+        m_file.addSeparator()
+        m_file.addAction(self.act_courier_export)
+        m_file.addSeparator()
+        m_file.addAction(self.act_exit)
+
+        m_order = mb.addMenu('주문·발송(&O)')
+        m_order.addAction(self.act_copy)
+        m_order.addAction(self.act_export)
+        m_order.addSeparator()
+        m_order.addAction(self.act_clear)
+
+        # 창 크기·설정 탭 계획 B-4: 확인·진단 9개는 「설정 › 프로그램」 버튼으로 옮기고, 메뉴에는
+        # 불러오기·로그인·출력 대상과 구분선 아래 실제 동작 4개만 둔다(각 실제 동작은 실행 전 확인 창).
+        m_api = mb.addMenu('API(개발 중)')
+        m_api.addAction(self.act_api_load)
+        m_api.addAction(self.act_epost_portal_login)
+        m_api.addAction(self.act_epost_print_targets)
+        self.act_open_epost_diagnostics = QAction('우체국 확인·진단… (설정 › 프로그램)', self)
+        self.act_open_epost_diagnostics.setStatusTip('실제 동작 없는 확인·진단 버튼이 있는 「⚙ 설정 › 프로그램」으로 이동')
+        self.act_open_epost_diagnostics.triggered.connect(lambda: self.show_settings_page("program"))
+        m_api.addAction(self.act_open_epost_diagnostics)
+        m_api.addSeparator()
+        real_title = m_api.addAction('실제 동작 — 실행 전 확인 창이 뜹니다')
+        real_title.setEnabled(False)
+        warning_icon = self.style().standardIcon(QStyle.StandardPixmap.SP_MessageBoxWarning)
+        for action in self._real_api_actions():
+            action.setIcon(warning_icon)
+            m_api.addAction(action)
+
+        m_link = mb.addMenu('바로가기(&L)')
+        m_link.addAction(self.act_db)
+        m_link.addAction(self.act_epost)
+        m_link.addAction(self.act_naver_store)
+        m_link.addAction(self.act_coupang_store)
+
+        m_help = mb.addMenu('도움말(&H)')
+        self.act_shortcut_help = QAction('단축키(&K)', self)
+        self.act_shortcut_help.setStatusTip('이 프로그램의 단축키 목록')
+        self.act_shortcut_help.triggered.connect(self.show_shortcut_help)
+        m_help.addAction(self.act_shortcut_help)
+        self.act_about = QAction('프로그램 정보(&A)', self)
+        self.act_about.triggered.connect(self.show_about)
+        m_help.addAction(self.act_about)
+
+    def setup_status_bar(self):
+        """상태바를 초기화하고 기본 메시지를 설정합니다."""
+        statusbar = self.statusBar()
+        
+        # 기본 레이블 생성 및 설정(상태바답게 좌측·작게·일반 굵기 — 제목/버튼처럼 보이지 않도록)
+        self.status_label = QLabel()
+        self.status_label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+        self.status_label.setMinimumHeight(24)
+        self.status_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.status_label.setStyleSheet("""
+            QLabel {
+                color: #666666;
+                font-size: 9pt;
+                font-weight: normal;
+                padding: 0 8px;
+                background-color: #f5f5f5;
+            }
+        """)
+        
+        # 상태바에 레이블을 추가하고 너비를 최대로 설정
+        statusbar.addWidget(self.status_label, 1)  # stretch factor 1로 설정하여 최대 너비 사용
+        
+        # 상태바 스타일 설정
+        statusbar.setStyleSheet("""
+            QStatusBar {
+                background-color: #f5f5f5;
+                min-height: 35px;
+                border-top: 1px solid #dcdcdc;
+            }
+            QStatusBar::item {
+                border: none;
+                width: 100%;
+            }
+        """)
+        
+        # 메뉴 안내·진행 메시지가 끝나면 마지막 알림을 다시 보여 준다.
+        self._last_notice_text = ""
+        self._status_clear_timer = QTimer(self)
+        self._status_clear_timer.setSingleShot(True)
+        self._status_clear_timer.timeout.connect(lambda: self.status_label.setText(self._last_notice_text))
+        STATUS_AUTO_CLEAR_MS = 3000
+
+        def update_status_label(message):
+            """상태바 메시지 업데이트 시 레이블도 함께 업데이트"""
+            if message:  # 메시지가 있을 때만 업데이트
+                self.status_label.setText(message)
+                statusbar.clearMessage()  # 기본 메시지 클리어
+                # 일정 시간 후 자동으로 메시지 제거
+                self._status_clear_timer.start(STATUS_AUTO_CLEAR_MS)
+
+        # 상태바 메시지 변경 시그널 연결
+        statusbar.messageChanged.connect(update_status_label)
+        statusbar.showMessage("준비")  # 초기 메시지 설정
+
+    def notify(self, kind, text, actions=(), detail=""):
+        """확인 창 대신 알림 띠로 알린다. kind: ok·warn·error. actions: [(버튼 글자, 함수), …](최대 2개).
+
+        같은 문구를 상태바에도 남겨, 띠가 사라진 뒤에도 마지막 알림을 볼 수 있다.
+        """
+        self._last_notice_text = f"{STATUS_MARKS.get(kind, '')} {text}".strip()
+        self._status_clear_timer.stop()
+        self.status_label.setText(self._last_notice_text)
+        bar = getattr(self, "notice_bar", None)
+        if bar is not None:
+            bar.show_notice(kind, text, actions, detail)
+
+    def _open_created_file(self, output_file):
+        if not self.open_file_with_default_app(output_file):
+            QMessageBox.warning(self, "오류", "파일을 열 수 없습니다.\n연결된 기본 앱을 확인해주세요.")
+
+    def _open_created_file_location(self, output_file):
+        if not self.open_file_location(output_file):
+            QMessageBox.warning(self, "오류", "파일 위치를 열 수 없습니다.")
+
+    def show_excel_created_message(self, output_file, message_text, open_file_label="엑셀 열기"):
+        """파일을 만든 뒤 알림 띠에 「열기」·「폴더 열기」를 보인다(확인 창 없음, 계획 C-1)."""
+        name = Path(str(output_file)).name
+        self.notify(
+            "ok",
+            f"{message_text.rstrip('.')}: {name}",
+            [(open_file_label, lambda: self._open_created_file(output_file)),
+             ("폴더 열기", lambda: self._open_created_file_location(output_file))],
+            detail=str(output_file),
+        )
+
+    # 탭 안에서만 동작하는 단축키(QAction이 아닌 것). 단축키 목록 창에 함께 보인다.
+    EXTRA_SHORTCUT_HELP = (
+        ("단건 송장 탭", "엑셀 생성", "Ctrl+Enter"),
+    )
+
+    def _setup_tab_shortcuts(self, tabs):
+        """Ctrl+1~6: 상위 탭으로 바로 이동(왼쪽부터 순서대로). 탭 순서가 바뀌어도 위치 기준으로 동작한다."""
+        self._tab_shortcuts = []
+        for index in range(6):
+            shortcut = QShortcut(QKeySequence(f"Ctrl+{index + 1}"), self)
+            shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+            shortcut.activated.connect(lambda i=index: tabs.setCurrentIndex(i) if i < tabs.count() else None)
+            self._tab_shortcuts.append(shortcut)
+
+    def shortcut_help_rows(self):
+        """단축키 목록 창의 행: (구분, 동작, 단축키). 메뉴 동작의 단축키는 실제 QAction에서 모은다."""
+        rows = []
+        tabs = self.ui.tabWidget
+        for index, shortcut in enumerate(getattr(self, "_tab_shortcuts", [])):
+            if index < tabs.count():
+                title = tabs.tabText(index).replace("⚙", "").strip()
+                rows.append(("탭 이동", f"「{title}」 탭", shortcut.key().toString()))
+        seen = set()
+        for menu in self.menuBar().findChildren(QMenu):
+            for action in menu.actions():
+                key = action.shortcut().toString()
+                if not key or id(action) in seen:
+                    continue
+                seen.add(id(action))
+                rows.append((menu.title().split("(")[0], action.text().replace("&", ""), key))
+        rows.extend(self.EXTRA_SHORTCUT_HELP)
+        return rows
+
+    def show_shortcut_help(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle("단축키")
+        layout = QVBoxLayout(dialog)
+        rows = self.shortcut_help_rows()
+        table = QTableWidget(len(rows), 3, dialog)
+        table.setObjectName("tableWidget_shortcuts")
+        table.setHorizontalHeaderLabels(["구분", "동작", "단축키"])
+        table.verticalHeader().setVisible(False)
+        table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        for r, row in enumerate(rows):
+            for c, text in enumerate(row):
+                table.setItem(r, c, QTableWidgetItem(text))
+        table.resizeColumnsToContents()
+        table.horizontalHeader().setStretchLastSection(True)
+        layout.addWidget(table)
+        close = QPushButton("닫기")
+        close.clicked.connect(dialog.accept)
+        layout.addWidget(close, 0, Qt.AlignmentFlag.AlignRight)
+        dialog.resize(460, 420)
+        dialog.exec()
+
+    def show_about(self):
+        """프로그램 정보를 보여주는 대화상자를 표시합니다."""
+        QMessageBox.about(
+            self,
+            "프로그램 정보",
+            "Easy Fulfill - 주문 처리 시스템\n\n"
+            f"버전 {APP_VERSION}\n"
+            "Copyright © 2024\n\n"
+            "오픈마켓 주문 처리를 위한 자동 생성 프로그램입니다."
+        )
+        self.statusBar().showMessage("프로그램 정보 표시됨")

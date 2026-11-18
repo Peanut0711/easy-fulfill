@@ -100,10 +100,12 @@ class FileCreatedNoticeTests(unittest.TestCase):
 
     def window(self):
         from PySide6.QtWidgets import QMainWindow
+        from tests.test_order_load_sheets import main_window_members
         from shared.ui_notice import NoticeBar
         names = ("setup_status_bar", "notify", "show_excel_created_message",
                  "_open_created_file", "_open_created_file_location")
-        window = type("FakeWindow", (QMainWindow,), {n: vars(self.module.MainWindow)[n] for n in names})()
+        members = main_window_members(self.module)
+        window = type("FakeWindow", (QMainWindow,), {n: members[n] for n in names})()
         window.setup_status_bar()
         window.notice_bar = NoticeBar(window)
         window.opened = []
@@ -147,8 +149,10 @@ class FileCreatedNoticeTests(unittest.TestCase):
 
     def test_no_completion_dialogs_left_in_source(self):
         # 파일 생성 「완료」 확인 창 네 곳(우체국 접수 엑셀, 일괄 발송, 분류 결과, 퀵 엑셀)을 모두 바꿨다.
-        source = (ROOT / "easy-fulfill.py").read_text(encoding="utf-8")
-        self.assertNotIn('setWindowTitle("완료")', source)
+        # 메인 창 코드는 easy-fulfill.py와 ui/main/의 믹스인 모듈에 나뉘어 있다.
+        for path in [ROOT / "easy-fulfill.py", *sorted((ROOT / "ui" / "main").glob("*.py"))]:
+            with self.subTest(path=path.name):
+                self.assertNotIn('setWindowTitle("완료")', path.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

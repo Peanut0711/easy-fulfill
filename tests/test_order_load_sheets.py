@@ -35,6 +35,19 @@ def load_app_module():
     return module
 
 
+def main_window_members(module):
+    """MainWindow와 그 믹스인(ui/main/)에 정의된 이름 → 클래스 __dict__ 값(staticmethod 등 설명자 그대로).
+
+    메인 창 코드가 믹스인으로 나뉘어 있어 ``vars(MainWindow)``만으로는 옮긴 메서드를 찾을 수 없다.
+    Qt 기반 클래스(QMainWindow 등)의 이름은 넣지 않는다.
+    """
+    members = {}
+    for cls in reversed(module.MainWindow.__mro__):
+        if cls is module.MainWindow or cls.__module__.startswith("ui.main"):
+            members.update(vars(cls))
+    return members
+
+
 def _title(range_name):
     match = re.match(r"^'((?:[^']|'')*)'(?:!(.*))?$", range_name)
     return (match.group(1).replace("''", "'"), match.group(2)) if match else (range_name, None)

@@ -28,7 +28,9 @@ class StatusChipTests(unittest.TestCase):
     def window(self):
         from PySide6.QtCore import QTimer
         from PySide6.QtWidgets import QLabel, QMainWindow
-        attrs = {name: vars(self.module.MainWindow)[name] for name in self.METHODS}
+        from tests.test_order_load_sheets import main_window_members
+        members = main_window_members(self.module)
+        attrs = {name: members[name] for name in self.METHODS}
         window = type("FakeWindow", (QMainWindow,), attrs)()
         window.ui = SimpleNamespace(label_app_version=QLabel(), label_index_sheet_sync=QLabel())
         window.pages = []

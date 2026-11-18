@@ -123,13 +123,14 @@
 | 하위 작업 | 상태 | 커밋 | 비고 |
 |---|---|---|---|
 | 0 기준선 | 완료 | `78b0992` | 캡처 84장(3배율 × 28), 같은 커밋 3회 캡처 모두 같음. 기준 캡처 `captures/base-78b0992` |
-| 1-1 안 쓰는 생성 파일 삭제 | 완료 | (이 줄을 고친 커밋) | `ui/main_window.py`, `ui/main_window_ui.py`. 캡처 84장 기준과 같음 |
-| 1-2a 공통 틀(메뉴바·상태바·알림 띠·오버레이·단축키) 믹스인 | 대기 | | `ui/main/chrome.py` |
+| 1-1 안 쓰는 생성 파일 삭제 | 완료 | `8c5a939` | `ui/main_window.py`, `ui/main_window_ui.py`. 캡처 84장 기준과 같음 |
+| 1-2a 공통 틀(메뉴바·상태바·알림 띠·오버레이·단축키) 믹스인 | 완료 | (이 줄을 고친 커밋) | `ui/main/chrome.py` `ChromeMixin`(메서드 25개, `EXTRA_SHORTCUT_HELP`, 시작 진행 상수, `CircularBusySpinner`). `easy-fulfill.py` 11,649→10,899줄. 테스트가 `vars(MainWindow)`로 메서드를 꺼내던 곳은 믹스인까지 찾는 `main_window_members`로 바꿈. 캡처 84장 기준과 같음 |
 | 1-2b 시작·종료·창 위치 믹스인 | 대기 | | `ui/main/startup.py` |
 | 1-2c 설정 탭 믹스인 | 대기 | | `ui/main/settings.py` |
 | 1-2d 상세페이지 탭 믹스인 | 대기 | | `ui/main/detail_page.py` |
 | 1-2e 단건 송장·문서 만들기 탭 믹스인 | 대기 | | `ui/main/quick_invoice.py`, `ui/main/documents.py` |
-| 1-2f 주문·발송 탭 믹스인 | 대기 | | `ui/main/order_ship.py`. 크면 둘로 나눈다 |
+| 1-2f 주문·발송 탭 믹스인 | 대기 | | `ui/main/order_ship.py`. 크면 둘로 나눈다. 주문 패널 상태 라벨(`_set_status_label`, `eventFilter`)도 여기로. `tests/test_invoice_excel_reuse.py`·`test_naver_api_dispatch.py`·`test_temp_file_cleanup.py`는 `easy-fulfill.py` 소스에서 메서드를 떼어 실행하므로 옮길 때 함께 고친다 |
+| 1-2g `easy-fulfill.py`에 남은 쓰지 않는 import 정리 | 대기 | | 옮기기만 하는 1-2a~f에서는 import를 지우지 않았다 |
 | 2-1 테마 모듈과 Fusion 적용 | 대기 | | `shared/theme.py`, 검토 지점 A 항목은 검토 리스트로 |
 | 2-2 직접 지정 색·글꼴을 테마로 옮김 | 대기 | | |
 | 2-3 글꼴 크기 확정과 크기 예산 재측정 | 대기 | | |
