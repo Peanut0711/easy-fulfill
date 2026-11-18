@@ -41,7 +41,7 @@ def measure(platform="windows"):
     if str(ROOT) not in sys.path:
         sys.path.insert(0, str(ROOT))
     from PySide6.QtCore import Qt
-    from PySide6.QtWidgets import QApplication, QLayout, QMessageBox, QWidget
+    from PySide6.QtWidgets import QApplication, QGroupBox, QLayout, QMessageBox, QWidget
 
     QApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
     app = QApplication.instance() or QApplication([])
@@ -94,6 +94,8 @@ def measure(platform="windows"):
                     "min": _size(page.minimumSizeHint()),
                     # 스크롤 없이 다 보이려면 필요한 크기(가로 스크롤은 없어야 한다)
                     "content": _size(content.minimumSizeHint()) if content is not None else None,
+                    # 묶음 제목(실행 중 만드는 묶음 포함). 적용 범위 표시 검사에 쓴다.
+                    "groups": [box.title() for box in page.findChildren(QGroupBox)],
                 })
         tabs.setCurrentIndex(0)
         app.processEvents()

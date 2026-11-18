@@ -15,7 +15,7 @@ from google.oauth2.credentials import Credentials
 from shared.paths import APP_ROOT
 
 # gspread·google_auth_oauthlib(요청·로컬 웹서버 포함)은 무거워(약 0.3초) 실제 로그인·연결할 때 불러온다.
-# 앱 시작 시에는 연동 상태 표시(get_oauth_status_description)만 쓰므로 Credentials만 미리 불러온다.
+# 앱 시작 시에는 연동 상태 표시(get_oauth_status)만 쓰므로 Credentials만 미리 불러온다.
 
 GOOGLE_AUTH_DIR = APP_ROOT / "google-oauth"
 OAUTH_CREDENTIAL_PATH = GOOGLE_AUTH_DIR / "credentials.json"
@@ -128,28 +128,33 @@ def delete_oauth_token_file() -> bool:
     return False
 
 
-def get_oauth_status_description() -> str:
-    """설정 탭 등에 표시할 Google Sheets OAuth 상태 설명(짧은 단락)."""
+def get_oauth_status() -> tuple[str, str, str]:
+    """설정 탭에 표시할 Google Sheets OAuth 상태 ``(kind, text, detail)``.
+
+    ``kind``는 ``shared.ui_style.set_status``의 상태(ok·warn·error)다. 파일만 읽고 네트워크는 쓰지 않는다.
+    액세스 토큰은 한 시간마다 만료되고 사용할 때 자동 갱신되므로, 갱신 토큰이 있으면 연결됨으로 본다.
+    """
     if not OAUTH_CREDENTIAL_PATH.exists():
-        return (
-            "OAuth 클라이언트 파일(credentials.json)이 없습니다.\n"
-            f"경로: {OAUTH_CREDENTIAL_PATH}"
-        )
+        return ("error", "OAuth 클라이언트 파일(credentials.json)이 없습니다.",
+                f"경로: {OAUTH_CREDENTIAL_PATH}")
     if not TOKEN_PATH.exists():
-        return (
-            "저장된 Google 로그인이 없습니다.\n"
-            "「재인증」으로 로그인하거나, 주문 엑셀을 불러올 때 브라우저 로그인이 열릴 수 있습니다."
-        )
+        return ("warn", "이 PC에 저장된 Google 로그인이 없습니다.",
+                "「재인증」으로 로그인하거나, 주문 엑셀을 불러올 때 브라우저 로그인이 열릴 수 있습니다.")
     try:
         creds = Credentials.from_authorized_user_file(str(TOKEN_PATH), SCOPES)
     except Exception:
-        return "token.json을 읽을 수 없습니다.\n「연결 해제」 후 「재인증」을 시도하세요."
+        return ("error", "token.json을 읽을 수 없습니다.", "「연결 해제」 후 「재인증」을 시도하세요.")
 
     if creds.valid:
-        return "상태: 연결됨 (저장된 토큰이 유효합니다)."
+        return ("ok", "연결됨", "저장된 토큰이 유효합니다.")
     if creds.expired and creds.refresh_token:
-        return (
-            "상태: 토큰 만료됨 — 사용 시 자동 갱신을 시도합니다.\n"
-            "문제가 계속되면 「연결 해제」 후 「재인증」하세요."
-        )
-    return "상태: 로그인 정보가 불완전합니다.\n「재인증」이 필요합니다."
+        return ("ok", "연결됨 (사용할 때 토큰 자동 갱신)",
+                "저장된 토큰이 만료되어 사용할 때 자동 갱신합니다.\n"
+                "문제가 계속되면 「연결 해제」 후 「재인증」하세요.")
+    return ("error", "로그인 정보가 불완전합니다.", "「재인증」이 필요합니다.")
+
+
+def get_oauth_status_description() -> str:
+    """Google Sheets OAuth 상태 설명(짧은 단락). 설정 탭은 ``get_oauth_status``를 쓴다."""
+    _kind, text, detail = get_oauth_status()
+    return f"{text}\n{detail}" if detail else text

@@ -1301,11 +1301,11 @@ class TrackingController(QObject):
 
     def build_admin_slack_controls(self, outer):
         """설정 › 알림 페이지에 배송 위험 Slack 알림 제어를 추가한다."""
-        # 슬랙 위험 알림(체크는 PC별, Webhook 설정은 「연동 · API 키」에 있음)
-        gb_slack = QGroupBox("슬랙 위험 알림")
+        # 위험 일일 알림 토글은 이 PC 앱 설정. Webhook 주소(전원 공유)는 같은 페이지 위 묶음에 있다.
+        gb_slack = QGroupBox("배송 위험 일일 알림 · 이 PC")
         sl = QVBoxLayout(gb_slack)
         srow = QHBoxLayout()
-        self._dlg_slack_auto = QCheckBox("이 PC에서 위험 일일 알림(하루 1통)")
+        self._dlg_slack_auto = QCheckBox("위험 건이 있으면 슬랙으로 하루 1통 보내기")
         self._dlg_slack_auto.setChecked(bool(self.get_app_setting("slack_auto_notify", False)))
         self._dlg_slack_auto.setToolTip(
             "이 PC에서 전체 새로고침 시 위험 건이 있으면 하루 1통만 슬랙으로 보냅니다(중복 방지)."
@@ -1323,8 +1323,9 @@ class TrackingController(QObject):
     def build_admin_risk_controls(self, outer):
         """설정 › 배송추적 페이지에 배송 위험 기준과 자동 갱신 제어를 추가한다."""
         # 위험 판정 기준(전원 공유). 좁은 컬럼이라 2행으로: 정체기준 3종 / 도서산간 가산.
-        gb_risk = QGroupBox("위험 판정 기준 (분류별 정체시간, 영업시간)")
+        gb_risk = QGroupBox("위험 판정 기준 · 전원 공유")
         rv = QVBoxLayout(gb_risk)
+        rv.addWidget(QLabel("분류별 정체시간(토·일 제외 영업시간 기준)"))
         _risk_tip = ("미완료 송장이 이 시간 이상 우체국 이벤트가 없으면 '정체'로 표시합니다. "
                      "토·일은 제외한 영업시간 기준이며, 변경 시 공유 시트에 저장되어 "
                      "전원에게 적용됩니다.")
@@ -1361,7 +1362,7 @@ class TrackingController(QObject):
         outer.addWidget(gb_risk)
 
         # 배송추적 자동 새로고침 간격(전원 공유). 0이면 자동 새로고침 끔.
-        gb_auto = QGroupBox("배송추적 자동 새로고침 (전원 공유)")
+        gb_auto = QGroupBox("자동 새로고침 · 전원 공유")
         arow = QHBoxLayout(gb_auto)
         arow.addWidget(QLabel("간격:"))
         self._dlg_auto_refresh = QSpinBox()

@@ -48,6 +48,7 @@ from PySide6.QtGui import (
     QFont,
     QPainter,
     QColor,
+    QBrush,
     QPen,
     QPalette,
     QTextCursor,
@@ -60,7 +61,7 @@ from shiboken6 import isValid
 from shared.paths import APP_ROOT
 from shared.lazy_import import deferred_module, optional_deferred_module, preload_modules_in_background
 from shared.qt_background import run_in_background
-from shared.ui_style import apply_app_style, clear_status, set_button_role, set_status
+from shared.ui_style import COLOR_DANGER, apply_app_style, clear_status, set_button_role, set_status
 from shared.window_geometry import (
     centered_position, default_window_size, geometry_to_setting, is_restorable, parse_saved_geometry,
 )
@@ -3334,6 +3335,9 @@ class MainWindow(QMainWindow):
         self._dlg_auto_refresh = None
         self._key_status_text = "확인 중…"
         self._slack_status_text = "미설정"
+        # 「설정 › 연동」 Google 상태: 토큰 파일 기준 종류와, 실행 중 시트 작업에서 난 인증 오류.
+        self._google_auth_kind = ""
+        self._google_auth_runtime_error = ""
         # 네이버 문의 알림(상품문의·고객문의 → 슬랙). 토글은 PC별(app_settings).
         self._naver_inquiry_thread = None
         self._naver_creds_validate_thread = None
@@ -3341,6 +3345,7 @@ class MainWindow(QMainWindow):
         self._coupang_creds_validate_thread = None
         self._coupang_pending_creds = ("", "", "")
         self._naver_inquiry_status_text = "미설정"
+        self._naver_inquiry_status_kind = "idle"
         self._dlg_naver_status = None
         self._dlg_naver_enable = None
         self._naver_inquiry_timer = QTimer(self)
@@ -3562,16 +3567,33 @@ class MainWindow(QMainWindow):
         if hasattr(self.ui, "label_settings_api_status"):
             self.ui.label_settings_api_status.setText(
                 f"우체국 종추적: {self._key_status_short()}  ·  "
-                f"슬랙 Webhook: {self._slack_status_text}  ·  "
                 f"문의 키: {self._naver_inquiry_status_text}"
             )
+        label_slack = getattr(self.ui, "label_slack_webhook_status", None)
+        if label_slack is not None:
+            if "설정됨" in self._slack_status_text:
+                set_status(label_slack, "ok", "설정됨")
+            else:
+                set_status(label_slack, "warn", "미설정 — 위험 알림·문의 알림을 보내지 않습니다")
+        self._update_settings_nav_badges()
+
+    def _key_status_kind(self):
+        """우체국 종추적 키 상태 문구를 상태 종류(ok·warn·error·idle)로 바꾼다."""
+        t = self._key_status_text
+        if "실패" in t:
+            return "error"
+        if "확인 중" in t or "검증 중" in t:
+            return "idle"
+        if "유효함" in t:
+            return "ok"
+        return "warn"  # 미설정, 오프라인(유효성 미확인)
 
     def _on_tracking_help_clicked(self):
         return self._tracking_controller.show_help()
 
     def _build_admin_tracking_settings(self):
         """슬랙·문의 알림은 「설정 › 알림」, 위험 판정 기준·자동 새로고침은 「설정 › 배송추적」에 구성.
-        시작 시 1회 호출. PC별 토글은 '이 PC' 라벨로 구분, 공유 튜닝값은 전원 적용."""
+        시작 시 1회 호출. 묶음 제목 뒤 「· 이 PC」(이 PC 앱 설정)·「· 전원 공유」(공유 시트)로 적용 범위를 구분한다."""
         host = getattr(self.ui, "widget_settings_alerts_host", None)
         tracking_host = getattr(self.ui, "widget_settings_tracking_host", None)
         if (host is None or host.layout() is None or tracking_host is None
@@ -3582,14 +3604,15 @@ class MainWindow(QMainWindow):
 
         self._tracking_controller.build_admin_slack_controls(outer)
 
-        # 미답변 문의 알림(자동조회 토글은 PC별, 알림 시간대는 전원 공유)
-        gb_naver = QGroupBox("미답변 문의 알림 (네이버·쿠팡 → 슬랙)")
+        # 미답변 문의 알림: 자동 조회 토글은 이 PC, 알림 시간대는 전원 공유라 묶음을 나눈다.
+        gb_naver = QGroupBox("미답변 문의 알림 · 이 PC")
         ndl = QVBoxLayout(gb_naver)
-        self._dlg_naver_status = QLabel(f"문의 알림: {self._naver_inquiry_status_text}")
-        self._dlg_naver_status.setWordWrap(True)
+        self._dlg_naver_status = QLabel()
+        self._dlg_naver_status.setObjectName("label_inquiry_alert_status")
+        self._dlg_naver_status.setWordWrap(True)  # 긴 실패 문구가 페이지 폭을 넓히지 않게
         ndl.addWidget(self._dlg_naver_status)
         nrow = QHBoxLayout()
-        self._dlg_naver_enable = QCheckBox("이 PC에서 자동 조회(5분)")
+        self._dlg_naver_enable = QCheckBox("자동 조회(5분마다 네이버·쿠팡 → 슬랙)")
         self._dlg_naver_enable.setChecked(bool(self.get_app_setting("naver_inquiry_notify", False)))
         _ws, _we = self._inquiry_work_hours()
         self._dlg_naver_enable.setToolTip(
@@ -3609,9 +3632,11 @@ class MainWindow(QMainWindow):
         nrow.addStretch(1)
         nrow.addWidget(btn_npoll)
         ndl.addLayout(nrow)
+        outer.addWidget(gb_naver)
         # 알림 허용 시간대(평일, 시작~종료 시각). 변경 시 전원 공유.
-        hrow = QHBoxLayout()
-        hrow.addWidget(QLabel("알림 시간대(평일):"))
+        gb_hours = QGroupBox("문의 알림 시간대 · 전원 공유")
+        hrow = QHBoxLayout(gb_hours)
+        hrow.addWidget(QLabel("평일"))
         _ih_start, _ih_end = self._inquiry_work_hours()
         self._dlg_inquiry_start = QSpinBox()
         self._dlg_inquiry_start.setRange(0, 23)
@@ -3632,8 +3657,7 @@ class MainWindow(QMainWindow):
         hrow.addWidget(QLabel("~"))
         hrow.addWidget(self._dlg_inquiry_end)
         hrow.addStretch(1)
-        ndl.addLayout(hrow)
-        outer.addWidget(gb_naver)
+        outer.addWidget(gb_hours)
 
         self._tracking_controller.build_admin_risk_controls(tracking_host.layout())
 
@@ -3804,14 +3828,14 @@ class MainWindow(QMainWindow):
         self.set_app_setting("naver_inquiry_notify", enabled)
         if enabled:
             self._naver_inquiry_timer.start()
-            self._set_naver_inquiry_status("조회 중…")
+            self._set_naver_inquiry_status("조회 중…", "idle")
             self._on_naver_inquiry_poll()
         else:
             self._naver_inquiry_timer.stop()
-            self._set_naver_inquiry_status("자동 조회 꺼짐")
+            self._set_naver_inquiry_status("자동 조회 꺼짐", "idle")
 
     def _on_naver_inquiry_manual_poll(self):
-        self._set_naver_inquiry_status("조회 중…")
+        self._set_naver_inquiry_status("조회 중…", "idle")
         self._on_naver_inquiry_poll()
 
     def _on_naver_inquiry_poll(self):
@@ -3829,38 +3853,44 @@ class MainWindow(QMainWindow):
         if not payload.get("ok"):
             err = str(payload.get("error", ""))
             print(f"! 문의 조회 실패: {err}")
-            self._set_naver_inquiry_status(f"실패: {err[:60]} · {t}")
+            self._set_naver_inquiry_status(f"실패: {err[:60]} · {t}", "error", err)
             return
         if payload.get("skipped_other_pc"):
-            self._set_naver_inquiry_status(f"다른 PC가 방금 확인함 · {t}")
+            self._set_naver_inquiry_status(f"다른 PC가 방금 확인함 · {t}", "ok")
             return
         open_cnt = payload.get("open", 0)
         new = payload.get("new", 0)
         reminded = payload.get("reminded", 0)
         sent = payload.get("sent", 0)
         off_hours = payload.get("off_hours", False)
+        kind = "warn" if open_cnt else "ok"
         if off_hours:
             _ws, _we = self._inquiry_work_hours()
             self._set_naver_inquiry_status(
-                f"미답변 {open_cnt}건 · 알림 시간대 아님(평일 {_ws}~{_we}시) · {t}")
+                f"미답변 {open_cnt}건 · 알림 시간대 아님(평일 {_ws}~{_we}시) · {t}", kind)
         elif new or reminded:
             self._set_naver_inquiry_status(
-                f"미답변 {open_cnt}건 · 알림 {sent}건(신규 {new}/리마인더 {reminded}) · {t}")
+                f"미답변 {open_cnt}건 · 알림 {sent}건(신규 {new}/리마인더 {reminded}) · {t}", kind)
         else:
-            self._set_naver_inquiry_status(f"미답변 {open_cnt}건 · 새 알림 없음 · {t}")
+            self._set_naver_inquiry_status(f"미답변 {open_cnt}건 · 새 알림 없음 · {t}", kind)
         for e in payload.get("errors", []) or []:
             print(f"! 문의 알림: {e}")
 
     def _cleanup_naver_inquiry_thread(self):
         self._naver_inquiry_thread = None
 
-    def _set_naver_inquiry_status(self, text):
+    def _set_naver_inquiry_status(self, text, kind="idle", detail=""):
+        """문의 알림 상태. kind: ok(정상)·warn(미답변 있음)·error(실패)·idle(조회 중·꺼짐)."""
         self._naver_inquiry_status_text = text
+        self._naver_inquiry_status_kind = kind
+        self._naver_inquiry_status_detail = detail
         self._update_naver_inquiry_status_label()
 
     def _update_naver_inquiry_status_label(self):
         if self._dlg_naver_status is not None:
-            self._dlg_naver_status.setText(f"문의 알림: {self._naver_inquiry_status_text}")
+            set_status(self._dlg_naver_status, self._naver_inquiry_status_kind,
+                       self._naver_inquiry_status_text,
+                       getattr(self, "_naver_inquiry_status_detail", ""))
         # 설정 탭 API키 상태 줄에도 문의 키 상태를 반영
         if hasattr(self.ui, "label_settings_api_status"):
             self._update_status_displays()
@@ -3895,7 +3925,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "키 설정", "client_secret 이 비어 있습니다.")
             return
         self._naver_pending_creds = (cid, csec)
-        self._set_naver_inquiry_status("키 검증 중…")
+        self._set_naver_inquiry_status("키 검증 중…", "idle")
         thread = NaverCredsValidateThread(cid, csec, self)
         self._naver_creds_validate_thread = thread
         thread.result_ready.connect(self._on_naver_creds_validated)
@@ -3915,12 +3945,12 @@ class MainWindow(QMainWindow):
                 f"이 client_id/secret 으로 토큰 발급에 실패했습니다.\n\n{err}\n\n"
                 "키를 다시 확인해 주세요. (저장하지 않았습니다)",
             )
-            self._set_naver_inquiry_status("키 검증 실패 — 저장 안 함")
+            self._set_naver_inquiry_status("키 검증 실패 — 저장 안 함", "error")
             return
         # 검증 통과 → 공유 「설정」 탭에 저장(전원 적용)
         self._tracking_controller.queue_tracking_config_write(
             {CONFIG_KEY_NAVER_CLIENT_ID: cid, CONFIG_KEY_NAVER_CLIENT_SECRET: csec})
-        self._set_naver_inquiry_status("네이버 키 유효함 ✓ (저장됨 · 전원 적용)")
+        self._set_naver_inquiry_status("네이버 키 유효함 (저장됨 · 전원 적용)", "ok")
 
     def _on_coupang_creds_edit_clicked(self):
         """관리자용: 쿠팡 vendorId/accessKey/secretKey 를 입력받아 1회 조회로 검증 후 저장."""
@@ -3964,7 +3994,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "키 설정", "secretKey 가 비어 있습니다.")
             return
         self._coupang_pending_creds = (vid, ak, sk)
-        self._set_naver_inquiry_status("쿠팡 키 검증 중…")
+        self._set_naver_inquiry_status("쿠팡 키 검증 중…", "idle")
         thread = CoupangCredsValidateThread(vid, ak, sk, self)
         self._coupang_creds_validate_thread = thread
         thread.result_ready.connect(self._on_coupang_creds_validated)
@@ -3984,7 +4014,7 @@ class MainWindow(QMainWindow):
                 f"이 쿠팡 키로 문의 조회에 실패했습니다.\n\n{err}\n\n"
                 "vendorId/accessKey/secretKey 를 다시 확인해 주세요. (저장하지 않았습니다)",
             )
-            self._set_naver_inquiry_status("쿠팡 키 검증 실패 — 저장 안 함")
+            self._set_naver_inquiry_status("쿠팡 키 검증 실패 — 저장 안 함", "error")
             return
         # 검증 통과 → 공유 「설정」 탭에 저장(전원 적용)
         self._tracking_controller.queue_tracking_config_write({
@@ -3992,7 +4022,7 @@ class MainWindow(QMainWindow):
             CONFIG_KEY_COUPANG_ACCESS_KEY: ak,
             CONFIG_KEY_COUPANG_SECRET_KEY: sk,
         })
-        self._set_naver_inquiry_status("쿠팡 키 유효함 ✓ (저장됨 · 전원 적용)")
+        self._set_naver_inquiry_status("쿠팡 키 유효함 (저장됨 · 전원 적용)", "ok")
 
     def read_app_settings(self):
         """database/app_settings.json 전체를 한 번 읽어 dict로 반환합니다.
@@ -4276,28 +4306,27 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "주문번호 인덱스 충돌", order_index_conflict_message(known))
 
     def _update_index_sheet_sync_label(self):
-        if not hasattr(self.ui, "label_index_sheet_sync"):
+        label = getattr(self.ui, "label_index_sheet_sync", None)
+        if label is None:
             return
         if self._index_sheet_push_timer.isActive():
-            self.ui.label_index_sheet_sync.setText(
-                "저장 대기: 스프레드시트에 곧 반영됩니다…"
-            )
+            set_status(label, "idle", "저장 대기: 스프레드시트에 곧 반영됩니다…")
             return
         if self._index_sheet_push_pending:
-            self.ui.label_index_sheet_sync.setText(
+            set_status(
+                label, "error",
                 "저장 대기: 스프레드시트에 반영하지 못했습니다. "
-                "「Google Sheets 연동」 재인증 또는 네트워크를 확인해 주세요."
+                "「설정 › 연동」의 Google Sheets 재인증 또는 네트워크를 확인해 주세요.",
+                single_line=False,
             )
             return
         if self._index_sheet_last_sync_display:
             t = self._index_sheet_last_sync_display.strftime("%H:%M:%S")
-            self.ui.label_index_sheet_sync.setText(
-                f"스프레드시트와 동기화됨 (마지막 반영 {t})"
-            )
+            set_status(label, "ok", f"스프레드시트와 동기화됨 (마지막 반영 {t})")
         else:
-            self.ui.label_index_sheet_sync.setText(
-                "스프레드시트와 인덱스를 맞추려면 Google 로그인 후 자동으로 반영됩니다."
-            )
+            set_status(label, "idle",
+                       "스프레드시트와 인덱스를 맞추려면 Google 로그인 후 자동으로 반영됩니다.",
+                       single_line=False)
 
     def _begin_order_index_read(self, *, interactive=False, on_applied=None, defer_if_busy=False):
         """스프레드시트 인덱스 읽기를 백그라운드 스레드로 시작합니다.
@@ -5160,7 +5189,7 @@ class MainWindow(QMainWindow):
     def _set_startup_syncing_indicator(self):
         """시작 동기화 진행 중임을 막지 않는 가벼운 라벨 표시로만 알립니다."""
         if hasattr(self.ui, "label_index_sheet_sync"):
-            self.ui.label_index_sheet_sync.setText("Google 시트와 인덱스 동기화 중…")
+            set_status(self.ui.label_index_sheet_sync, "idle", "Google 시트와 인덱스 동기화 중…")
 
     def _kickoff_startup_order_index_sync(self):
         # 논블로킹 시작: 더 이상 전체 화면 오버레이로 사용자를 막지 않습니다.
@@ -5185,15 +5214,21 @@ class MainWindow(QMainWindow):
         if not payload.get("ok"):
             err = payload.get("error", "")
             print(f"! 인덱스 시트 동기화 실패: {err}")
-            if prompt_reauth and _is_likely_google_sheets_oauth_error(
-                RuntimeError(str(err))
-            ):
-                self._prompt_google_reauth_for_oauth_error(
-                    title="Google 로그인 만료",
-                    err_text=str(err),
-                )
+            if _is_likely_google_sheets_oauth_error(RuntimeError(str(err))):
+                if prompt_reauth:
+                    self._prompt_google_reauth_for_oauth_error(
+                        title="Google 로그인 만료",
+                        err_text=str(err),
+                    )
+                else:
+                    # 폴링 중 인증 오류는 창을 띄우지 않고 「설정 › 연동」 상태와 분류 배지로만 알린다.
+                    self._mark_google_auth_runtime_error(str(err))
             self._update_index_sheet_sync_label()
             return
+        # 시트를 읽었으면 인증은 정상이다. 앞서 기록한 인증 오류 표시를 지운다.
+        if getattr(self, "_google_auth_runtime_error", ""):
+            self._clear_google_auth_runtime_error()
+            self._refresh_google_auth_status_ui()
 
         kind = payload.get("kind")
         if kind not in ("created", "data"):
@@ -6399,14 +6434,55 @@ class MainWindow(QMainWindow):
         self._coupang_option_to_vp_product_no = {}
 
     def _refresh_google_auth_status_ui(self):
-        if not hasattr(self.ui, "label_google_auth_status"):
-            return
+        """「설정 › 연동」의 Google 상태(토큰 파일 기준 + 실행 중 난 인증 오류)와 분류 목록 배지를 갱신한다."""
         try:
-            from sheets.google_sheets_oauth import get_oauth_status_description
+            from sheets.google_sheets_oauth import get_oauth_status
 
-            self.ui.label_google_auth_status.setText(get_oauth_status_description())
+            kind, text, detail = get_oauth_status()
         except Exception as e:
-            self.ui.label_google_auth_status.setText(f"상태를 표시할 수 없습니다.\n{e}")
+            kind, text, detail = "error", "상태를 표시할 수 없습니다.", str(e)
+        runtime_error = getattr(self, "_google_auth_runtime_error", "")
+        if runtime_error and kind == "ok":
+            kind, text, detail = "error", "인증 오류: 「재인증」이 필요합니다.", runtime_error
+        self._google_auth_kind = kind
+        label = getattr(self.ui, "label_google_auth_status", None)
+        if label is not None:
+            set_status(label, kind, text, detail)
+        self._update_settings_nav_badges()
+
+    def _mark_google_auth_runtime_error(self, err_text):
+        """시트 작업 중 Google 인증 오류가 나면 기록해 「설정 › 연동」과 분류 목록에 ✗로 보인다."""
+        self._google_auth_runtime_error = str(err_text or "").strip() or "Google 인증 오류"
+        self._refresh_google_auth_status_ui()
+
+    def _clear_google_auth_runtime_error(self):
+        self._google_auth_runtime_error = ""
+
+    def _settings_integration_problem(self):
+        """연동에 문제가 있으면(Google 인증 실패, 종추적 키 확인 실패) True."""
+        if getattr(self, "_google_auth_kind", "") == "error":
+            return True
+        return self._key_status_kind() == "error"
+
+    def _update_settings_nav_badges(self):
+        """「설정」 분류 목록에서 문제가 있는 분류 이름 뒤에 ✗를 붙인다(다른 탭에서 와도 보이게)."""
+        nav = getattr(self.ui, "listWidget_settings_nav", None)
+        stack = getattr(self.ui, "stackedWidget_settings", None)
+        if nav is None or stack is None:
+            return
+        problems = {"scrollArea_settings_integration": self._settings_integration_problem()}
+        for row in range(min(nav.count(), stack.count())):
+            item = nav.item(row)
+            base = item.data(Qt.ItemDataRole.UserRole)
+            if base is None:
+                base = item.text()
+                item.setData(Qt.ItemDataRole.UserRole, base)
+            bad = problems.get(stack.widget(row).objectName(), False)
+            text = f"{base}  ✗" if bad else base
+            if item.text() != text:
+                item.setText(text)
+                item.setForeground(QColor(COLOR_DANGER) if bad else QBrush())
+                item.setToolTip("연동에 문제가 있습니다. 눌러서 확인하세요." if bad else "")
 
     def _setup_settings_tab(self):
         """「설정」 탭: 왼쪽 분류 목록과 오른쪽 페이지(QStackedWidget)를 잇는다."""
@@ -6680,6 +6756,7 @@ class MainWindow(QMainWindow):
 
         deleted = delete_oauth_token_file()
         self._invalidate_google_sheets_client_and_caches()
+        self._clear_google_auth_runtime_error()
         self._refresh_google_auth_status_ui()
         if deleted:
             QMessageBox.information(self, "연결 해제", "저장된 로그인 정보를 삭제했습니다.")
@@ -6729,6 +6806,7 @@ class MainWindow(QMainWindow):
     def _on_google_reauth_finished(self, payload):
         if payload.get("ok"):
             self._gspread_client = payload.get("client")
+            self._clear_google_auth_runtime_error()
             self._refresh_google_auth_status_ui()
             self.statusBar().showMessage("Google Sheets 연동이 완료되었습니다.", 5000)
             QMessageBox.information(self, "재인증", "Google Sheets 연동이 완료되었습니다.")
@@ -6758,6 +6836,7 @@ class MainWindow(QMainWindow):
         )
 
     def _prompt_google_reauth_for_oauth_error(self, *, title: str, err_text: str) -> bool:
+        self._mark_google_auth_runtime_error(err_text)
         reply = QMessageBox.question(
             self,
             title,

@@ -61,6 +61,20 @@ class WindowSizeBudgetTests(unittest.TestCase):
         wide = {page["name"]: page["content"] for page in pages if page["content"][0] > SETTINGS_CONTENT_MAX_WIDTH}
         self.assertEqual(wide, {}, f"설정 페이지 내용 폭 {SETTINGS_CONTENT_MAX_WIDTH} 초과(가로 스크롤)")
 
+    def test_settings_groups_show_scope(self):
+        # 창 크기·설정 탭 계획 B-2: 묶음 제목 뒤에 적용 범위(· 이 PC / · 전원 공유)를 붙인다.
+        # DB 동기화 페이지는 B-5에서 정리한다.
+        missing = {}
+        for page in measured()["settings_pages"]:
+            if page["name"] == "scrollArea_settings_db_sync":
+                continue
+            self.assertTrue(page["groups"], page["name"])
+            bad = [title for title in page["groups"]
+                   if not (title.endswith("· 이 PC") or title.endswith("· 전원 공유")) or "관리자" in title]
+            if bad:
+                missing[page["name"]] = bad
+        self.assertEqual(missing, {})
+
     @unittest.skipIf(KNOWN_OVER_BUDGET, "예산을 넘는 탭이 남아 있는 동안은 창 최소 크기도 넘는다")
     def test_window_minimum_fits_budget(self):
         width, height = measured()["window_min"]
