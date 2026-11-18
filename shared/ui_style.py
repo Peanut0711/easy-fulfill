@@ -43,6 +43,9 @@ QLabel[status="warn"] {{ color: {COLOR_WARN}; }}
 QLabel[status="error"] {{ color: {COLOR_DANGER}; }}
 QLabel[status="idle"] {{ color: {COLOR_IDLE}; }}
 QLabel[emphasis="true"] {{ font-weight: 600; }}
+QFrame[notice="ok"] {{ background: #edf7ee; border-top: 1px solid #a5d6a7; }}
+QFrame[notice="warn"] {{ background: #fff4e5; border-top: 1px solid #f0c27a; }}
+QFrame[notice="error"] {{ background: #fdecea; border-top: 1px solid #e6b0aa; }}
 QLabel[band="warn"] {{
     color: {COLOR_WARN}; background: #fff4e5; font-weight: 600;
     border: 1px solid #f0c27a; border-radius: 4px;

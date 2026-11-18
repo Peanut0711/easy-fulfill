@@ -61,7 +61,8 @@ from shiboken6 import isValid
 from shared.paths import APP_ROOT
 from shared.lazy_import import deferred_module, optional_deferred_module, preload_modules_in_background
 from shared.qt_background import run_in_background
-from shared.ui_style import COLOR_DANGER, apply_app_style, clear_status, set_band, set_button_role, set_status
+from shared.ui_style import COLOR_DANGER, STATUS_MARKS, apply_app_style, clear_status, set_band, set_button_role, set_status
+from shared.ui_notice import NoticeBar
 from shared.window_geometry import (
     centered_position, default_window_size, geometry_to_setting, is_restorable, parse_saved_geometry,
 )
@@ -4596,6 +4597,9 @@ class MainWindow(QMainWindow):
         
         # 메인 윈도우 설정
         self.setCentralWidget(window.centralwidget)
+        # 탭 아래·상태바 위의 알림 띠(완료·주의 알림을 확인 창 대신 보인다). 평소에는 숨어 있다.
+        self.notice_bar = NoticeBar(window.centralwidget)
+        window.centralwidget.layout().addWidget(self.notice_bar)
         self._apply_tab_order()
         # self.setMenuBar(window.menubar)
         
@@ -7717,26 +7721,34 @@ class MainWindow(QMainWindow):
         self.show_excel_created_message(output_file, "송장 엑셀 파일이 생성되었습니다.")
         return output_file
 
+    def notify(self, kind, text, actions=(), detail=""):
+        """확인 창 대신 알림 띠로 알린다. kind: ok·warn·error. actions: [(버튼 글자, 함수), …](최대 2개).
+
+        같은 문구를 상태바에도 남겨, 띠가 사라진 뒤에도 마지막 알림을 볼 수 있다.
+        """
+        self.statusBar().showMessage(f"{STATUS_MARKS.get(kind, '')} {text}".strip())
+        bar = getattr(self, "notice_bar", None)
+        if bar is not None:
+            bar.show_notice(kind, text, actions, detail)
+
+    def _open_created_file(self, output_file):
+        if not self.open_file_with_default_app(output_file):
+            QMessageBox.warning(self, "오류", "파일을 열 수 없습니다.\n연결된 기본 앱을 확인해주세요.")
+
+    def _open_created_file_location(self, output_file):
+        if not self.open_file_location(output_file):
+            QMessageBox.warning(self, "오류", "파일 위치를 열 수 없습니다.")
+
     def show_excel_created_message(self, output_file, message_text, open_file_label="엑셀 열기"):
-        """생성 파일의 열기·폴더 열기 메시지를 표시합니다."""
-        msg = QMessageBox()
-        msg.setIcon(QMessageBox.Information)
-        msg.setWindowTitle("완료")
-        msg.setText(message_text)
-
-        open_location_button = msg.addButton("폴더 열기", QMessageBox.ActionRole)
-        open_file_button = msg.addButton(open_file_label, QMessageBox.ActionRole)
-        close_button = msg.addButton("닫기", QMessageBox.RejectRole)
-
-        msg.setDefaultButton(close_button)
-        msg.exec()
-
-        if msg.clickedButton() == open_location_button:
-            if not self.open_file_location(output_file):
-                QMessageBox.warning(self, "오류", "파일 위치를 열 수 없습니다.")
-        elif msg.clickedButton() == open_file_button:
-            if not self.open_file_with_default_app(output_file):
-                QMessageBox.warning(self, "오류", "파일을 열 수 없습니다.\n연결된 기본 앱을 확인해주세요.")
+        """파일을 만든 뒤 알림 띠에 「열기」·「폴더 열기」를 보인다(확인 창 없음, 계획 C-1)."""
+        name = Path(str(output_file)).name
+        self.notify(
+            "ok",
+            f"{message_text.rstrip('.')}: {name}",
+            [(open_file_label, lambda: self._open_created_file(output_file)),
+             ("폴더 열기", lambda: self._open_created_file_location(output_file))],
+            detail=str(output_file),
+        )
 
     def on_naver_index_changed(self, text):
         """네이버 인덱스가 수동으로 변경되었을 때 호출됩니다."""
@@ -9186,31 +9198,8 @@ class MainWindow(QMainWindow):
             print(f"  - 파일 위치: {output_file}")
             print(f"  - 행 수: {len(df_invoice)}")
 
-            self.statusBar().showMessage(f"송장 엑셀 파일 생성 완료: {output_file}")
-            
-            # 성공 메시지 표시 (커스텀 버튼 포함)
-            msg = QMessageBox()
-            msg.setIcon(QMessageBox.Information)
-            msg.setWindowTitle("완료")
-            msg.setText("송장 엑셀 파일이 생성되었습니다.")
-            
-            # 버튼 추가
-            open_location_button = msg.addButton("폴더 열기", QMessageBox.ActionRole)
-            open_file_button = msg.addButton("엑셀 열기", QMessageBox.ActionRole)
-            close_button = msg.addButton("닫기", QMessageBox.RejectRole)
-            
-            msg.setDefaultButton(close_button)
-            
-            # 메시지 박스 표시
-            clicked_button = msg.exec()
-            
-            # 버튼 클릭 처리
-            if msg.clickedButton() == open_location_button:
-                if not self.open_file_location(output_file):
-                    QMessageBox.warning(self, "오류", "파일 위치를 열 수 없습니다.")
-            elif msg.clickedButton() == open_file_button:
-                if not self.open_file_with_default_app(output_file):
-                    QMessageBox.warning(self, "오류", "파일을 열 수 없습니다.\n엑셀이 설치되어 있는지 확인해주세요.")
+            # 확인 창 대신 알림 띠(「엑셀 열기」·「폴더 열기」)로 알린다(계획 C-1).
+            self.show_excel_created_message(output_file, "송장 엑셀 파일이 생성되었습니다.")
 
         except Exception as e:
             error_msg = str(e)
@@ -11078,25 +11067,8 @@ class MainWindow(QMainWindow):
         # 주문서 목록 초기화
         self.clear_list()
         
-        # 성공 메시지 표시
-        msg = QMessageBox()
-        msg.setIcon(QMessageBox.Information)
-        msg.setWindowTitle("완료")
-        msg.setText("일괄 발송 파일이 생성되었습니다.")
-        
-        open_location_button = msg.addButton("폴더 열기", QMessageBox.ActionRole)
-        open_file_button = msg.addButton("엑셀 열기", QMessageBox.ActionRole)
-        close_button = msg.addButton("닫기", QMessageBox.RejectRole)
-        
-        msg.setDefaultButton(close_button)
-        msg.exec()
-        
-        if msg.clickedButton() == open_location_button:
-            if not self.open_file_location(output_file):
-                QMessageBox.warning(self, "오류", "파일 위치를 열 수 없습니다.")
-        elif msg.clickedButton() == open_file_button:
-            if not self.open_file_with_default_app(output_file):
-                QMessageBox.warning(self, "오류", "파일을 열 수 없습니다.\n엑셀이 설치되어 있는지 확인해주세요.")
+        # 확인 창 대신 알림 띠(「엑셀 열기」·「폴더 열기」)로 알린다(계획 C-1).
+        self.show_excel_created_message(output_file, "일괄 발송 파일이 생성되었습니다.")
 
     def select_product_file(self):
         """상품 파일을 선택하는 다이얼로그를 표시합니다."""
@@ -11354,32 +11326,8 @@ class MainWindow(QMainWindow):
             print(f"  - 파일 위치: {output_file}")
             print(f"  - 행 수: {len(updated_df)}")
 
-            self.statusBar().showMessage(f"분류 결과 파일 생성 완료: {output_file}")
-            
-            # 성공 메시지 표시 (커스텀 버튼 포함)
-            msg = QMessageBox()
-            msg.setIcon(QMessageBox.Information)
-            msg.setWindowTitle("완료")
-            msg.setText("분류 결과 파일이 생성되었습니다.")
-            msg.setInformativeText(f"파일 위치:\n{output_file}")
-            
-            # 버튼 추가
-            open_location_button = msg.addButton("폴더 열기", QMessageBox.ActionRole)
-            open_file_button = msg.addButton("엑셀 열기", QMessageBox.ActionRole)
-            close_button = msg.addButton("닫기", QMessageBox.RejectRole)
-            
-            msg.setDefaultButton(close_button)
-            
-            # 메시지 박스 표시
-            clicked_button = msg.exec()
-            
-            # 버튼 클릭 처리
-            if msg.clickedButton() == open_location_button:
-                if not self.open_file_location(output_file):
-                    QMessageBox.warning(self, "오류", "파일 위치를 열 수 없습니다.")
-            elif msg.clickedButton() == open_file_button:
-                if not self.open_file_with_default_app(output_file):
-                    QMessageBox.warning(self, "오류", "파일을 열 수 없습니다.\n엑셀이 설치되어 있는지 확인해주세요.")
+            # 확인 창 대신 알림 띠(「엑셀 열기」·「폴더 열기」)로 알린다(계획 C-1).
+            self.show_excel_created_message(output_file, "분류 결과 파일이 생성되었습니다.")
 
         except Exception as e:
             error_msg = str(e)
