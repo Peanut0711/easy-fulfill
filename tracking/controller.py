@@ -13,6 +13,7 @@ from datetime import date, datetime
 from pathlib import Path
 
 from shared import theme
+from shared.ui_components import fixed_width_button, setup_table
 from shared.lazy_import import optional_deferred_module
 from shared.ui_style import clear_status, set_button_role, set_status
 
@@ -188,6 +189,7 @@ class TrackingController(QObject):
             # 창 폭이 바뀌면 열 폭을 다시 맞추고 빈 목록 안내 위치를 옮긴다.
             table.viewport().installEventFilter(self)
             self._build_tracking_risk_chips()
+        self._apply_tracking_design()
         if hasattr(self.ui, "comboBox_tracking_filter"):
             self.ui.comboBox_tracking_filter.currentIndexChanged.connect(
                 self._on_tracking_filter_changed
@@ -210,6 +212,46 @@ class TrackingController(QObject):
         except RuntimeError:  # 창을 닫는 중 표가 먼저 지워진 경우
             pass
         return False
+
+    def _apply_tracking_design(self):
+        """배송추적 탭 배치(디자인 개편 4-2).
+
+        - 위 줄: 건수·위험 칩·진행 요약(왼쪽, 좁으면 말줄임) · 동작 버튼 3개(오른쪽).
+        - 아래 줄: 분류 · 수취인명 검색(남는 폭).
+        버튼은 글자 폭 그대로 두고(.ui의 최대 폭 제한 해제), 열이 다 들어가지 않으면 표 머리글은 끝을 「…」로 줄인다.
+        """
+        ui = self.ui
+        page_layout = getattr(ui, "verticalLayout_tracking", None)
+        if page_layout is not None:
+            page_layout.setContentsMargins(theme.SPACE_MD, theme.SPACE_MD, theme.SPACE_MD, theme.SPACE_MD)
+            page_layout.setSpacing(theme.SPACE_SM)
+        status_row = getattr(ui, "horizontalLayout_tracking_filter", None)
+        filter_row = getattr(ui, "horizontalLayout_tracking_actions", None)
+        buttons = [getattr(ui, name, None) for name in (
+            "pushButton_tracking_stop_selected", "pushButton_refresh_tracking",
+            "pushButton_refresh_tracking_exceptions")]
+        if status_row is not None and filter_row is not None:
+            status_row.setSpacing(theme.SPACE_SM)
+            for button in buttons:
+                if button is None:
+                    continue
+                filter_row.removeWidget(button)
+                button.setMinimumSize(0, 0)  # .ui의 최소 높이 34·최대 폭 130/150 고정을 풀어 테마 크기를 쓴다
+                button.setMaximumWidth(16777215)
+                fixed_width_button(button)
+                status_row.addWidget(button)
+            # 아래 줄: 버튼이 빠진 자리의 빈 칸을 지우고 검색칸이 남는 폭을 쓴다.
+            for i in reversed(range(filter_row.count())):
+                if filter_row.itemAt(i).spacerItem() is not None:
+                    filter_row.takeAt(i)
+            filter_row.setSpacing(theme.SPACE_SM)
+            search = getattr(ui, "lineEdit_tracking_recipient_search", None)
+            if search is not None:
+                filter_row.setStretchFactor(search, 1)
+        table = getattr(ui, "tableWidget_tracking", None)
+        if table is not None:
+            setup_table(table, single=False, stretch_last=table.horizontalHeader().stretchLastSection())
+            table.horizontalHeader().setTextElideMode(Qt.TextElideMode.ElideRight)
 
     def _build_tracking_risk_chips(self):
         """건수 줄에 위험 칩(누르면 그 위험만 거름)을 넣는다. .ui에 건수 줄이 없으면 만들지 않는다."""

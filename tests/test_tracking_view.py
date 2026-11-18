@@ -101,6 +101,41 @@ class TrackingViewTests(unittest.TestCase):
         host2, _ = self.controller([make_row(1)], {SETTING_TRACKING_HIDDEN_COLUMNS: ["수취인명"]})
         self.assertIn("수취인명", self.visible_labels(host2))
 
+    def test_design_moves_buttons_to_status_row(self):
+        # 디자인 개편 4-2: 동작 버튼은 건수 줄 오른쪽, 아래 줄은 분류·검색. .ui의 버튼 크기 고정은 푼다.
+        from PySide6.QtCore import Qt
+        from PySide6.QtWidgets import QComboBox, QPushButton, QSpacerItem, QVBoxLayout
+        host = Host({STALE_CONFIG_KEYS["수거누락"]: 1})
+        actions = QHBoxLayout()
+        combo, search = QComboBox(), host.ui.lineEdit_tracking_recipient_search
+        buttons = {}
+        actions.addWidget(combo)
+        actions.addWidget(search)
+        actions.addItem(QSpacerItem(40, 20))
+        for name in ("pushButton_tracking_stop_selected", "pushButton_refresh_tracking",
+                     "pushButton_refresh_tracking_exceptions"):
+            button = QPushButton(name)
+            button.setMinimumHeight(34)
+            button.setMaximumWidth(130)
+            actions.addWidget(button)
+            buttons[name] = button
+        page = QVBoxLayout()
+        host.ui.verticalLayout_tracking = page
+        host.ui.horizontalLayout_tracking_actions = actions
+        for name, button in buttons.items():
+            setattr(host.ui, name, button)
+        TrackingController(host).bind_ui()
+        status = host.ui.horizontalLayout_tracking_filter
+        for name, button in buttons.items():
+            with self.subTest(name=name):
+                self.assertGreaterEqual(status.indexOf(button), 0)
+                self.assertEqual(actions.indexOf(button), -1)
+                self.assertEqual((button.minimumHeight(), button.maximumWidth()), (0, 16777215))
+        self.assertFalse(any(actions.itemAt(i).spacerItem() for i in range(actions.count())))
+        self.assertEqual(actions.stretch(actions.indexOf(search)), 1)
+        self.assertEqual(host.table.horizontalHeader().textElideMode(), Qt.TextElideMode.ElideRight)
+        self.assertFalse(host.table.showGrid())
+
     def test_columns_fit_table_width(self):
         long_place = "동서울우편집중국(소포) 발송 대기 구역 " * 3
         host, _ = self.controller([make_row(i, location=long_place) for i in range(8)])

@@ -1017,7 +1017,7 @@
              </size>
             </property>
             <property name="text">
-             <string>배송중 새로고침</string>
+             <string>새로고침</string>
             </property>
             <property name="toolTip">
              <string>화면에 표시된 추적중 송장만 우체국 종추적조회로 갱신합니다.</string>
