@@ -2093,6 +2093,31 @@
              </widget>
             </item>
             <item>
+             <widget class="QGroupBox" name="groupBox_epost_diagnostics">
+              <property name="title">
+               <string>우체국 확인·진단 (실제 동작 없음) · 이 PC</string>
+              </property>
+              <layout class="QVBoxLayout" name="verticalLayout_epost_diagnostics">
+               <item>
+                <widget class="QLabel" name="label_epost_diagnostics_intro">
+                 <property name="text">
+                  <string>읽기 전용 확인과, 포털 팝업·인쇄 창을 연 뒤 실제 인쇄 전에서 멈추는 점검입니다. 실제 접수·인쇄·발송처리는 「API(개발 중)」 메뉴의 「실제 동작」에 있습니다.</string>
+                 </property>
+                 <property name="wordWrap">
+                  <bool>true</bool>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <layout class="QGridLayout" name="gridLayout_epost_diagnostics">
+                 <property name="horizontalSpacing"><number>8</number></property>
+                 <property name="verticalSpacing"><number>6</number></property>
+                </layout>
+               </item>
+              </layout>
+             </widget>
+            </item>
+            <item>
              <spacer name="verticalSpacer_settings_program">
               <property name="orientation">
                <enum>Qt::Orientation::Vertical</enum>

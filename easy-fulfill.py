@@ -5491,7 +5491,7 @@ class MainWindow(QMainWindow):
         self.act_clear.setStatusTip('주문 정보 초기화 (Ctrl+R)')
         self.act_clear.triggered.connect(self.clear_list)
 
-        # API 동작(개발 중) — 툴바엔 두지 않고 메뉴에서만 노출
+        # API 동작(개발 중) — 툴바엔 두지 않는다. 진입점·실제 동작은 메뉴, 확인·진단은 「설정 › 프로그램」 버튼
         self.act_api_load = QAction(QIcon('image/open-file-icon.png'), 'API로 주문 불러오기', self)
         self.act_api_load.setStatusTip('네이버 주문을 API로 직접 불러오기(발송 전 결제완료·발주확인)')
         self.act_api_load.triggered.connect(self.load_naver_orders_via_api)
@@ -5616,6 +5616,11 @@ class MainWindow(QMainWindow):
         
         
 
+    def _real_api_actions(self):
+        """외부에 실제로 반영되는 동작(네이버 발송처리, 우체국 실제 접수·인쇄). 모두 실행 전 확인 창을 띄운다."""
+        return [self.act_dispatch, self.act_epost_real_receipt,
+                self.act_epost_actual_print, self.act_epost_batch_actual_print]
+
     def _setup_menus(self):
         """상단 메뉴바를 구성합니다(생성 UI의 기본 메뉴 대신 여기서 일괄 정의).
 
@@ -5648,24 +5653,23 @@ class MainWindow(QMainWindow):
         m_order.addSeparator()
         m_order.addAction(self.act_clear)
 
+        # 창 크기·설정 탭 계획 B-4: 확인·진단 9개는 「설정 › 프로그램」 버튼으로 옮기고, 메뉴에는
+        # 불러오기·로그인·출력 대상과 구분선 아래 실제 동작 4개만 둔다(각 실제 동작은 실행 전 확인 창).
         m_api = mb.addMenu('API(개발 중)')
         m_api.addAction(self.act_api_load)
-        m_api.addAction(self.act_dispatch)
-        m_api.addSeparator()
-        m_api.addAction(self.act_epost_test_receipt)
-        m_api.addAction(self.act_epost_real_receipt)
-        m_api.addAction(self.act_epost_print_targets)
         m_api.addAction(self.act_epost_portal_login)
-        m_api.addAction(self.act_epost_portal_diagnostic)
-        m_api.addAction(self.act_epost_portal_lookup)
-        m_api.addAction(self.act_epost_portal_print_popup)
-        m_api.addAction(self.act_epost_portal_oz_viewer)
-        m_api.addAction(self.act_epost_portal_output_confirm)
-        m_api.addAction(self.act_epost_portal_reprint_popup)
-        m_api.addAction(self.act_epost_portal_reprint_oz_viewer)
-        m_api.addAction(self.act_epost_oz_print_dialog)
-        m_api.addAction(self.act_epost_actual_print)
-        m_api.addAction(self.act_epost_batch_actual_print)
+        m_api.addAction(self.act_epost_print_targets)
+        self.act_open_epost_diagnostics = QAction('우체국 확인·진단… (설정 › 프로그램)', self)
+        self.act_open_epost_diagnostics.setStatusTip('실제 동작 없는 확인·진단 버튼이 있는 「⚙ 설정 › 프로그램」으로 이동')
+        self.act_open_epost_diagnostics.triggered.connect(lambda: self.show_settings_page("program"))
+        m_api.addAction(self.act_open_epost_diagnostics)
+        m_api.addSeparator()
+        real_title = m_api.addAction('실제 동작 — 실행 전 확인 창이 뜹니다')
+        real_title.setEnabled(False)
+        warning_icon = self.style().standardIcon(QStyle.StandardPixmap.SP_MessageBoxWarning)
+        for action in self._real_api_actions():
+            action.setIcon(warning_icon)
+            m_api.addAction(action)
 
         m_link = mb.addMenu('바로가기(&L)')
         m_link.addAction(self.act_db)
@@ -6563,6 +6567,36 @@ class MainWindow(QMainWindow):
         nav.currentRowChanged.connect(self._on_settings_nav_changed)
         nav.setCurrentRow(0)
         stack.setCurrentIndex(0)
+        self._setup_epost_diagnostic_buttons()
+
+    def _epost_diagnostic_actions(self):
+        """「설정 › 프로그램」에 버튼으로 두는 우체국 확인·진단 동작(실제 접수·인쇄·발송 없음). 작업 순서대로."""
+        names = (
+            "act_epost_test_receipt",              # testYn=Y 테스트 접수
+            "act_epost_portal_diagnostic",         # 출력 화면 컨트롤 읽기 전용 점검
+            "act_epost_portal_lookup",             # 신규출력 목록 대조(읽기 전용)
+            "act_epost_portal_print_popup",        # 운송장출력 팝업, 인쇄 전에서 멈춤
+            "act_epost_portal_oz_viewer",          # OZ Viewer 열림만 확인
+            "act_epost_portal_output_confirm",     # 출력여부 읽기 전용 확인
+            "act_epost_portal_reprint_popup",      # 단건 재출력 팝업, 인쇄 전에서 멈춤
+            "act_epost_portal_reprint_oz_viewer",  # 단건 재출력 OZ Viewer 열림만 확인
+            "act_epost_oz_print_dialog",           # Windows 인쇄 창 열림만 확인
+        )
+        return [(name, getattr(self, name)) for name in names if getattr(self, name, None) is not None]
+
+    def _setup_epost_diagnostic_buttons(self):
+        """확인·진단 동작을 메뉴 대신 「설정 › 프로그램」의 버튼으로 둔다. 버튼은 같은 QAction을 부른다."""
+        grid = getattr(self.ui, "gridLayout_epost_diagnostics", None)
+        if grid is None or grid.count():
+            return
+        host = self.ui.groupBox_epost_diagnostics
+        for index, (name, action) in enumerate(self._epost_diagnostic_actions()):
+            button = QPushButton(action.text().removeprefix("우체국 "), host)
+            button.setObjectName("pushButton_diag_" + name.removeprefix("act_"))
+            button.setToolTip(action.statusTip())
+            button.clicked.connect(action.trigger)
+            action.changed.connect(lambda b=button, a=action: b.setEnabled(a.isEnabled()))
+            grid.addWidget(button, index // 2, index % 2)
 
     def _on_settings_nav_changed(self, row):
         stack = getattr(self.ui, "stackedWidget_settings", None)
