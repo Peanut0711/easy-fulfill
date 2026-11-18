@@ -54,7 +54,7 @@ STORE_11ST = "#f43142"
 
 # ── 글꼴(포인트) ───────────────────────────────────────────────────
 FONT_FAMILIES = ("Malgun Gothic", "맑은 고딕")
-FONT_SIZE = 9.0  # 본문. 10pt로 키울지는 계획 2-3에서 크기 예산을 재고 정한다.
+FONT_SIZE = 10.0  # 본문(계획 2-3에서 9pt→10pt, 크기 예산 재측정)
 FONT_SIZE_SMALL = 9.0
 
 # ── 간격·크기(논리 픽셀) ───────────────────────────────────────────
@@ -266,6 +266,7 @@ QLabel[status="warn"] {{ color: {WARN}; }}
 QLabel[status="error"] {{ color: {DANGER}; }}
 QLabel[status="idle"] {{ color: {IDLE}; }}
 QLabel[emphasis="true"] {{ font-weight: bold; }}
+QLabel[hint="true"] {{ color: {TEXT_MUTED}; font-size: {FONT_SIZE_SMALL:g}pt; }}
 QFrame[notice="ok"] {{ background: {OK_SUBTLE}; border-top: 1px solid {OK_BORDER}; }}
 QFrame[notice="warn"] {{ background: {WARN_SUBTLE}; border-top: 1px solid {WARN_BORDER}; }}
 QFrame[notice="error"] {{ background: {DANGER_SUBTLE}; border-top: 1px solid {DANGER_BORDER}; }}
