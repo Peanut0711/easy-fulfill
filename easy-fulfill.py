@@ -81,6 +81,7 @@ from tracking.service import (
     tracking_management_state as _tracking_management_state,
 )
 from tracking.repository import (
+    config_values_map_from_rows,
     normalize_tracking_no as _normalize_tracking_no,
     open_config_worksheet,
     read_config_values_map as _read_config_values_map,
@@ -89,7 +90,7 @@ from tracking.repository import (
     ConfigValueChangedError,
 )
 from tracking.controller import TrackingController
-from tracking.workers import TrackingConfigWriteThread, run_tracking_list_worker
+from tracking.workers import CONFIG_KEY_KPOST_REGKEY, TrackingConfigWriteThread, run_tracking_list_worker
 from sheets.version_gate import APP_VERSION, SOURCETREE_UPDATE_ERROR, SOURCETREE_UPDATE_STEPS
 from orders.quick import (
     detect_quick_store,
@@ -192,14 +193,34 @@ TRACKING_SHEET_PUSH_DEBOUNCE_MS = 1200
 # 예: "하이제니스 26.07.03.xlsx" — 접두어는 고정, 날짜(YY.MM.DD)만 자동.
 # 공유 설정 탭: 회사 공통 우체국 OpenAPI 인증키(regkey)를 한 곳에 두고 직원 전원이 읽어 쓴다.
 # (퍼블릭 레포에 키를 넣지 않기 위함 — 키는 코드가 아니라 비공개 시트에 저장)
-# 우편번호 검색과 동일한 우체국 regkey를 종추적조회에도 사용한다(kpost_regkey).
 CONFIG_SHEET_TITLE = "설정"
 CONFIG_SHEET_HEADERS = ["키", "값"]
+CONFIG_KEY_KPOST_POSTCODE_REGKEY = "kpost_postcode_regkey"
 
 
 def _standalone_open_config_ws(gc):
     """기존 호출부 호환용: 실제 Sheet 생성·열기는 tracking.repository에 위임한다."""
     return open_config_worksheet(gc, SPREADSHEET_ID, CONFIG_SHEET_TITLE, CONFIG_SHEET_HEADERS)
+
+
+def _read_shared_postcode_config():
+    from sheets.batch_read import batch_get_all_values
+    from sheets.google_sheets_oauth import get_authorized_gspread_client
+
+    gc = get_authorized_gspread_client(interactive=False)
+    rows, = batch_get_all_values(gc, SPREADSHEET_ID, [CONFIG_SHEET_TITLE])
+    return config_values_map_from_rows(rows)
+
+
+def _save_shared_postcode_key(regkey, original):
+    from sheets.google_sheets_oauth import get_authorized_gspread_client
+
+    gc = get_authorized_gspread_client(interactive=False)
+    _write_config_values_checked(
+        _standalone_open_config_ws(gc),
+        {CONFIG_KEY_KPOST_POSTCODE_REGKEY: regkey},
+        expected={CONFIG_KEY_KPOST_POSTCODE_REGKEY: original},
+    )
 
 
 CONFIG_KEY_SLACK_WEBHOOK = "slack_webhook_url"
@@ -249,9 +270,11 @@ STARTUP_SYNC_PROGRESS_TICK_MS = 40
 # 100% 도달 후 오버레이를 닫기까지 대기(너무 짧으면 급하게 사라진 느낌, 너무 길면 지루)
 STARTUP_SYNC_PROGRESS_HIDE_DELAY_MS = 500
 # 우정사업본부 KpostPortal 우편번호 통합검색 (target=postNew, UTF-8)
-KPOST_OPENAPI2_URL = "http://biz.epost.go.kr/KpostPortal/openapi2"
-# _show_kpost_api_error: 서버가 아닌 앱 내부용(인증키 미설정)
+KPOST_OPENAPI2_URL = "https://biz.epost.go.kr/KpostPortal/openapi2"
+KPOST_POSTCODE_TEST_ADDRESS = "세종대로 110"
+# _show_kpost_api_error에서 처리하는 앱 내부 오류 코드.
 KPOST_ERROR_NO_REGKEY = "NO_REGKEY"
+KPOST_ERROR_CONFIG_READ = "SHARED_CONFIG_READ"
 
 
 def _xml_local_lower(tag: str) -> str:
@@ -3518,7 +3541,7 @@ class MainWindow(QMainWindow):
             self._dlg_slack_status.setText(f"슬랙 알림: {self._slack_status_text}")
         if hasattr(self.ui, "label_settings_api_status"):
             self.ui.label_settings_api_status.setText(
-                f"우체국 인증키: {self._key_status_short()}  ·  "
+                f"우체국 종추적: {self._key_status_short()}  ·  "
                 f"슬랙 Webhook: {self._slack_status_text}  ·  "
                 f"문의 키: {self._naver_inquiry_status_text}"
             )
@@ -5790,8 +5813,9 @@ class MainWindow(QMainWindow):
         self._mount_quick_excel_inline()
         if hasattr(self.ui, "pushButton_quick_excel_reset"):
             self.ui.pushButton_quick_excel_reset.clicked.connect(self._reset_quick_excel_fields)
-        # 연동·API 키(관리자): 배송추적 팝업에서 환경설정 탭으로 이동. 기존 핸들러 재사용.
+        # 관리자 탭의 연동·API 키 버튼을 연결한다.
         for _bn, _h in (("pushButton_cfg_kpost_key", self._on_tracking_key_edit_clicked),
+                        ("pushButton_cfg_kpost_postcode_key", self._on_kpost_postcode_key_edit_clicked),
                         ("pushButton_cfg_slack_webhook", self._on_slack_config_clicked),
                         ("pushButton_cfg_naver_key", self._on_naver_creds_edit_clicked),
                         ("pushButton_cfg_coupang_key", self._on_coupang_creds_edit_clicked)):
@@ -6635,7 +6659,7 @@ class MainWindow(QMainWindow):
                 yield getattr(self.ui, name)
 
     def _get_kpost_regkey(self) -> str:
-        """우체국 KpostPortal 우편번호 조회 regkey."""
+        """종추적과 기존 겸용 키에 쓰이는 우체국 regkey."""
         for env_name in ("KPOST_REGKEY", "EPOST_REGKEY"):
             v = os.environ.get(env_name, "").strip()
             if v:
@@ -6652,6 +6676,45 @@ class MainWindow(QMainWindow):
             print(f"! kpost regkey 로드 오류: {e}")
         return ""
 
+    def _on_kpost_postcode_key_edit_clicked(self):
+        title = "주소 검색용 우편번호 API 키"
+        regkey, accepted = QInputDialog.getText(
+            self, title,
+            "우체국 우편번호 조회에 등록된 인증키(regkey)를 입력해 주세요.\n"
+            "주소 조회에 성공하면 공유 시트에 저장합니다.",
+            QLineEdit.EchoMode.Password,
+        )
+        if not accepted:
+            return
+        regkey = regkey.strip()
+        if not regkey:
+            QMessageBox.warning(self, title, "인증키를 입력해 주세요.")
+            return
+
+        try:
+            config = run_in_background(_read_shared_postcode_config)
+        except Exception:
+            self._show_kpost_api_error(self, (KPOST_ERROR_CONFIG_READ, ""))
+            return
+        items, error = self._request_kpost_postnew(regkey, KPOST_POSTCODE_TEST_ADDRESS)
+        if error:
+            self._show_kpost_api_error(self, error)
+            return
+        if not any(item["address"] and re.fullmatch(r"[0-9]{5}", item["postcd"]) for item in items):
+            QMessageBox.warning(self, title, "검증 주소의 우편번호를 확인하지 못했습니다. 키와 우체국 서비스 상태를 확인해 주세요.")
+            return
+
+        try:
+            original = config.get(CONFIG_KEY_KPOST_POSTCODE_REGKEY, "")
+            run_in_background(_save_shared_postcode_key, regkey, original)
+        except ConfigValueChangedError:
+            QMessageBox.warning(self, title, "다른 PC에서 공유 키를 변경했습니다. 확인 후 다시 시도해 주세요.")
+            return
+        except Exception:
+            QMessageBox.warning(self, title, "공유 시트에 저장하지 못했습니다. Google Sheets 연결과 편집 권한을 확인해 주세요.")
+            return
+        QMessageBox.information(self, title, "공유 시트에 저장했습니다. 다른 PC에서도 다음 주소 검색부터 적용됩니다.")
+
     def _show_kpost_api_error(self, parent_widget, err_pair):
         code, msg = err_pair
         code = (code or "—").strip()
@@ -6661,16 +6724,25 @@ class MainWindow(QMainWindow):
         if code == KPOST_ERROR_NO_REGKEY:
             QMessageBox.warning(
                 parent,
-                "우체국 API 인증키가 없습니다",
-                "「조회」나「주소 검색」은 우체국 우편번호 오픈API를 사용합니다.\n\n"
-                "이 PC에는 아직 API 인증키(regkey)가 등록되어 있지 않습니다.\n\n"
-                "등록 방법(택 1):\n"
-                "· 환경 변수 KPOST_REGKEY 또는 EPOST_REGKEY 에 발급받은 키 설정\n"
-                '· database/app_settings.json 에 "kpost_regkey": "발급키" 추가\n\n'
-                "인증키 없이도 이름·기본주소·상세주소·우편번호를 직접 입력한 뒤 "
-                "「생성」을 누르면 엑셀은 정상적으로 만들 수 있습니다.",
+                "우편번호 API 키가 없습니다",
+                "「관리자」 탭에서 「주소 검색용 우편번호 API 키」를 등록해 주세요.\n\n"
+                "주소와 우편번호를 직접 입력해 엑셀을 만들 수도 있습니다.",
             )
             return
+
+        if code == KPOST_ERROR_CONFIG_READ:
+            QMessageBox.warning(
+                parent, "공유 키 확인 실패",
+                "공유 시트에서 우편번호 API 키를 읽지 못했습니다.\n"
+                "「관리자」 탭에서 Google Sheets 연결과 시트 접근 권한을 확인해 주세요.",
+            )
+            return
+
+        if code == "ERR-123":
+            msg = (
+                "우체국에서 우편번호 조회용 인증키를 확인하지 못했습니다.\n"
+                "우편번호 조회에 등록된 키를 「관리자」 → 「주소 검색용 우편번호 API 키」에 입력해 주세요."
+            )
 
         QMessageBox.warning(
             parent,
@@ -6678,14 +6750,14 @@ class MainWindow(QMainWindow):
             f"오류 코드: {code}\n\n원인:\n{msg}",
         )
 
-    def _kpost_parse_postnew_response(self, text: str):
+    def _kpost_parse_postnew_response(self, xml: bytes):
         """
         Returns:
             (items, None) — items: [{postcd, address, addrjibun}, ...]
             (None, (error_code, message)) — API 오류 XML
         """
         try:
-            root = ET.fromstring(text)
+            root = ET.fromstring(xml)
         except ET.ParseError:
             return None, ("XML 오류", "응답을 XML로 해석할 수 없습니다.")
 
@@ -6723,10 +6795,6 @@ class MainWindow(QMainWindow):
 
     def _kpost_postnew_lookup_items(self, query: str):
         """postNew 통합검색. (items, None) 또는 (None, (code, msg))."""
-        regkey = self._get_kpost_regkey()
-        if not regkey:
-            return None, (KPOST_ERROR_NO_REGKEY, "")
-
         q = (query or "").strip()
         if len(q) < 2:
             return None, (
@@ -6734,16 +6802,34 @@ class MainWindow(QMainWindow):
                 "검색어는 2자 이상 입력해야 합니다.",
             )
 
+        try:
+            config = run_in_background(_read_shared_postcode_config)
+        except Exception:
+            # Google Sheets 연결 없이 쓰던 PC는 기존 로컬 겸용 키로 검색할 수 있다.
+            regkey = self._get_kpost_regkey()
+            if not regkey:
+                return None, (KPOST_ERROR_CONFIG_READ, "")
+        else:
+            regkey = (config.get(CONFIG_KEY_KPOST_POSTCODE_REGKEY)
+                      or self._get_kpost_regkey()
+                      or config.get(CONFIG_KEY_KPOST_REGKEY, ""))
+            if not regkey:
+                return None, (KPOST_ERROR_NO_REGKEY, "")
+        return self._request_kpost_postnew(regkey, q)
+
+    def _request_kpost_postnew(self, regkey: str, query: str):
         params = {
             "regkey": regkey,
             "target": "postNew",
-            "query": q,
+            "query": query,
             "countPerPage": 20,
             "currentPage": 1,
         }
         try:
             # 최대 15초 걸릴 수 있어 작업 스레드에서 기다린다(화면은 계속 그린다).
-            resp = run_in_background(requests.get, KPOST_OPENAPI2_URL, params=params, timeout=15)
+            resp = run_in_background(
+                requests.get, KPOST_OPENAPI2_URL, params=params, timeout=15, allow_redirects=False,
+            )
             resp.raise_for_status()
         except requests.RequestException as e:
             # 예외 문구에는 regkey가 담긴 요청 URL이 들어 있으므로 원인 종류만 보여 준다.
@@ -6751,8 +6837,11 @@ class MainWindow(QMainWindow):
             reason = f"HTTP {status}" if status else type(e).__name__
             return None, ("HTTP 오류", f"우편번호 검색 요청 실패({reason})")
 
-        text = resp.content.decode("utf-8", errors="replace")
-        return self._kpost_parse_postnew_response(text)
+        items, error = self._kpost_parse_postnew_response(resp.content)
+        if error:
+            code, message = error
+            return None, (code, message.replace(regkey, "[인증키]"))
+        return items, None
 
     def _on_quick_manual_postcode_lookup_clicked(self):
         """주소란 검색어로 우편번호만 조회해 첫 결과를 입력합니다."""

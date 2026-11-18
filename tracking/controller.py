@@ -186,7 +186,7 @@ class TrackingController(QObject):
             self.host, "배송추적 사용 안내",
             "우체국 OpenAPI(종추적조회)로 공유 시트(「송장추적」 탭)의 배송 상태를 갱신합니다.\n"
             "송장 불러오기·일괄발송 시 등기번호가 자동으로 누적됩니다.\n"
-            "(우편번호 검색과 동일한 우체국 인증키 사용)\n\n"
+            "종추적 인증키는 「관리자」 탭에서 등록합니다.\n\n"
             "※ 표에서 행을 더블클릭하면 해당 등기번호의 우체국 배송조회(상세) 웹페이지가 열립니다.",
         )
 
@@ -1134,7 +1134,7 @@ class TrackingController(QObject):
         new_key, ok = QInputDialog.getText(
             self.host, "우체국 OpenAPI 인증키 변경",
             "새 우체국 OpenAPI 인증키(regkey, 30자리)를 입력하세요.\n"
-            "(검증 후 직원 전원에게 적용됩니다 · 우편번호 검색에도 함께 사용)",
+            "종추적 조회로 검증한 뒤 직원 전원에게 적용됩니다.",
             QLineEdit.EchoMode.Password, "",
         )
         if not ok:
@@ -1243,7 +1243,7 @@ class TrackingController(QObject):
         if payload.get("ok"):
             regkey = str(payload.get("regkey", "") or "").strip()
             if regkey:
-                # 공유 시트의 회사 공통 키를 로컬에 반영(우편번호 검색도 함께 사용)
+                # 공유 시트의 종추적 키를 로컬에 반영한다.
                 self.set_app_setting("kpost_regkey", regkey)
             slack = str(payload.get("slack_webhook", "") or "").strip()
             if slack:

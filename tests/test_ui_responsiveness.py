@@ -68,16 +68,15 @@ class CallSiteTests(unittest.TestCase):
 
     def test_postcode_search_does_not_freeze_and_hides_key(self):
         main_window = self.app_module.MainWindow
-        host = SimpleNamespace(_get_kpost_regkey=lambda: "SECRETREGKEY",
-                               _kpost_parse_postnew_response=lambda text: (["주소"], None))
+        host = SimpleNamespace(_kpost_parse_postnew_response=lambda text: (["주소"], None))
         response = SimpleNamespace(raise_for_status=lambda: None, content="<xml/>".encode())
         with patch.object(requests, "get", slow(0.6, value=response)), Heartbeat() as beat:
-            items, err = main_window._kpost_postnew_lookup_items(host, "서울 강남구")
+            items, err = main_window._request_kpost_postnew(host, "SECRETREGKEY", "서울 강남구")
         self.assertEqual(items, ["주소"])
         self.assertLess(beat.longest_gap(), 0.2)  # 수정 전에는 요청 시간(0.6초)만큼 멈춤
         failure = requests.ConnectionError("Max retries exceeded with url: /openapi2?regkey=SECRETREGKEY&query=x")
         with patch.object(requests, "get", side_effect=failure):
-            items, err = main_window._kpost_postnew_lookup_items(host, "서울 강남구")
+            items, err = main_window._request_kpost_postnew(host, "SECRETREGKEY", "서울 강남구")
         self.assertIsNone(items)
         self.assertNotIn("SECRETREGKEY", str(err))
 

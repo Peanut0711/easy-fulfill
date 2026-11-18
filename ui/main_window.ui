@@ -1220,10 +1220,10 @@
                 <item>
                  <widget class="QPushButton" name="pushButton_cfg_kpost_key">
                   <property name="text">
-                   <string>우체국 인증키</string>
+                   <string>우체국 종추적 키</string>
                   </property>
                   <property name="toolTip">
-                   <string>관리자용: 공유 우체국 OpenAPI 인증키(regkey) 변경. 전원 적용.</string>
+                   <string>공유 우체국 국내우편물 종추적 인증키를 등록하거나 변경합니다.</string>
                   </property>
                  </widget>
                 </item>
@@ -1271,6 +1271,16 @@
                  </spacer>
                 </item>
                </layout>
+              </item>
+              <item alignment="Qt::AlignLeft">
+               <widget class="QPushButton" name="pushButton_cfg_kpost_postcode_key">
+                <property name="text">
+                 <string>주소 검색용 우편번호 API 키</string>
+                </property>
+                <property name="toolTip">
+                 <string>단건 송장의 주소 검색과 우편번호 조회에 사용할 우체국 인증키를 공유 시트에 등록합니다.</string>
+                </property>
+               </widget>
               </item>
              </layout>
             </widget>
