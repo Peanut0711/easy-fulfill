@@ -1,6 +1,7 @@
 """주문 마크다운의 사은품 작업 건을 일별로 집계한다."""
 
 from collections import Counter, defaultdict
+from calendar import monthrange
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from hashlib import sha256
@@ -12,6 +13,7 @@ from orders.gift_event import GiftEvent
 
 
 KST = timezone(timedelta(hours=9))
+MONTHLY_TIER_COUNT = 4
 DELIVERY_FIELDS = {
     "naver": ("수취인명", "통합배송지", "수취인연락처1", "수취인연락처1"),
     "gmarket": ("수령인명", "주소", "수령인 휴대폰", "수령인 전화번호"),
@@ -72,13 +74,30 @@ def build_gift_records(store: str, orders, event: GiftEvent, now: datetime) -> t
     return tuple(records)
 
 
-def summarize_gift_records(records, start: date, end: date, store: str = ""):
+def summarize_gift_records(records, start: date, end: date, store: str = "", *, max_tier: int | None = None):
     """조회 범위의 전체·일별 (구간, 최소금액, 사은품명) 수량을 센다."""
     totals = Counter()
     daily = defaultdict(Counter)
     for record in records:
-        if start <= record.day <= end and (not store or record.store == store):
+        if (start <= record.day <= end and (not store or record.store == store)
+                and (max_tier is None or record.tier <= max_tier)):
             gift = (record.tier, record.minimum, record.gift)
             totals[gift] += 1
             daily[record.day][gift] += 1
     return totals, sorted(daily.items(), reverse=True)
+
+
+def summarize_gift_month(records, year: int, month: int, store: str = ""):
+    last_day = monthrange(year, month)[1]
+    start, end = date(year, month, 1), date(year, month, last_day)
+    totals, daily = summarize_gift_records(records, start, end, store, max_tier=MONTHLY_TIER_COUNT)
+    by_day = dict(daily)
+    days = (date(year, month, day) for day in range(1, last_day + 1))
+    return totals, [(day, by_day.get(day, Counter())) for day in days]
+
+
+def gift_tier_quantities(counts, tier_count: int) -> list[int]:
+    quantities = [0] * tier_count
+    for (tier, _, _), quantity in counts.items():
+        quantities[tier - 1] += quantity
+    return quantities

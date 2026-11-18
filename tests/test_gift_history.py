@@ -152,7 +152,7 @@ class GiftHistoryReportTests(unittest.TestCase):
         dialog = GiftHistoryDialog(lambda: (records, 1))
         dialog.show()
         self.app.processEvents()
-        dialog._all_dates.setChecked(True)
+        dialog._range_mode.setCurrentIndex(dialog._range_mode.findData("all"))
         self.assertEqual(dialog._table.item(0, 5).text(), "2")
         self.assertEqual(dialog._table.item(1, 0).text(), "2026-11-20")
         self.assertEqual(dialog._table.item(1, 4).text(), "1")
@@ -161,4 +161,71 @@ class GiftHistoryReportTests(unittest.TestCase):
         self.assertEqual(dialog._table.rowCount(), 2)
         self.assertEqual(dialog._table.item(0, 2).text(), "1")
         self.assertIn("에코백", dialog._table.item(0, 2).toolTip())
+        self.assertFalse(dialog._export.isEnabled())
         dialog.close()
+
+    def test_month_selection_exports_daily_counts_and_cached_monthly_formulas(self):
+        from openpyxl import load_workbook
+        from PySide6.QtWidgets import QMessageBox
+        from ui.gift_history import GiftHistoryDialog
+
+        def record(day, tier, index, store="naver"):
+            return replace(_records(store=store)[0], day=day, tier=tier, key=str(index))
+
+        february_1 = date(2024, 2, 1)
+        february_29 = date(2024, 2, 29)
+        records = (
+            record(february_1, 1, 1), record(february_1, 1, 2), record(february_1, 2, 3),
+            record(february_29, 3, 4), record(february_29, 4, 5), record(february_29, 5, 6),
+            record(february_29, 4, 7, "coupang"), record(date(2024, 3, 1), 2, 8),
+        )
+        dialog = GiftHistoryDialog(lambda: (records, 0))
+        dialog.show()
+        self.app.processEvents()
+        dialog._year.setValue(2024)
+        dialog._month.setCurrentIndex(dialog._month.findData(2))
+        dialog._store.setCurrentIndex(dialog._store.findData("naver"))
+        self.assertTrue(dialog._export.isEnabled())
+        self.assertEqual(dialog._table.rowCount(), 30)
+        self.assertEqual(dialog._table.item(0, 5).text(), "5")
+        self.assertEqual(dialog._table.item(2, 5).text(), "0")
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "사은품 집계 2024-02.xlsx"
+            with patch.object(dialog, "_choose_month_path", return_value=str(path)) as save_path, \
+                    patch.object(QMessageBox, "information") as saved:
+                dialog._export.click()
+            save_path.assert_called_once_with(2024, 2)
+            saved.assert_called_once()
+            workbook = load_workbook(path, data_only=True)
+            try:
+                sheet = workbook["월별 사은품"]
+                self.assertEqual(sheet["A1"].value, "2024년 2월 사은품 집계")
+                self.assertIn("네이버", sheet["A2"].value)
+                self.assertEqual(tuple(cell.value for cell in sheet[4]), ("월 합계", 2, 1, 1, 1, 5))
+                self.assertEqual(tuple(cell.value for cell in sheet[5]), (datetime(2024, 2, 1), 2, 1, 0, 0, 3))
+                self.assertEqual(tuple(cell.value for cell in sheet[6]), (datetime(2024, 2, 2), 0, 0, 0, 0, 0))
+                self.assertEqual(tuple(cell.value for cell in sheet[33]), (datetime(2024, 2, 29), 0, 0, 1, 1, 2))
+                self.assertEqual((sheet.max_row, sheet.max_column, sheet.freeze_panes), (33, 6, "A5"))
+            finally:
+                workbook.close()
+            workbook = load_workbook(path)
+            try:
+                sheet = workbook["월별 사은품"]
+                self.assertEqual(sheet["B4"].value, "=SUM(B5:B33)")
+                self.assertEqual(sheet["F33"].value, "=SUM(B33:E33)")
+            finally:
+                workbook.close()
+        dialog.close()
+
+    def test_export_failure_preserves_existing_file(self):
+        from orders.gift_history_export import export_gift_month
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "기존 집계.xlsx"
+            path.write_bytes(b"existing content")
+            with patch.object(Path, "replace", side_effect=PermissionError("파일 사용 중")):
+                with self.assertRaises(PermissionError):
+                    export_gift_month(path, (), 2025, 2)
+            self.assertEqual(path.read_bytes(), b"existing content")
+            self.assertEqual(list(Path(directory).iterdir()), [path])

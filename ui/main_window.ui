@@ -1279,7 +1279,7 @@
               <item>
                <widget class="QPushButton" name="pushButton_gift_history">
                 <property name="text">
-                 <string>일별 집계</string>
+                 <string>일별 집계 · 엑셀</string>
                 </property>
                </widget>
               </item>
