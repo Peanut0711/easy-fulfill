@@ -20,3 +20,5 @@ database/order_index.json.bak
 database/
 # 로컬 전용 테스트 스크립트(서비스계정 자격증명 참조; 저장소에 넣지 않음)
 api-key-test.py
+# 화면 캡처 도구 결과(tools/capture_screens.py)
+captures/
