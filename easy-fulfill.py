@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QFileDialog, QMessageB
                               QAbstractItemView, QGroupBox, QCheckBox, QSpinBox, QMenu,
                               QStyle, QProxyStyle, QPlainTextEdit, QFormLayout,
                               QSplitter, QTextEdit, QComboBox, QDoubleSpinBox, QColorDialog,
-                              QScrollArea, QGridLayout)
+                              QScrollArea, QGridLayout, QToolButton)
 from PySide6.QtUiTools import QUiLoader
 from PySide6.QtCore import (
     QFile,
@@ -6117,7 +6117,15 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(18, 18, 18, 18)
         layout.setSpacing(14)
 
-        session_box = QGroupBox("쿠팡 WING 연결")
+        # 단계 제목: 끝난 단계는 제목 끝에 ✓(_set_detail_step_done). 입력 초기화·상품번호 변경 때 ②③을 지운다.
+        self._detail_step_titles = {
+            1: "① 쿠팡 WING 연결",
+            2: "② 상품 상세 HTML 만들기",
+            3: "③ 쿠팡 상품 HTML 적용",
+        }
+        self._detail_steps_done = set()
+        self._detail_steps_product = ""
+        session_box = QGroupBox(self._detail_step_titles[1])
         session_layout = QHBoxLayout(session_box)
         self.label_detail_session = QLabel(self._detail_session_label())
         self.pushButton_detail_login = QPushButton("쿠팡 로그인 연결/갱신")
@@ -6126,10 +6134,18 @@ class MainWindow(QMainWindow):
         session_layout.addWidget(self.pushButton_detail_login)
         session_layout.addWidget(self.pushButton_detail_clear_session)
 
-        create_box = QGroupBox("상품 상세 HTML 만들기")
+        # 대상 상품: ②(만들기)와 ③(적용)이 같은 네이버 상품번호 칸 하나를 읽는다.
+        target_row = QHBoxLayout()
+        target_label = QLabel("대상 상품 · 네이버 상품번호")
+        self.lineEdit_detail_naver = QLineEdit()
+        self.lineEdit_detail_naver.setObjectName("lineEdit_detail_naver")
+        self.lineEdit_detail_naver.setPlaceholderText("네이버 스마트스토어 상품번호 또는 상품 주소")
+        target_label.setBuddy(self.lineEdit_detail_naver)
+        target_row.addWidget(target_label)
+        target_row.addWidget(self.lineEdit_detail_naver, 1)
+
+        create_box = QGroupBox(self._detail_step_titles[2])
         create_form = QFormLayout(create_box)
-        self.lineEdit_detail_naver_create = QLineEdit()
-        self.lineEdit_detail_naver_create.setPlaceholderText("네이버 스마트스토어 상품번호")
         self.pushButton_detail_create = QPushButton("HTML 생성")
         self.pushButton_detail_open_preview = QPushButton("미리보기")
         self.pushButton_detail_open_html = QPushButton("HTML 편집")
@@ -6139,17 +6155,14 @@ class MainWindow(QMainWindow):
         create_actions.addWidget(self.pushButton_detail_open_preview)
         create_actions.addWidget(self.pushButton_detail_open_html)
         create_actions.addWidget(self.pushButton_detail_open_folder)
-        create_form.addRow("네이버 상품번호", self.lineEdit_detail_naver_create)
         create_form.addRow("작업", create_actions)
         create_form.addRow(QLabel("쿠팡 신규 등록 화면에는 생성된 HTML을 사용자가 직접 붙여 넣습니다."))
         self.detail_create_progress = None
 
-        replace_box = QGroupBox("쿠팡 상품 HTML 적용")
+        replace_box = QGroupBox(self._detail_step_titles[3])
         replace_layout = QVBoxLayout(replace_box)
         self.pushButton_detail_clear_inputs = QPushButton("입력 초기화")
         replace_form = QFormLayout()
-        self.lineEdit_detail_naver_replace = QLineEdit()
-        self.lineEdit_detail_naver_replace.setPlaceholderText("네이버 스마트스토어 상품번호")
         self.lineEdit_detail_vendor_inventory = QLineEdit()
         self.lineEdit_detail_vendor_inventory.setPlaceholderText("쿠팡 등록상품 ID")
         self.pushButton_detail_stage = QPushButton("WING에 HTML 채우기")
@@ -6159,14 +6172,19 @@ class MainWindow(QMainWindow):
         replace_actions.addWidget(self.pushButton_detail_stage)
         replace_actions.addWidget(self.pushButton_detail_finish)
         replace_actions.addWidget(self.pushButton_detail_clear_inputs)
-        replace_form.addRow("네이버 상품번호", self.lineEdit_detail_naver_replace)
         replace_form.addRow("쿠팡 등록상품 ID", self.lineEdit_detail_vendor_inventory)
         replace_form.addRow("작업", replace_actions)
         replace_form.addRow(QLabel("기본 등록 → HTML 작성 전환과 HTML 입력까지만 자동 수행합니다. 저장은 WING에서 직접 누르세요."))
         replace_layout.addLayout(replace_form)
 
         log_header = QHBoxLayout()
-        log_header.addWidget(QLabel("작업 로그"))
+        # 작업 로그는 기본 접힘. 오류가 기록되면 자동으로 펼친다(_detail_log(error=True)).
+        self.toolButton_detail_log_toggle = QToolButton()
+        self.toolButton_detail_log_toggle.setObjectName("toolButton_detail_log_toggle")
+        self.toolButton_detail_log_toggle.setCheckable(True)
+        self.toolButton_detail_log_toggle.setAutoRaise(True)
+        self.toolButton_detail_log_toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        log_header.addWidget(self.toolButton_detail_log_toggle)
         log_header.addStretch(1)
         self.pushButton_detail_log_clear = QPushButton("로그 지우기")
         self.pushButton_detail_log_copy = QPushButton("로그 복사")
@@ -6178,12 +6196,17 @@ class MainWindow(QMainWindow):
         self.textEdit_detail_log.setReadOnly(True)
         self.textEdit_detail_log.setPlaceholderText("상세페이지 작업 로그")
         self.textEdit_detail_log.setMinimumHeight(150)
+        self._detail_step_boxes = {1: session_box, 2: create_box, 3: replace_box}
         layout.addWidget(session_box)
+        layout.addLayout(target_row)
         layout.addWidget(create_box)
         layout.addWidget(replace_box)
         layout.addLayout(log_header)
         layout.addWidget(self.textEdit_detail_log, 1)
+        layout.addStretch(0)
         tabs.addTab(page, "상세페이지")
+        self.toolButton_detail_log_toggle.toggled.connect(self._set_detail_log_expanded)
+        self._set_detail_log_expanded(False)
 
         self.pushButton_detail_login.clicked.connect(self._on_detail_login_clicked)
         self.pushButton_detail_clear_session.clicked.connect(self._on_detail_clear_session_clicked)
@@ -6194,16 +6217,12 @@ class MainWindow(QMainWindow):
         self.pushButton_detail_stage.clicked.connect(self._on_detail_stage_clicked)
         self.pushButton_detail_finish.clicked.connect(self._on_detail_finish_clicked)
         self.pushButton_detail_clear_inputs.clicked.connect(self._on_detail_clear_inputs_clicked)
-        self.lineEdit_detail_naver_create.textChanged.connect(
+        self.lineEdit_detail_naver.textChanged.connect(
             lambda value: self._normalize_detail_id_input(
-                self.lineEdit_detail_naver_create, value, "naver"
+                self.lineEdit_detail_naver, value, "naver"
             )
         )
-        self.lineEdit_detail_naver_replace.textChanged.connect(
-            lambda value: self._normalize_detail_id_input(
-                self.lineEdit_detail_naver_replace, value, "naver"
-            )
-        )
+        self.lineEdit_detail_naver.textChanged.connect(self._on_detail_target_changed)
         self.lineEdit_detail_vendor_inventory.textChanged.connect(
             lambda value: self._normalize_detail_id_input(
                 self.lineEdit_detail_vendor_inventory, value, "coupang"
@@ -6213,13 +6232,49 @@ class MainWindow(QMainWindow):
         self.pushButton_detail_log_copy.clicked.connect(self._on_detail_log_copy_clicked)
         self.pushButton_detail_log_save.clicked.connect(self._on_detail_log_save_clicked)
 
-    def _detail_log(self, text):
+    DETAIL_LOG_ERROR_MARKERS = ("[오류]", "Traceback (most recent call last)")
+
+    def _detail_log(self, text, error=False):
         self.textEdit_detail_log.appendPlainText(text.rstrip())
+        if error or any(marker in text for marker in self.DETAIL_LOG_ERROR_MARKERS):
+            self._set_detail_log_expanded(True)
+
+    def _set_detail_log_expanded(self, expanded):
+        button = self.toolButton_detail_log_toggle
+        if button.isChecked() != expanded:
+            button.blockSignals(True)
+            button.setChecked(expanded)
+            button.blockSignals(False)
+        button.setText("작업 로그 ▾" if expanded else "작업 로그 ▸")
+        button.setToolTip("작업 로그 접기" if expanded else "작업 로그 펼치기")
+        self.textEdit_detail_log.setVisible(expanded)
+
+    def _set_detail_step_done(self, step, done=True):
+        """단계 묶음 제목 끝에 ✓를 붙이거나 뗀다(1: WING 연결, 2: HTML 만들기, 3: WING에 채우기)."""
+        if done:
+            self._detail_steps_done.add(step)
+            if step in (2, 3):
+                text = self.lineEdit_detail_naver.text().strip()
+                self._detail_steps_product = self._detail_id_from_input(text, "naver") or text
+        else:
+            self._detail_steps_done.discard(step)
+        title = self._detail_step_titles[step]
+        self._detail_step_boxes[step].setTitle(f"{title}  ✓" if step in self._detail_steps_done else title)
+
+    def _on_detail_target_changed(self, _value):
+        # 다른 상품으로 바꾸면 그 상품의 ②③은 아직 하지 않은 것이다. 주소를 붙여 넣으면 같은 신호 안에서
+        # 번호로 바뀌므로, 신호 값이 아니라 칸의 현재 값을 번호로 맞춰 비교한다.
+        text = self.lineEdit_detail_naver.text().strip()
+        current = self._detail_id_from_input(text, "naver") or text
+        if current != self._detail_steps_product:
+            self._set_detail_step_done(2, False)
+            self._set_detail_step_done(3, False)
 
     def _on_detail_clear_inputs_clicked(self):
-        self.lineEdit_detail_naver_create.clear()
-        self.lineEdit_detail_naver_replace.clear()
+        self.lineEdit_detail_naver.clear()
         self.lineEdit_detail_vendor_inventory.clear()
+        self._set_detail_step_done(2, False)
+        self._set_detail_step_done(3, False)
 
     @staticmethod
     def _detail_upload_progress(output):
@@ -6340,6 +6395,8 @@ class MainWindow(QMainWindow):
         text = bytes(self._detail_process.readAllStandardOutput()).decode("utf-8", errors="replace")
         self._detail_process_output += text
         self._detail_log(text)
+        if self._detail_process_title == "기존 쿠팡 상품 HTML 채우기" and "준비 완료: 쿠팡 상품" in text:
+            self._set_detail_step_done(3)
         if self._detail_process_title == "상품 상세 HTML 생성":
             progress = self._detail_upload_progress(self._detail_process_output)
             if progress:
@@ -6388,11 +6445,14 @@ class MainWindow(QMainWindow):
                 self.label_detail_session.setText(self._detail_session_label())
             except (json.JSONDecodeError, IndexError):
                 self.label_detail_session.setText(self._detail_session_label())
+            self._set_detail_step_done(1)
         elif title == "쿠팡 로그인 세션 삭제" and exit_code == 0:
             self.label_detail_session.setText("저장된 로그인 세션 없음")
-        self._detail_log(f"[{title}] {'완료' if exit_code == 0 else f'실패 ({exit_code})'}")
+            self._set_detail_step_done(1, False)
+        self._detail_log(f"[{title}] {'완료' if exit_code == 0 else f'실패 ({exit_code})'}", error=exit_code != 0)
         if title == "상품 상세 HTML 생성" and exit_code == 0 and self._detail_created_product_no:
-            self.lineEdit_detail_naver_replace.setText(self._detail_created_product_no)
+            self.lineEdit_detail_naver.setText(self._detail_created_product_no)
+            self._set_detail_step_done(2)
             self._open_detail_editor(self._detail_created_product_no)
 
     def _on_detail_login_clicked(self):
@@ -6405,7 +6465,7 @@ class MainWindow(QMainWindow):
         self._start_detail_process("쿠팡 로그인 세션 삭제", ["-m", "product_detail.coupang_session", "--clear"])
 
     def _on_detail_create_clicked(self):
-        product_no = self._detail_product_no(self.lineEdit_detail_naver_create, "네이버 상품번호", "naver")
+        product_no = self._detail_product_no(self.lineEdit_detail_naver, "네이버 상품번호", "naver")
         if product_no:
             existing_html = self._detail_output_dir(product_no) / "coupang-paste.html"
             if existing_html.exists():
@@ -6447,12 +6507,12 @@ class MainWindow(QMainWindow):
         QDesktopServices.openUrl(QUrl(server.url))
 
     def _on_detail_open_preview_clicked(self):
-        product_no = self._detail_product_no(self.lineEdit_detail_naver_create, "네이버 상품번호", "naver")
+        product_no = self._detail_product_no(self.lineEdit_detail_naver, "네이버 상품번호", "naver")
         if product_no:
             self._open_detail_file(product_no, "coupang-paste.html")
 
     def _on_detail_open_html_clicked(self):
-        product_no = self._detail_product_no(self.lineEdit_detail_naver_create, "네이버 상품번호", "naver")
+        product_no = self._detail_product_no(self.lineEdit_detail_naver, "네이버 상품번호", "naver")
         if product_no:
             self._open_detail_editor(product_no)
 
@@ -6464,7 +6524,7 @@ class MainWindow(QMainWindow):
         DetailHtmlEditorDialog(path, self).exec()
 
     def _on_detail_open_folder_clicked(self):
-        product_no = self._detail_product_no(self.lineEdit_detail_naver_create, "네이버 상품번호", "naver")
+        product_no = self._detail_product_no(self.lineEdit_detail_naver, "네이버 상품번호", "naver")
         if product_no:
             path = self._detail_output_dir(product_no)
             if not path.exists():
@@ -6473,7 +6533,7 @@ class MainWindow(QMainWindow):
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
 
     def _on_detail_stage_clicked(self):
-        product_no = self._detail_product_no(self.lineEdit_detail_naver_replace, "네이버 상품번호", "naver")
+        product_no = self._detail_product_no(self.lineEdit_detail_naver, "네이버 상품번호", "naver")
         vendor_id = self._detail_product_no(self.lineEdit_detail_vendor_inventory, "쿠팡 등록상품 ID", "coupang")
         if product_no and vendor_id:
             html_path = self._detail_output_dir(product_no) / "coupang-paste.html"
@@ -6481,7 +6541,7 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(
                     self,
                     "상세페이지",
-                    "저장된 HTML이 없습니다.\n상품 상세 HTML 만들기에서 HTML을 생성한 뒤 편집·저장해 주세요.",
+                    "저장된 HTML이 없습니다.\n「② 상품 상세 HTML 만들기」에서 HTML을 생성한 뒤 편집·저장해 주세요.",
                 )
                 return
             self._detail_log(f"[쿠팡 상품 HTML 적용] 저장된 HTML 사용: {html_path}")
