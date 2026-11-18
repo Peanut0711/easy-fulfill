@@ -66,6 +66,7 @@ from shiboken6 import isValid
 from shared.paths import APP_ROOT
 from shared.lazy_import import deferred_module, optional_deferred_module
 from shared.qt_background import run_in_background
+from shared import theme
 from shared.ui_style import apply_app_style, set_button_role, set_status
 from product_detail.detail_image_upload import upload_image_for_editor, validated_cdn_url
 # 첫 화면에 필요 없는 네트워크·복호화 모듈은 처음 쓸 때 불러온다(시작 시간 단축).
@@ -4413,8 +4414,8 @@ class MainWindow(ChromeMixin, StartupMixin, SettingsMixin, DetailPageMixin, Quic
             # 클릭(행 선택) 하이라이트를 진한 파랑 → 옅은 파스텔로(팔레트 방식이라
             # item.setBackground 위험행 색칠을 깨지 않음). 글자색은 진하게 유지.
             _tpal = self.ui.tableWidget_tracking.palette()
-            _tpal.setColor(QPalette.ColorRole.Highlight, QColor("#dcefff"))
-            _tpal.setColor(QPalette.ColorRole.HighlightedText, QColor("#1a202c"))
+            _tpal.setColor(QPalette.ColorRole.Highlight, QColor(theme.PRIMARY_SUBTLE))
+            _tpal.setColor(QPalette.ColorRole.HighlightedText, QColor(theme.TEXT))
             self.ui.tableWidget_tracking.setPalette(_tpal)
         # 우체국 인증키·슬랙·정체기준 설정 위젯은 설정 팝업에서 연결됨
 
@@ -7901,19 +7902,7 @@ class MainWindow(ChromeMixin, StartupMixin, SettingsMixin, DetailPageMixin, Quic
                             'image_url': image_url
                         })
                         
-                        button = QPushButton("이미지 보기")
-                        button.setStyleSheet("""
-                            QPushButton {
-                                background-color: #4CAF50;
-                                color: white;
-                                border: none;
-                                padding: 5px;
-                                border-radius: 3px;
-                            }
-                            QPushButton:hover {
-                                background-color: #45a049;
-                            }
-                        """)
+                        button = QPushButton("이미지 보기")  # 모양은 테마의 기본 버튼
                         button.clicked.connect(lambda checked, url=image_url, name=product_name, idx=len(self.image_info_list)-1: 
                                              self.show_image(url, name, self.image_info_list, idx))
                         table.setCellWidget(row_position, 4, button)  # 이미지 열 위치 변경

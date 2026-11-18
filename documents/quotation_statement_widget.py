@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from shared import theme
 from shared.paths import APP_ROOT
 from shared.ui_style import clear_status, set_button_role, set_status
 
@@ -149,9 +150,6 @@ class ProductChoiceDialog(QDialog):
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.table.setStyleSheet(
-            "QTableWidget::item:selected { background-color: #eef1f4; color: #111827; }"
-        )
         self.table.verticalHeader().setVisible(False)
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
@@ -202,7 +200,7 @@ class ProductChoiceDialog(QDialog):
                 link_font = link_item.font()
                 link_font.setUnderline(True)
                 link_item.setFont(link_font)
-                link_item.setForeground(QColor("#2563eb"))
+                link_item.setForeground(QColor(theme.PRIMARY))
             self.table.setItem(row, 3, link_item)
         self.table.clearSelection()
         self.table.setCurrentCell(-1, -1)
@@ -380,10 +378,7 @@ class QuotationStatementWidget(QWidget):
         item_header = QHBoxLayout()
         item_header.addWidget(QLabel("품목"))
         self.import_source_badge = QLabel()
-        self.import_source_badge.setStyleSheet(
-            "color: #075985; background: #e0f2fe; border: 1px solid #7dd3fc; "
-            "border-radius: 8px; padding: 2px 8px; font-weight: 600;"
-        )
+        self.import_source_badge.setProperty("badge", "info")  # 모양은 테마(QLabel[badge="info"])
         self.import_source_badge.setVisible(False)
         item_header.addWidget(self.import_source_badge)
         item_header.addStretch(1)
@@ -402,10 +397,6 @@ class QuotationStatementWidget(QWidget):
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.table.setAlternatingRowColors(True)
-        self.table.setStyleSheet(
-            "QTableWidget { selection-background-color: #dcefff; selection-color: #1f2937; }"
-            "QTableWidget::item:selected { background-color: #dcefff; color: #1f2937; }"
-        )
         self.table.verticalHeader().setVisible(False)
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(COL_STATUS, QHeaderView.ResizeMode.ResizeToContents)
@@ -440,7 +431,8 @@ class QuotationStatementWidget(QWidget):
         discount_layout.addStretch(1)
         self.summary_label = QLabel("품목을 입력하면 금액을 계산합니다.")
         self.summary_label.setWordWrap(True)
-        self.summary_label.setStyleSheet("font-weight: 600; padding: 4px;")
+        self.summary_label.setProperty("emphasis", "true")  # 굵게(테마 QLabel[emphasis="true"])
+        self.summary_label.setContentsMargins(4, 4, 4, 4)
         self.negotiated_check = QCheckBox("협의 완료 (현재 입력 단가를 협의 확정가로 사용)")
         self.negotiated_check.setVisible(False)
         self.free_shipping_check = QCheckBox("배송비 면제")

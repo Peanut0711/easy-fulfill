@@ -12,13 +12,15 @@ from PySide6.QtCore import QEvent, QObject, Qt
 from PySide6.QtGui import QBrush, QColor, QKeySequence, QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import QAbstractItemView, QHeaderView, QTreeView
 
+from shared import theme
+
 STANDARD_DELIVERY = "택배,등기,소포"
 COLUMNS = ("번호", "수취인", "금액", "사은품", "배송방법", "상품 수")
 COL_NUMBER, COL_RECIPIENT, COL_AMOUNT, COL_GIFT, COL_DELIVERY, COL_COUNT = range(len(COLUMNS))
 
-CODE_MISSING_BACKGROUND = "#fde2e1"
-NON_PARCEL_BACKGROUND = "#fff3c4"
-CODE_MISSING_TEXT = "#c62828"
+CODE_MISSING_BACKGROUND = theme.ROW_DANGER_BG
+NON_PARCEL_BACKGROUND = theme.ROW_WARN_BG
+CODE_MISSING_TEXT = theme.DANGER
 
 
 @dataclass(frozen=True)

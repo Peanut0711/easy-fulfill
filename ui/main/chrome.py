@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from shared import theme
 from shared.ui_notice import StatusChip
 from shared.ui_style import set_status, STATUS_MARKS
 from sheets.version_gate import APP_VERSION
@@ -49,7 +50,7 @@ STARTUP_SYNC_PROGRESS_HIDE_DELAY_MS = 500
 class CircularBusySpinner(QWidget):
     """Google 시트·처리 대기용 무한 회전 링 스피너."""
 
-    def __init__(self, parent=None, size: int = 58, line_width: int = 4, color: str = "#21838a"):
+    def __init__(self, parent=None, size: int = 58, line_width: int = 4, color: str = theme.PRIMARY):
         super().__init__(parent)
         self._line_width = line_width
         self._color = QColor(color)
@@ -150,9 +151,7 @@ class ChromeMixin:
         )
 
     def _setup_startup_loading_overlay(self):
-        accent = "#21838a"
-        accent_soft = "#e8f4f5"
-
+        # 색·글꼴 크기는 테마(shared/theme.py)의 objectName·overlayText 규칙에서 정한다.
         self._startup_overlay = QFrame(self)
         self._startup_overlay.setObjectName("startupLoadingOverlay")
         self._startup_overlay.hide()
@@ -178,61 +177,24 @@ class ChromeMixin:
 
         badge = QLabel("Easy Fulfill")
         badge.setAlignment(Qt.AlignCenter)
-        bf = QFont()
-        bf.setFamilies(
-            ["맑은 고딕", "Malgun Gothic", "Segoe UI Semibold", "Bahnschrift", "sans-serif"]
-        )
-        bf.setPointSize(12)
-        bf.setWeight(QFont.Weight.DemiBold)
-        bf.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 2.2)
-        badge.setFont(bf)
-        badge.setStyleSheet(f"color: {accent}; margin-bottom: 4px;")
+        badge.setProperty("overlayText", "badge")
 
         title = QLabel("초기 데이터를 불러오는 중…")
         title.setAlignment(Qt.AlignCenter)
-        title_font = QFont()
-        title_font.setFamilies(
-            ["맑은 고딕", "Malgun Gothic", "Segoe UI", "Bahnschrift", "Segoe UI Variable Display", "sans-serif"]
-        )
-        title_font.setPointSize(18)
-        title_font.setWeight(QFont.Weight.DemiBold)
-        title_font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 1.0)
-        title.setFont(title_font)
-        title.setStyleSheet("color: #1a202c;")
+        title.setProperty("overlayText", "title")
 
         sub = QLabel("Google 시트와 주문 인덱스를 동기화합니다.")
         sub.setAlignment(Qt.AlignCenter)
-        sub_font = QFont(title_font)
-        sub_font.setPointSize(11)
-        sub_font.setWeight(QFont.Weight.Normal)
-        sub_font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 0.25)
-        sub.setFont(sub_font)
-        sub.setStyleSheet("color: #5c6b7a;")
+        sub.setProperty("overlayText", "sub")
         sub.setWordWrap(True)
 
         self._startup_progress_bar = QProgressBar()
+        self._startup_progress_bar.setObjectName("startupProgressBar")
         self._startup_progress_bar.setRange(0, 100)
         self._startup_progress_bar.setValue(0)
         self._startup_progress_bar.setTextVisible(True)
         self._startup_progress_bar.setFormat("%p%")
-        self._startup_progress_bar.setFixedSize(300, 28)
-        self._startup_progress_bar.setStyleSheet(
-            f"""
-            QProgressBar {{
-                border: 1px solid #c5d0d8;
-                border-radius: 12px;
-                background-color: {accent_soft};
-                text-align: center;
-                color: #2c3e50;
-                font-size: 11px;
-                font-weight: 600;
-            }}
-            QProgressBar::chunk {{
-                background-color: {accent};
-                border-radius: 11px;
-            }}
-            """
-        )
+        self._startup_progress_bar.setFixedSize(300, 20)
         self._startup_progress_timer = QTimer(self)
         self._startup_progress_timer.setInterval(STARTUP_SYNC_PROGRESS_TICK_MS)
         self._startup_progress_timer.timeout.connect(self._on_startup_progress_tick)
@@ -245,10 +207,7 @@ class ChromeMixin:
 
         hint = QLabel("환경에 따라 수 초 걸릴 수 있습니다.")
         hint.setAlignment(Qt.AlignCenter)
-        hf = QFont(sub_font)
-        hf.setPointSize(9)
-        hint.setFont(hf)
-        hint.setStyleSheet("color: #8896a3; margin-top: 4px;")
+        hint.setProperty("overlayText", "hint")
         hint.setWordWrap(True)
 
         card_lay.addWidget(badge)
@@ -263,23 +222,9 @@ class ChromeMixin:
         outer.addLayout(row)
         outer.addStretch(1)
 
-        self._startup_overlay.setStyleSheet(
-            """
-            QFrame#startupLoadingOverlay {
-                background-color: rgba(28, 34, 42, 0.52);
-                border: none;
-            }
-            QFrame#startupLoadingCard {
-                background-color: #fbfbfc;
-                border: 1px solid rgba(200, 210, 220, 0.95);
-                border-radius: 18px;
-            }
-            """
-        )
         self._startup_card_entrance_anim = None
 
     def _setup_busy_processing_overlay(self):
-        accent = "#21838a"
         self._busy_overlay = QFrame(self)
         self._busy_overlay.setObjectName("busyProcessingOverlay")
         self._busy_overlay.hide()
@@ -300,28 +245,17 @@ class ChromeMixin:
 
         spin_row = QHBoxLayout()
         spin_row.addStretch(1)
-        self._busy_spinner = CircularBusySpinner(card, size=56, line_width=4, color=accent)
+        self._busy_spinner = CircularBusySpinner(card, size=56, line_width=4, color=theme.PRIMARY)
         spin_row.addWidget(self._busy_spinner)
         spin_row.addStretch(1)
 
         self._busy_overlay_title = QLabel("처리 중…")
         self._busy_overlay_title.setAlignment(Qt.AlignCenter)
-        tf = QFont()
-        tf.setFamilies(
-            ["맑은 고딕", "Malgun Gothic", "Segoe UI", "Bahnschrift", "Segoe UI Variable Display", "sans-serif"]
-        )
-        tf.setPointSize(13)
-        tf.setWeight(QFont.Weight.DemiBold)
-        self._busy_overlay_title.setFont(tf)
-        self._busy_overlay_title.setStyleSheet("color: #1a202c;")
+        self._busy_overlay_title.setProperty("overlayText", "title")
 
         self._busy_overlay_sub = QLabel("")
         self._busy_overlay_sub.setAlignment(Qt.AlignCenter)
-        sf = QFont(tf)
-        sf.setPointSize(10)
-        sf.setWeight(QFont.Weight.Normal)
-        self._busy_overlay_sub.setFont(sf)
-        self._busy_overlay_sub.setStyleSheet("color: #5c6b7a;")
+        self._busy_overlay_sub.setProperty("overlayText", "sub")
         self._busy_overlay_sub.setWordWrap(True)
 
         card_lay.addLayout(spin_row)
@@ -332,20 +266,6 @@ class ChromeMixin:
         row.addStretch(1)
         outer.addLayout(row)
         outer.addStretch(1)
-
-        self._busy_overlay.setStyleSheet(
-            """
-            QFrame#busyProcessingOverlay {
-                background-color: rgba(28, 34, 42, 0.48);
-                border: none;
-            }
-            QFrame#busyProcessingCard {
-                background-color: #fbfbfc;
-                border: 1px solid rgba(200, 210, 220, 0.95);
-                border-radius: 16px;
-            }
-            """
-        )
 
     def _layout_busy_overlay_full(self):
         if getattr(self, "_busy_overlay", None) is None:
@@ -583,8 +503,7 @@ class ChromeMixin:
         """
         mb = self.menuBar()
         mb.clear()
-        # 메뉴바와 탭 사이 경계: 얇은 헤어라인 + 위아래 패딩(숨통)
-        mb.setStyleSheet("QMenuBar { border-bottom: 1px solid #e0e0e0; padding: 2px 0; }")
+        # 메뉴바와 탭 사이 경계선·여백은 테마(QMenuBar 규칙)에서 정한다.
         # 구분선과 탭 헤더 사이 여백(레이아웃 안 위젯은 stylesheet margin이 안 먹어
         # 레이아웃 상단 마진으로 준다)
         lay = getattr(self.ui, "verticalLayout", None)
@@ -649,31 +568,12 @@ class ChromeMixin:
         self.status_label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
         self.status_label.setMinimumHeight(24)
         self.status_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-        self.status_label.setStyleSheet("""
-            QLabel {
-                color: #666666;
-                font-size: 9pt;
-                font-weight: normal;
-                padding: 0 8px;
-                background-color: #f5f5f5;
-            }
-        """)
+        self.status_label.setObjectName("statusMessageLabel")  # 색·여백은 테마
         
         # 상태바에 레이블을 추가하고 너비를 최대로 설정
         statusbar.addWidget(self.status_label, 1)  # stretch factor 1로 설정하여 최대 너비 사용
         
-        # 상태바 스타일 설정
-        statusbar.setStyleSheet("""
-            QStatusBar {
-                background-color: #f5f5f5;
-                min-height: 35px;
-                border-top: 1px solid #dcdcdc;
-            }
-            QStatusBar::item {
-                border: none;
-                width: 100%;
-            }
-        """)
+        # 상태바 바탕·경계선·높이는 테마(QStatusBar 규칙)에서 정한다.
         
         # 메뉴 안내·진행 메시지가 끝나면 마지막 알림을 다시 보여 준다.
         self._last_notice_text = ""

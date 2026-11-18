@@ -417,14 +417,15 @@ class OrderShipSummaryTests(unittest.TestCase):
         cls.app = QApplication.instance() or QApplication([])
 
     def test_summaries(self):
-        from ui.order_ship_panel import order_summary_html, ship_summary_html
+        from ui.order_ship_panel import DONE_COLOR, WARN_COLOR, order_summary_html, ship_summary_html
         self.assertEqual(order_summary_html("naver", None), "")
         text = order_summary_html("naver", {"orders": 12, "gifts": 3, "code_missing": 0, "non_parcel": 1})
         self.assertIn("✓ 네이버 12건 · 사은품 3건", text)
         self.assertNotIn("코드 없음", text)
         self.assertIn("송장 매칭 11/12", ship_summary_html(batch=("naver", 12, 11, 12)))
-        self.assertIn("#e65100", ship_summary_html(batch=("naver", 12, 11, 12)))  # 덜 맞으면 주황
-        self.assertIn("#2e7d32", ship_summary_html(batch=("naver", 12, 12, 12)))
+        partial = ship_summary_html(batch=("naver", 12, 11, 12))
+        self.assertIn(f"color:{WARN_COLOR}; font-weight:600;\">· 송장 매칭", partial)  # 덜 맞으면 주의 색
+        self.assertIn(f"color:{DONE_COLOR}; font-weight:600;\">· 송장 매칭", ship_summary_html(batch=("naver", 12, 12, 12)))
         self.assertIn("송장 5건", ship_summary_html(invoice_rows=5))
         self.assertEqual(ship_summary_html(), "")
 

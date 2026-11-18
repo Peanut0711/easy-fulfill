@@ -14,7 +14,6 @@ from ui.order_preview import (
 )
 from ui.order_ship_panel import (
     apply_primary,
-    DROP_ZONE_STYLE,
     FileDropTarget,
     next_stage,
     order_summary_html,
@@ -214,9 +213,14 @@ class OrderShipMixin:
             return
         label.setProperty("_full_text", text)
         label.setAlignment(Qt.AlignCenter)
-        # 파일 상태 칸은 끌어다 놓을 수 있는 곳임을 점선 테두리로 보여 준다.
-        label.setStyleSheet(
-            ("color: #2e7d32; font-weight: 600;" if ok else "color: #888888;") + DROP_ZONE_STYLE)
+        # 파일 상태 칸은 끌어다 놓을 수 있는 곳임을 점선 테두리로 보여 준다(모양은 테마의 dropZone 규칙).
+        state = "ok" if ok else "idle"
+        if label.property("fileState") != state or not label.property("dropZone"):
+            label.setProperty("dropZone", True)
+            label.setProperty("fileState", state)
+            style = label.style()
+            style.unpolish(label)
+            style.polish(label)
         # 리사이즈 시 다시 줄이도록 이벤트 필터 1회 등록
         if not hasattr(self, "_elide_labels"):
             self._elide_labels = set()
@@ -251,7 +255,6 @@ class OrderShipMixin:
         name = self._STORE_NAMES.get(store_type or "", "")
         lbl.clear()  # 이전 픽스맵 제거
         lbl.setFrameShape(QFrame.Shape.NoFrame)  # 버튼처럼 보이던 패널 테두리 제거(라벨로)
-        lbl.setStyleSheet("")
         lbl.setAlignment(Qt.AlignCenter)
         try:
             pixmap = store_badge_pixmap(

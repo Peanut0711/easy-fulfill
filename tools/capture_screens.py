@@ -430,15 +430,7 @@ def _worker(scale, out_dir, platform, groups):
                 window._hide_busy_processing_overlay()
             except Exception as exc:
                 errors.append(f"state-busy-overlay: {type(exc).__name__}: {exc}")
-            overlay = getattr(window, "_startup_overlay", None)
-            if overlay is not None:
-                overlay.show()
-                overlay.raise_()
-                window._layout_startup_overlay_full()
-                settle()
-                render(window, "state-startup-overlay")
-                overlay.hide()
-                settle()
+            # 시작 오버레이(_startup_overlay)는 만들기만 하고 앱에서 보이지 않아 찍지 않는다(계획 4-7에서 정리).
 
         if "menus" in groups:
             for index, action in enumerate(window.menuBar().actions()):

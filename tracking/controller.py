@@ -12,6 +12,7 @@ import sys
 from datetime import date, datetime
 from pathlib import Path
 
+from shared import theme
 from shared.lazy_import import optional_deferred_module
 from shared.ui_style import clear_status, set_button_role, set_status
 
@@ -563,17 +564,12 @@ class TrackingController(QObject):
         overlay = getattr(self, "_tracking_loading_overlay", None)
         if overlay is None:
             overlay = QWidget(viewport)
-            overlay.setStyleSheet(
-                "background-color: rgba(255, 255, 255, 175);"
-            )
+            overlay.setObjectName("trackingLoadingOverlay")  # 모양은 테마
+            overlay.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
             message = QLabel("목록 불러오는 중…", overlay)
+            message.setObjectName("trackingLoadingMessage")
             message.setAlignment(Qt.AlignmentFlag.AlignCenter)
             message.setFixedSize(220, 56)
-            message.setStyleSheet(
-                "background-color: rgba(255, 255, 255, 245);"
-                "border: 1px solid #d5dbe3; border-radius: 8px;"
-                "color: #333; font-size: 13px; font-weight: bold;"
-            )
             self._tracking_loading_overlay = overlay
             self._tracking_loading_message = message
         overlay.setGeometry(viewport.rect())
@@ -641,8 +637,8 @@ class TrackingController(QObject):
 
         # 위험 판정: 미완료 + 마지막 이벤트(없으면 등록) 후 분류별 기준(영업시간) 무이동.
         now_dt = datetime.now()
-        bg_hub = QColor("#ffb3b3")      # 허브 정체 = 빨강(위험)
-        bg_warn = QColor("#ffe0b3")     # 수거누락·이동정체 = 주황(주의)
+        bg_hub = QColor(theme.TRACK_RISK_HIGH_BG)   # 허브 정체 = 빨강(위험)
+        bg_warn = QColor(theme.TRACK_RISK_WARN_BG)  # 수거누락·이동정체 = 주황(주의)
         counts = {"허브정체": 0, "수거누락": 0, "이동정체": 0}
         risk_settings, hidden_columns, auto_refresh_min = self._tracking_view_settings()
 

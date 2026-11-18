@@ -38,6 +38,19 @@ DISABLED_TEXT = "#a0a8b3"
 DISABLED_BG = "#eef0f3"
 TOOLTIP_BG = "#1f2933"
 TOOLTIP_TEXT = "#ffffff"
+INFO = "#075985"
+INFO_SUBTLE = "#e0f2fe"
+INFO_BORDER = "#7dd3fc"
+# 화면을 덮는 오버레이 바탕(반투명)
+SCRIM = "rgba(31, 41, 51, 0.48)"
+DROP_OVERLAY_BG = "rgba(232, 240, 254, 0.88)"
+LOADING_VEIL = "rgba(255, 255, 255, 0.69)"
+# 데이터 색: 표 행 바탕(주문 미리보기·배송추적 위험), 스토어 글자 배지
+ROW_DANGER_BG = "#fde2e1"
+ROW_WARN_BG = "#fff3c4"
+TRACK_RISK_HIGH_BG = "#ffb3b3"
+TRACK_RISK_WARN_BG = "#ffe0b3"
+STORE_11ST = "#f43142"
 
 # ── 글꼴(포인트) ───────────────────────────────────────────────────
 FONT_FAMILIES = ("Malgun Gothic", "맑은 고딕")
@@ -207,6 +220,45 @@ QProgressBar {{
 QProgressBar::chunk {{ background: {PRIMARY}; border-radius: 4px; }}
 QSplitter::handle {{ background: {BG_APP}; }}
 QScrollArea {{ border: none; }}
+
+/* ── 오버레이(시작·작업 중, 배송추적 목록 전환, 파일 끌어다 놓기) ── */
+QFrame#startupLoadingOverlay, QFrame#busyProcessingOverlay {{ background: {SCRIM}; border: none; }}
+QFrame#startupLoadingCard, QFrame#busyProcessingCard {{
+    background: {BG_SURFACE}; border: 1px solid {BORDER}; border-radius: 12px;
+}}
+QLabel[overlayText="badge"] {{ color: {PRIMARY}; font-weight: bold; font-size: 11pt; }}
+QLabel[overlayText="title"] {{ color: {TEXT}; font-weight: bold; font-size: 14pt; }}
+QLabel[overlayText="sub"] {{ color: {TEXT_SECONDARY}; font-size: 10pt; }}
+QLabel[overlayText="hint"] {{ color: {TEXT_MUTED}; }}
+QProgressBar#startupProgressBar {{
+    background: {PRIMARY_SUBTLE}; border: none; border-radius: 6px; color: {TEXT}; font-weight: bold;
+}}
+QProgressBar#startupProgressBar::chunk {{ background: {PRIMARY}; border-radius: 6px; }}
+QWidget#trackingLoadingOverlay {{ background: {LOADING_VEIL}; }}
+QLabel#trackingLoadingMessage {{
+    background: {BG_SURFACE}; border: 1px solid {BORDER}; border-radius: {RADIUS_CARD}px;
+    color: {TEXT}; font-weight: bold;
+}}
+QLabel[dropOverlay="true"] {{
+    background: {DROP_OVERLAY_BG}; color: {PRIMARY}; font-weight: bold;
+    border: 2px dashed {PRIMARY}; border-radius: {RADIUS_CONTROL}px;
+}}
+
+/* ── 주문·발송 파일 칸(끌어다 놓는 곳) ───────────────── */
+QLabel[dropZone="true"] {{
+    color: {IDLE}; border: 1px dashed {BORDER_STRONG}; border-radius: {RADIUS_CONTROL}px;
+}}
+QLabel[dropZone="true"][fileState="ok"] {{ color: {OK}; font-weight: bold; }}
+
+/* ── 상태바 ─────────────────────────────────────────── */
+QStatusBar {{ min-height: 30px; }}
+QLabel#statusMessageLabel {{ color: {TEXT_SECONDARY}; padding: 0 {SPACE_SM}px; }}
+
+/* ── 배지 ───────────────────────────────────────────── */
+QLabel[badge="info"] {{
+    color: {INFO}; background: {INFO_SUBTLE}; border: 1px solid {INFO_BORDER};
+    border-radius: {RADIUS_CARD}px; padding: 2px {SPACE_SM}px; font-weight: bold;
+}}
 
 /* ── 상태 표시(shared/ui_style.set_status·set_band, shared/ui_notice) ── */
 QLabel[status="ok"] {{ color: {OK}; }}

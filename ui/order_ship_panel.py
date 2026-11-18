@@ -15,6 +15,8 @@ from PySide6.QtWidgets import QLabel
 
 from shared.ui_style import set_button_role
 
+from shared import theme
+
 STAGE_ORDER = "order"        # 주문을 불러올 차례
 STAGE_INTAKE = "intake"      # 우체국 접수 엑셀을 만들 차례
 STAGE_INVOICE = "invoice"    # 송장을 불러올 차례
@@ -24,10 +26,10 @@ STAGE_RECEIPT = "receipt"    # 발송 파일까지 만들었으니 접수목록�
 
 STORE_NAMES = {"naver": "네이버", "coupang": "쿠팡", "gmarket": "지마켓", "11st": "11번가"}
 STORE_LOGO_FILES = {"naver": "naver-logo.png", "coupang": "coupang-logo.png", "gmarket": "gmarket-logo.png"}
-STORE_TEXT_COLORS = {"11st": "#f43142"}
+STORE_TEXT_COLORS = {"11st": theme.STORE_11ST}
 
-DONE_COLOR = "#2e7d32"
-WARN_COLOR = "#e65100"
+DONE_COLOR = theme.OK
+WARN_COLOR = theme.WARN
 
 
 def order_summary_html(store_type, counts) -> str:
@@ -53,7 +55,7 @@ def ship_summary_html(*, batch=None, invoice_rows=0) -> str:
         color = DONE_COLOR if matched == total else WARN_COLOR
         return head + f' <span style="color:{color}; font-weight:600;">· 송장 매칭 {matched}/{total}</span>'
     if invoice_rows:
-        return f'<span style="color:#555555;">송장 {invoice_rows}건</span>'
+        return f'<span style="color:{theme.TEXT_SECONDARY};">송장 {invoice_rows}건</span>'
     return ""
 
 
@@ -84,12 +86,12 @@ def store_badge_pixmap(store_type, image_dir, size, dpr=1.0):
         font.setBold(True)
         font.setPointSizeF(point_size)
         painter.setFont(font)
-        painter.setPen(QColor(STORE_TEXT_COLORS.get(store, "#1a73e8")))
+        painter.setPen(QColor(STORE_TEXT_COLORS.get(store, theme.PRIMARY)))
         painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, STORE_NAMES.get(store, store))
 
     if store_type in STORE_NAMES:
-        painter.setPen(QPen(QColor("#dadce0"), 1))
-        painter.setBrush(QColor("#ffffff"))
+        painter.setPen(QPen(QColor(theme.BORDER), 1))
+        painter.setBrush(QColor(theme.BG_SURFACE))
         painter.drawRoundedRect(QRectF(0.5, 0.5, width - 1, height - 1), 6, 6)
         inner = QRectF(10, 7, width - 20, height - 14)
         logo_file = STORE_LOGO_FILES.get(store_type)
@@ -115,11 +117,6 @@ def store_badge_pixmap(store_type, image_dir, size, dpr=1.0):
 
 
 EXCEL_SUFFIXES = (".xlsx", ".xls")
-DROP_ZONE_STYLE = "border: 1px dashed #b7bec8; border-radius: 4px;"
-DROP_OVERLAY_STYLE = (
-    "QLabel { background: rgba(232, 240, 254, 225); color: #1a73e8; font-weight: 600;"
-    " border: 2px dashed #1a73e8; border-radius: 6px; }"
-)
 
 
 def excel_paths_from_mime(mime) -> list:
@@ -150,7 +147,7 @@ class FileDropTarget(QObject):
         self._overlay.setObjectName(f"{panel.objectName()}_drop_overlay")
         self._overlay.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._overlay.setWordWrap(True)
-        self._overlay.setStyleSheet(DROP_OVERLAY_STYLE)
+        self._overlay.setProperty("dropOverlay", True)  # 모양은 테마(QLabel[dropOverlay="true"])
         self._overlay.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self._overlay.hide()
         panel.setAcceptDrops(True)
