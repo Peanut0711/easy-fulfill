@@ -4570,7 +4570,7 @@ class MainWindow(QMainWindow):
                 self._version_blocked_notice_shown = True
                 self._show_required_update_notice(result.get("minimum", ""))
             return
-        print(f"앱 버전 {result.get('version')} (공유 최소 버전 {result.get('minimum') or '없음'})")
+        print(f"앱 버전 {result.get('version')}")
         if result.get("latest"):
             self._maybe_show_update_notice(result["latest"])
 
