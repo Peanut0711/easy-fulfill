@@ -112,7 +112,7 @@
 
 - 색 대비: 2단계에서 `text*` × `bg*` 조합과 버튼 글자 × 버튼 바탕 조합의 대비를 계산하는 테스트를 둔다(본문 4.5:1, 꺼진 글자는 예외).
 - 크기: `tools/measure_window_sizes.py` 예산, `tools/capture_screens.py` 125·150%에서 겹침·잘림 없음.
-- 직접 지정 금지: 5단계부터 `shared/theme.py` 밖의 색 값·`setStyleSheet`는 테스트가 막는다.
+- 직접 지정 금지: `shared/theme.py` 밖의 화면 코드에서 색 값(`#rrggbb`)·`setStyleSheet(`·`QFont(`를 쓰면 `tests/test_style_guard.py`가 실패한다. 허용 목록은 문서 내용 색(편집기 글자색 견본, 웹 미리보기 HTML)처럼 화면 모양이 아닌 데이터뿐이다. `ui/main_window.ui`에도 `styleSheet`·글꼴 크기를 넣지 않는다.
 
 ## 정할 것 (검토 지점 A)
 
