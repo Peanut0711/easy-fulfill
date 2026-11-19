@@ -245,6 +245,29 @@ def fetch_sale_products(token, max_pages=MAX_PAGES):
     return products
 
 
+def fetch_channel_products(token, max_pages=MAX_PAGES):
+    """판매 상태와 관계없이 스마트스토어 채널 상품 전체를 API 응답 dict 그대로 반환한다.
+
+    상품 DB 동기화(공유 시트에 신규 상품 추가)용. 쇼핑윈도 채널은 제외하고, 최근 등록 순으로 500개씩 읽는다.
+    """
+    _require()
+    products = []
+    page = 1
+    size = 500
+    while page <= max_pages:
+        js = _post_json(PRODUCT_SEARCH_URL, token, {"page": page, "size": size, "orderType": "REG_DATE"})
+        contents = js.get("contents") or []
+        for group in contents:
+            for product in (group.get("channelProducts") or []):
+                if product.get("channelServiceType") == "STOREFARM":
+                    products.append(product)
+        total = int(js.get("totalElements") or 0)
+        if js.get("last") or not contents or len(contents) < size or (total and page * size >= total):
+            break
+        page += 1
+    return products
+
+
 def _first(d, *keys):
     """dict d 에서 keys 를 순서대로 보고 비어있지 않은 첫 값을 반환(없으면 '')."""
     if not isinstance(d, dict):

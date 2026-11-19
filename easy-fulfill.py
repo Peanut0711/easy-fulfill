@@ -1052,7 +1052,7 @@ def run_product_code_map_load_worker(store_type: str):
         header_row_num = 1
     elif store_type == "coupang":
         sheet_index = 1
-        header_row_num = 2
+        header_row_num = 1  # 쿠팡 탭도 1행이 헤더(예전 2행). 2로 두면 첫 상품 행이 매핑에서 빠진다
     else:
         return {"ok": False, "error": f"지원되지 않는 store_type: {store_type}", "store_type": store_type}
     try:
@@ -1070,7 +1070,7 @@ def run_product_code_map_load_worker(store_type: str):
 
 
 # 상품코드 매핑 시트 위치: (탭 순서 0-based, 헤더 행 수)
-PRODUCT_CODE_MAP_SHEETS = {"naver": (0, 1), "coupang": (1, 2)}
+PRODUCT_CODE_MAP_SHEETS = {"naver": (0, 1), "coupang": (1, 1)}
 
 
 def _product_code_map_payload_from_values(store_type, values, header_row_num):
@@ -1458,7 +1458,7 @@ class CoupangCredsValidateThread(QThread):
 
 
 class DbSheetSyncThread(QThread):
-    """database 폴더 내보내기 → 스프레드시트 신규 행 append (백그라운드)."""
+    """네이버·쿠팡 상품 목록(API 또는 database 폴더 파일) → 스프레드시트 신규 행 append (백그라운드)."""
 
     result_ready = Signal(dict)
 
@@ -1481,6 +1481,7 @@ class DbSheetSyncThread(QThread):
                     naver_path=p.get("naver_path"),
                     coupang_path=p.get("coupang_path"),
                     verbose_log=p.get("verbose_log", True),
+                    source=p.get("source", "file"),
                 )
             )
         except Exception as e:
@@ -3378,7 +3379,7 @@ class MainWindow(ChromeMixin, StartupMixin, SettingsMixin, DetailPageMixin, Quic
         스프레드시트에서 상품코드 매핑을 로드합니다.
 
         - 네이버(1번 시트): A열=상품코드, E열=상품번호(스마트스토어)
-        - 쿠팡(2번 시트): A열=상품코드, D열=상품번호(VP URL), E열=옵션 ID
+        - 쿠팡(2번 시트, 1행 헤더): A열=상품코드, D열=상품번호(VP URL), E열=옵션 ID
         """
         if store_type in self._spreadsheet_product_code_maps:
             return self._spreadsheet_product_code_maps[store_type]
@@ -3391,7 +3392,7 @@ class MainWindow(ChromeMixin, StartupMixin, SettingsMixin, DetailPageMixin, Quic
             header_row_num = 1  # 1행 헤더
         elif store_type == "coupang":
             sheet_index = 1
-            header_row_num = 2  # 2행 헤더
+            header_row_num = 1  # 1행 헤더(예전 2행)
         else:
             raise ValueError(f"지원되지 않는 store_type: {store_type}")
 
@@ -4470,6 +4471,9 @@ class MainWindow(ChromeMixin, StartupMixin, SettingsMixin, DetailPageMixin, Quic
         if hasattr(self.ui, "checkBox_db_sync_preview"):
             self.ui.checkBox_db_sync_preview.toggled.connect(self._update_db_sync_test_mode_ui)
             self._update_db_sync_test_mode_ui()
+        if hasattr(self.ui, "radioButton_db_sync_source_file"):
+            self.ui.radioButton_db_sync_source_file.toggled.connect(self._update_db_sync_source_ui)
+            self._update_db_sync_source_ui()
 
         print("버튼과 메뉴 연결 완료")
 

@@ -1,5 +1,5 @@
 """
-로컬 database 폴더 내보내기(CSV/XLSX)와 구글 스프레드시트(신규 행 append) 동기화.
+네이버·쿠팡 상품 목록(API 또는 로컬 database 폴더 내보내기 CSV/XLSX)과 구글 스프레드시트(신규 행 append) 동기화.
 
 인증: google-oauth/credentials.json + token.json — google_sheets_oauth.py
 easy-fulfill UI·database-sync CLI 모두 이 모듈을 사용합니다.
@@ -37,11 +37,26 @@ NAVER_CONFIG = {
 
 COUPANG_CONFIG = {
     "sheet_index": 1,  # 2번 시트
-    "header_row": 2,   # 2행이 헤더
+    "header_row": 1,   # 1행이 헤더(예전엔 2행). 실제 헤더 행은 detect_header_row로 찾는다
     "option_id_column": "옵션 ID",
     "db_dir": str(APP_ROOT / "database"),
     "file_pattern": "price_inventory_*.xlsx"
 }
+
+
+# 상품 목록을 가져올 곳: API(기본) 또는 database 폴더의 내보내기 파일
+SOURCE_API = "api"
+SOURCE_FILE = "file"
+
+# 네이버 API 상태 코드 → 내보내기 파일·시트에 쓰인 글자
+NAVER_STATUS_LABELS = {
+    "SALE": "판매중", "OUTOFSTOCK": "품절", "SUSPENSION": "판매중지", "WAIT": "판매대기",
+    "CLOSE": "판매종료", "PROHIBITION": "판매금지", "UNADMISSION": "승인대기",
+    "REJECTION": "승인거부", "DELETE": "삭제",
+}
+NAVER_DISPLAY_LABELS = {"ON": "전시중", "SUSPENSION": "전시중지", "WAIT": "전시대기"}
+COUPANG_OFFER_LABELS = {"NEW": "새상품", "REFURBISHED": "리퍼", "USED_BEST": "중고(최상)",
+                        "USED_GOOD": "중고(상)", "USED_NORMAL": "중고(중)"}
 
 
 # ===== 함수 정의 =====
@@ -164,73 +179,49 @@ def format_db_sync_label_line(channel_title: str, path: Path | None, today: date
     return f"{channel_title} · {path.name} · {file_date:%m-%d} ({ago})"
 
 
-def get_spreadsheet_headers(worksheet, header_row_num):
+def detect_header_row(values, default_header_row, first_header="상품코드", max_rows=3):
+    """A열이 「상품코드」인 행(위에서 max_rows행 안)을 헤더 행(1-based)으로 본다. 없으면 기본값.
+
+    운영 시트 쿠팡 탭은 처음 내보내기 파일처럼 2행이 헤더였다가 지금은 1행이 헤더다(2026-11-19 확인).
     """
-    스프레드시트에서 헤더 행 가져오기
-    
-    Args:
-        worksheet: gspread 워크시트 객체
-        header_row_num: 헤더가 있는 행 번호 (1-based)
-    
-    Returns:
-        list: 헤더 리스트
-    """
-    headers = worksheet.row_values(header_row_num)
-    return headers
+    for index, row in enumerate(values[:max_rows]):
+        if row and str(row[0]).strip() == first_header:
+            return index + 1
+    return default_header_row
 
 
-def get_all_spreadsheet_data(worksheet, header_row_num):
+def records_from_values(values, header_row_num):
+    """시트 값(get_all_values)에서 헤더 다음 행들을 dict 목록으로 만든다.
+
+    같은 헤더가 두 번 나오면 뒤의 것은 버리고(쿠팡 탭의 「판매가격」 두 칸), 빈 헤더는 「빈컬럼_n」으로 둔다.
     """
-    스프레드시트에서 모든 데이터 가져오기
-    
-    Args:
-        worksheet: gspread 워크시트 객체
-        header_row_num: 헤더가 있는 행 번호 (1-based)
-    
-    Returns:
-        list of dict: 데이터 딕셔너리 리스트
-    """
-    if header_row_num == 1:
-        # 일반적인 경우 (1행이 헤더)
-        return worksheet.get_all_records()
-    else:
-        # 특수한 경우 (쿠팡처럼 2행이 헤더)
-        # 중복 헤더 처리 필요
-        all_values = worksheet.get_all_values()
-        headers = all_values[header_row_num - 1]  # header_row_num은 1-based
-        
-        # 중복 헤더 처리
-        unique_headers = []
-        used_headers = set()
-        column_indices_to_keep = []
-        
-        for idx, header in enumerate(headers):
-            header_name = header if header else f"빈컬럼_{idx}"
-            
-            if not header or header.strip() == "":
-                if f"빈컬럼_{idx}" not in used_headers:
-                    unique_headers.append(f"빈컬럼_{idx}")
-                    used_headers.add(f"빈컬럼_{idx}")
-                    column_indices_to_keep.append(idx)
-            elif header_name not in used_headers:
-                unique_headers.append(header_name)
-                used_headers.add(header_name)
-                column_indices_to_keep.append(idx)
-        
-        # 데이터 변환
-        data_records = []
-        for row_idx in range(header_row_num, len(all_values)):
-            row_data = all_values[row_idx]
-            record = {}
-            for i, header_name in enumerate(unique_headers):
-                col_idx = column_indices_to_keep[i]
-                if col_idx < len(row_data):
-                    record[header_name] = row_data[col_idx]
-                else:
-                    record[header_name] = ""
-            data_records.append(record)
-        
-        return data_records
+    headers = values[header_row_num - 1] if len(values) >= header_row_num else []
+    unique_headers = []
+    column_indices_to_keep = []
+    used_headers = set()
+    for idx, header in enumerate(headers):
+        name = header if header and header.strip() else f"빈컬럼_{idx}"
+        if name in used_headers:
+            continue
+        used_headers.add(name)
+        unique_headers.append(name)
+        column_indices_to_keep.append(idx)
+
+    records = []
+    for row in values[header_row_num:]:
+        record = {}
+        for name, col_idx in zip(unique_headers, column_indices_to_keep):
+            record[name] = row[col_idx] if col_idx < len(row) else ""
+        records.append(record)
+    return records
+
+
+def read_sheet_table(worksheet, default_header_row):
+    """탭을 한 번 읽어 (헤더 목록, 데이터 dict 목록, 헤더 행 번호)를 반환한다."""
+    values = worksheet.get_all_values()
+    header_row = detect_header_row(values, default_header_row)
+    headers = values[header_row - 1] if len(values) >= header_row else []
+    return headers, records_from_values(values, header_row), header_row
 
 
 def read_realtime_db(file_path, header_row=0):
@@ -336,6 +327,7 @@ def find_new_products(realtime_data, spreadsheet_data, option_id_column):
     for row in realtime_data:
         option_id = normalize_option_id(row.get(option_id_column, ''))
         if option_id and option_id not in existing_option_ids:
+            existing_option_ids.add(option_id)  # 같은 키가 목록에 두 번 있어도 한 번만 추가
             new_products.append(row)
     
     return new_products
@@ -344,31 +336,36 @@ def find_new_products(realtime_data, spreadsheet_data, option_id_column):
 def align_to_spreadsheet_headers(realtime_dict, spreadsheet_headers):
     """
     실시간 DB 데이터를 스프레드시트 헤더 순서로 정렬
-    
+
+    같은 헤더가 다시 나오면 pandas가 붙이는 이름(「판매가격.1」)의 값을 쓴다.
+
     Args:
         realtime_dict: 실시간 DB 딕셔너리
         spreadsheet_headers: 스프레드시트 헤더 리스트
-    
+
     Returns:
         list: 정렬된 데이터 리스트
     """
     import math
-    
+
     aligned_row = []
+    seen = {}
     for header in spreadsheet_headers:
+        count = seen.get(header, 0)
+        seen[header] = count + 1
         # 상품코드 컬럼은 사용자가 직접 창고 위치를 입력하는 곳이므로
         # 신규 제품 추가 시 반드시 빈칸으로 설정
-        if header == "상품코드":
+        if header == "상품코드" or not header:
             value = ""
         else:
-            value = realtime_dict.get(header, "")
-        
+            value = realtime_dict.get(header if count == 0 else f"{header}.{count}", "")
+
         # NaN 처리: Google Sheets에서 NaN을 JSON으로 변환할 수 없음
-        if isinstance(value, float) and math.isnan(value):
+        if value is None or (isinstance(value, float) and math.isnan(value)):
             value = ""
-        
+
         aligned_row.append(value)
-    
+
     return aligned_row
 
 
@@ -705,6 +702,7 @@ def _empty_channel_result(channel):
         "ok": False,
         "channel": channel,
         "error": None,
+        "source": None,
         "skipped_missing_file": False,
         "resolved_file": None,
         "realtime_count": 0,
@@ -712,6 +710,7 @@ def _empty_channel_result(channel):
         "new_products_count": 0,
         "planned_append": 0,
         "appended": 0,
+        "skipped_concurrent": 0,
     }
 
 
@@ -751,264 +750,301 @@ def _log_db_sync_job_summary(log, do_naver, do_coupang, out, *, verbose_log=True
     log("=" * 80 if verbose_log else "─" * 40)
 
 
-def sync_naver(
+# ===== API로 상품 목록 가져오기 =====
+
+def _api_datetime_text(value):
+    """API 시각(2026-11-19T12:32:04.102+09:00)을 내보내기 파일 형식(2026-11-19 12:32:04)으로."""
+    text = str(value or "")
+    return text[:19].replace("T", " ") if len(text) >= 19 else text
+
+
+def _int_or_blank(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return ""
+
+
+def naver_rows_from_api(products):
+    """네이버 채널 상품(API 응답 dict)을 시트 헤더 이름의 dict로 바꾼다.
+
+    시트의 열은 스마트스토어 내보내기 파일과 같다. 주문 처리에 쓰는 키는 「상품번호(스마트스토어)」이고,
+    API에 없는 칸(포인트·배송 속성 등)은 비워 둔다.
+    """
+    rows = []
+    for product in products:
+        if product.get("channelServiceType") not in (None, "STOREFARM"):
+            continue
+        product_no = _int_or_blank(product.get("channelProductNo"))
+        if product_no == "":
+            continue
+        categories = [part.strip() for part in str(product.get("wholeCategoryName") or "").split(">")]
+        categories += [""] * (4 - len(categories))
+        image = product.get("representativeImage") or {}
+        rows.append({
+            "판매자상품코드": product.get("sellerManagementCode") or "",
+            "상품명": str(product.get("name") or "").strip(),
+            "대표이미지 URL": image.get("url") or "",
+            "상품번호(스마트스토어)": product_no,
+            "채널": "스마트스토어",
+            "판매상태": NAVER_STATUS_LABELS.get(product.get("statusType"), product.get("statusType") or ""),
+            "전시상태": NAVER_DISPLAY_LABELS.get(
+                product.get("channelProductDisplayStatusType"),
+                product.get("channelProductDisplayStatusType") or ""),
+            "재고수량": _int_or_blank(product.get("stockQuantity")),
+            "판매가": _int_or_blank(product.get("salePrice")),
+            "할인가": _int_or_blank(product.get("discountedPrice")),
+            "기본배송비": _int_or_blank(product.get("deliveryFee")),
+            "반품배송비": _int_or_blank(product.get("returnFee")),
+            "교환배송비": _int_or_blank(product.get("exchangeFee")),
+            "대분류": categories[0],
+            "중분류": categories[1],
+            "소분류": categories[2],
+            "세분류": categories[3],
+            "제조사명": product.get("manufacturerName") or "",
+            "브랜드명": product.get("brandName") or "",
+            "상품등록일": _api_datetime_text(product.get("regDate")),
+            "최종수정일": _api_datetime_text(product.get("modifiedDate")),
+        })
+    return rows
+
+
+def coupang_rows_from_api(seller_products):
+    """쿠팡 등록 상품 상세(API 응답 data)를 옵션마다 시트 헤더 이름의 dict로 바꾼다.
+
+    시트의 열은 쿠팡 가격·재고 내보내기 파일과 같다. 주문 처리에 쓰는 키는 「옵션 ID」(vendorItemId)와
+    「Product ID」(VP 상품번호)다. 승인 전이라 옵션 ID가 없는 옵션은 건너뛴다.
+    재고·판매상태는 상세 응답에 없어 비워 둔다.
+    """
+    rows = []
+    for product in seller_products:
+        display_name = str(product.get("displayProductName") or product.get("sellerProductName") or "").strip()
+        for item in product.get("items") or []:
+            option_id = _int_or_blank(item.get("vendorItemId"))
+            if option_id == "":
+                continue
+            item_name = str(item.get("itemName") or "").strip()
+            rows.append({
+                "쿠팡 노출 상품명": ", ".join(part for part in (display_name, item_name) if part),
+                "업체상품 ID": _int_or_blank(product.get("sellerProductId")),
+                "Product ID": _int_or_blank(product.get("productId")),
+                "옵션 ID": option_id,
+                "상품상태": COUPANG_OFFER_LABELS.get(item.get("offerCondition"), item.get("offerCondition") or ""),
+                "바코드": item.get("barcode") or "",
+                "업체상품코드": item.get("externalVendorSku") or "",
+                "업체 등록 상품명": str(product.get("sellerProductName") or "").strip(),
+                "등록 옵션명": item_name,
+                "판매가격": _int_or_blank(item.get("salePrice")),
+                "할인율기준가": _int_or_blank(item.get("originalPrice")),
+                "승인상태": product.get("statusName") or "",
+            })
+    return rows
+
+
+def _read_shared_config(spreadsheet):
+    """공유 「설정」 탭의 키/값. API 키는 여기에만 있다(코드·저장소에 두지 않는다)."""
+    from tracking.repository import config_values_map_from_rows
+
+    return config_values_map_from_rows(spreadsheet.worksheet("설정").get_all_values())
+
+
+def _require_keys(config, keys, label):
+    values = [str(config.get(key) or "").strip() for key in keys]
+    if not all(values):
+        raise RuntimeError(f"{label} API 키가 등록되지 않았습니다. 「⚙ 설정 › 연동 › API 키」에서 등록하세요.")
+    return values
+
+
+def load_naver_products_from_api(config, sheet_records, log):
+    from integrations import naver_commerce
+
+    client_id, client_secret = _require_keys(config, ("naver_client_id", "naver_client_secret"), "네이버")
+    token = naver_commerce.get_access_token(client_id, client_secret)
+    products = naver_commerce.fetch_channel_products(token)
+    log(f"🌐 네이버 API: 스마트스토어 상품 {len(products)}개")
+    return naver_rows_from_api(products)
+
+
+def load_coupang_products_from_api(config, sheet_records, log):
+    """시트 「업체상품 ID」에 없는 등록 상품만 상세 조회해 옵션 행을 만든다.
+
+    상세 조회는 상품마다 한 번(약 0.7초)이라 전체를 읽으면 수 분이 걸린다. 이미 시트에 있는 상품에 나중에
+    추가된 옵션은 이 방식으로는 찾지 못한다(docs/known-risks.md).
+    """
+    from integrations import coupang_commerce
+
+    vendor_id, access_key, secret_key = _require_keys(
+        config, ("coupang_vendor_id", "coupang_access_key", "coupang_secret_key"), "쿠팡")
+    listed = coupang_commerce.fetch_seller_products(vendor_id, access_key, secret_key)
+    known = {normalize_option_id(row.get("업체상품 ID")) for row in sheet_records}
+    known.discard("")
+    targets = []
+    for product in listed:
+        seller_product_id = normalize_option_id(product.get("sellerProductId"))
+        if seller_product_id and seller_product_id not in known:
+            known.add(seller_product_id)
+            targets.append(seller_product_id)
+    log(f"🌐 쿠팡 API: 등록 상품 {len(listed)}개 중 시트에 없는 상품 {len(targets)}개 상세 조회")
+    details = [coupang_commerce.fetch_seller_product(spid, access_key, secret_key) for spid in targets]
+    rows = coupang_rows_from_api(details)
+    missing_option = sum(
+        1 for detail in details for item in (detail.get("items") or []) if not item.get("vendorItemId"))
+    if missing_option:
+        log(f"   (옵션 ID가 아직 없는 옵션 {missing_option}개는 건너뜀 — 승인 뒤 다시 실행)")
+    return rows
+
+
+# ===== 채널 동기화 =====
+
+CHANNELS = {
+    "naver": {
+        "label": "네이버", "icon": "🔵", "config": NAVER_CONFIG, "file_header_row": 0,
+        "id_label": "상품번호", "name": "상품명", "price": "판매가", "stock": "재고수량",
+        "api_loader": load_naver_products_from_api, "append": "append_to_spreadsheet",
+    },
+    "coupang": {
+        "label": "쿠팡", "icon": "🟡", "config": COUPANG_CONFIG, "file_header_row": 2,
+        "id_label": "옵션ID", "name": "쿠팡 노출 상품명", "price": "판매가격", "stock": "잔여수량(재고)",
+        "api_loader": load_coupang_products_from_api, "append": "append_to_spreadsheet_coupang",
+    },
+}
+
+
+def _find_latest_channel_file(channel):
+    config = CHANNELS[channel]["config"]
+    if "file_patterns" in config:
+        return get_latest_file_from_patterns(config["db_dir"], config["file_patterns"])
+    return get_latest_file_from_pattern(config["db_dir"], config["file_pattern"])
+
+
+def _log_product_lines(log, title, rows, spec, key_column):
+    log(title)
+    for i, row in enumerate(rows):
+        option_id = format_option_id_for_log(row.get(key_column, ""))
+        product_name = row.get(spec["name"], "N/A")
+        price = format_quantity_for_log(row.get(spec["price"], "N/A"))
+        stock = format_quantity_for_log(row.get(spec["stock"], "N/A"))
+        log(f"  [{i+1}] {spec['id_label']}: {option_id}, 상품명: {product_name}, 가격: {price}, 재고: {stock}")
+
+
+def sync_channel(
+    channel,
     spreadsheet_id,
+    *,
+    source=SOURCE_FILE,
     realtime_file_path=None,
     test_mode=True,
     test_count=None,
     log=print,
-    *,
     verbose_log=True,
 ):
-    """네이버 실시간 DB와 스프레드시트 동기화. dict 결과는 UI/CLI 공통 사용."""
-    r = _empty_channel_result("naver")
+    """네이버·쿠팡 상품 목록(API 또는 내보내기 파일)과 공유 시트를 비교해 시트에 없는 상품만 행으로 추가한다.
+
+    기존 행은 고치지 않는다. 신규 행의 「상품코드」는 비워 두고 작업자가 실물 위치를 적는다.
+    """
+    spec = CHANNELS[channel]
+    config = spec["config"]
+    key_column = config["option_id_column"]
+    r = _empty_channel_result(channel)
+    r["source"] = source
     if verbose_log:
         log("\n" + "=" * 80)
-        log("🔵 네이버 동기화 시작")
+        log(f"{spec['icon']} {spec['label']} 동기화 시작")
         log("=" * 80)
     else:
-        log("\n🔵 네이버 동기화")
+        log(f"\n{spec['icon']} {spec['label']} 동기화")
 
-    if realtime_file_path is None:
-        latest_file = get_latest_file_from_patterns(
-            NAVER_CONFIG["db_dir"],
-            NAVER_CONFIG["file_patterns"],
-        )
-        if latest_file is None:
-            log(
-                f"⏭️ 네이버 건너뜀: {NAVER_CONFIG['db_dir']} 폴더에 "
-                f"다음 패턴에 맞는 파일이 없습니다: {', '.join(NAVER_CONFIG['file_patterns'])}"
-            )
-            log(
-                "   (네이버만 건너뜁니다. 쿠팡 등 다른 선택 채널 동기화는 계속 진행됩니다.)"
-            )
-            r["skipped_missing_file"] = True
-            r["ok"] = True
-            if verbose_log:
-                log("\n" + "=" * 80)
-            return r
-        realtime_file_path = latest_file
-
-    r["resolved_file"] = str(realtime_file_path)
-    log(f"📂 실시간 DB 읽기: {realtime_file_path}")
-    realtime_data = read_realtime_db(str(realtime_file_path), header_row=0)
-    r["realtime_count"] = len(realtime_data)
-    log(f"✅ 실시간 DB: {len(realtime_data)}개 제품")
+    if source == SOURCE_FILE:
+        if realtime_file_path is None:
+            realtime_file_path = _find_latest_channel_file(channel)
+            if realtime_file_path is None:
+                patterns = config.get("file_patterns") or [config["file_pattern"]]
+                log(f"⏭️ {spec['label']} 건너뜀: {config['db_dir']} 폴더에 "
+                    f"다음 패턴에 맞는 파일이 없습니다: {', '.join(patterns)}")
+                log(f"   ({spec['label']}만 건너뜁니다. 다른 선택 채널 동기화는 계속 진행됩니다.)")
+                r["skipped_missing_file"] = True
+                r["ok"] = True
+                if verbose_log:
+                    log("\n" + "=" * 80)
+                return r
+        r["resolved_file"] = str(realtime_file_path)
 
     log("\n📊 스프레드시트에서 기존 데이터 읽기...")
     gc = get_authorized_gspread_client()
     spreadsheet = gc.open_by_key(spreadsheet_id)
-    worksheet = spreadsheet.get_worksheet(NAVER_CONFIG["sheet_index"])
-
-    spreadsheet_data = get_all_spreadsheet_data(worksheet, NAVER_CONFIG["header_row"])
+    worksheet = spreadsheet.get_worksheet(config["sheet_index"])
+    spreadsheet_headers, spreadsheet_data, header_row = read_sheet_table(worksheet, config["header_row"])
     r["sheet_count"] = len(spreadsheet_data)
     log(f"✅ 기존 DB: {len(spreadsheet_data)}개 제품")
 
-    spreadsheet_headers = get_spreadsheet_headers(worksheet, NAVER_CONFIG["header_row"])
+    if source == SOURCE_API:
+        realtime_data = spec["api_loader"](_read_shared_config(spreadsheet), spreadsheet_data, log)
+    else:
+        log(f"📂 실시간 DB 읽기: {realtime_file_path}")
+        realtime_data = read_realtime_db(str(realtime_file_path), header_row=spec["file_header_row"])
+    r["realtime_count"] = len(realtime_data)
+    log(f"✅ 가져온 상품: {len(realtime_data)}개")
 
     if verbose_log:
-        log(f"\n🔍 신제품 검색 중... (키: {NAVER_CONFIG['option_id_column']})")
-        log("\n📋 기존 제품 샘플 (처음 10개):")
-        for i, row in enumerate(spreadsheet_data[:10]):
-            option_id = format_option_id_for_log(row.get(NAVER_CONFIG["option_id_column"], ""))
-            product_name = row.get("상품명", "N/A")
-            price = format_quantity_for_log(row.get("판매가", "N/A"))
-            stock = format_quantity_for_log(row.get("재고수량", "N/A"))
-            log(f"  [{i+1}] 상품번호: {option_id}, 상품명: {product_name}, 가격: {price}, 재고: {stock}")
-
-        log("\n📋 실시간 DB 샘플 (처음 10개):")
-        for i, row in enumerate(realtime_data[:10]):
-            option_id = format_option_id_for_log(row.get(NAVER_CONFIG["option_id_column"], ""))
-            product_name = row.get("상품명", "N/A")
-            price = format_quantity_for_log(row.get("판매가", "N/A"))
-            stock = format_quantity_for_log(row.get("재고수량", "N/A"))
-            log(f"  [{i+1}] 상품번호: {option_id}, 상품명: {product_name}, 가격: {price}, 재고: {stock}")
+        log(f"\n🔍 신제품 검색 중... (키: {key_column})")
+        _log_product_lines(log, "\n📋 기존 제품 샘플 (처음 10개):", spreadsheet_data[:10], spec, key_column)
+        _log_product_lines(log, "\n📋 가져온 상품 샘플 (처음 10개):", realtime_data[:10], spec, key_column)
     else:
         log("\n🔍 신제품 비교 중...")
 
-    new_products = find_new_products(
-        realtime_data,
-        spreadsheet_data,
-        NAVER_CONFIG["option_id_column"],
-    )
+    new_products = find_new_products(realtime_data, spreadsheet_data, key_column)
     r["new_products_count"] = len(new_products)
     log(f"\n✅ 신제품 발견: {len(new_products)}개")
-
-    if new_products:
-        if verbose_log:
-            log("\n🆕 신제품 목록 (전부 표시):")
-            for i, product in enumerate(new_products):
-                option_id = format_option_id_for_log(product.get(NAVER_CONFIG["option_id_column"], ""))
-                product_name = product.get("상품명", "N/A")
-                price = format_quantity_for_log(product.get("판매가", "N/A"))
-                stock = format_quantity_for_log(product.get("재고수량", "N/A"))
-                log(f"  [{i+1}] 상품번호: {option_id}, 상품명: {product_name}, 가격: {price}, 재고: {stock}")
-        else:
-            log(
-                f"\n🆕 신제품 {len(new_products)}건 — 행 목록은 「로그 출력(상세)」를 켠 뒤 다시 실행하면 표시됩니다."
-            )
-
-    if new_products:
-        products_to_add = new_products
-        if test_count is not None and test_count > 0:
-            products_to_add = new_products[:test_count]
-            log(f"\n🧪 건수 제한: 상위 {test_count}개만 대상으로 합니다.")
-        r["planned_append"] = len(products_to_add)
-
-        if test_mode:
-            log(f"\n📝 추가 예정 제품 수: {len(products_to_add)}개")
-            log("⚠️  미리보기: 스프레드시트에 쓰지 않습니다.")
-        else:
-            log(f"\n📝 추가할 제품 수: {len(products_to_add)}개")
-            new_rows = []
-            for product in products_to_add:
-                aligned_row = align_to_spreadsheet_headers(product, spreadsheet_headers)
-                new_rows.append(aligned_row)
-            append_to_spreadsheet(
-                worksheet,
-                new_rows,
-                NAVER_CONFIG["header_row"],
-                log=log,
-                verbose_log=verbose_log,
-            )
-            r["appended"] = len(new_rows)
-    else:
+    if not new_products:
         log("\n✅ 새 제품이 없습니다. 동기화 완료!")
+        r["ok"] = True
+        if verbose_log:
+            log("\n" + "=" * 80)
+        return r
 
-    r["ok"] = r["error"] is None
+    # 신규 목록은 짧으므로 상세 로그가 꺼져 있어도 보여 준다(작업자가 상품코드를 채울 대상).
+    _log_product_lines(log, "\n🆕 신제품 목록:", new_products, spec, key_column)
+
+    products_to_add = new_products
+    if test_count is not None and test_count > 0:
+        products_to_add = new_products[:test_count]
+        log(f"\n🧪 건수 제한: 상위 {test_count}개만 대상으로 합니다.")
+    r["planned_append"] = len(products_to_add)
+
+    if test_mode:
+        log(f"\n📝 추가 예정 제품 수: {len(products_to_add)}개")
+        log("⚠️  미리보기: 스프레드시트에 쓰지 않습니다.")
+    else:
+        # 가져오는 사이 다른 PC가 같은 상품을 먼저 추가했을 수 있으므로 쓰기 직전에 키를 다시 읽는다.
+        _, latest_data, header_row = read_sheet_table(worksheet, config["header_row"])
+        fresh = find_new_products(products_to_add, latest_data, key_column)
+        r["skipped_concurrent"] = len(products_to_add) - len(fresh)
+        if r["skipped_concurrent"]:
+            log(f"\nℹ️  그사이 다른 PC가 추가한 {r['skipped_concurrent']}개는 제외합니다.")
+        log(f"\n📝 추가할 제품 수: {len(fresh)}개")
+        new_rows = [align_to_spreadsheet_headers(product, spreadsheet_headers) for product in fresh]
+        append = globals()[spec["append"]]
+        append(worksheet, new_rows, header_row, log=log, verbose_log=verbose_log)
+        r["appended"] = len(new_rows)
+
+    r["ok"] = True
     if verbose_log:
         log("\n" + "=" * 80)
     return r
 
 
-def sync_coupang(
-    spreadsheet_id,
-    realtime_file_path=None,
-    test_mode=True,
-    test_count=None,
-    log=print,
-    *,
-    verbose_log=True,
-):
-    """쿠팡 실시간 DB와 스프레드시트 동기화."""
-    r = _empty_channel_result("coupang")
-    if verbose_log:
-        log("\n" + "=" * 80)
-        log("🟡 쿠팡 동기화 시작")
-        log("=" * 80)
-    else:
-        log("\n🟡 쿠팡 동기화")
+def sync_naver(spreadsheet_id, realtime_file_path=None, test_mode=True, test_count=None, log=print, *,
+               verbose_log=True, source=SOURCE_FILE):
+    """네이버 상품과 스프레드시트 동기화. dict 결과는 UI/CLI 공통 사용."""
+    return sync_channel("naver", spreadsheet_id, source=source, realtime_file_path=realtime_file_path,
+                        test_mode=test_mode, test_count=test_count, log=log, verbose_log=verbose_log)
 
-    if realtime_file_path is None:
-        latest_file = get_latest_file_from_pattern(
-            COUPANG_CONFIG["db_dir"],
-            COUPANG_CONFIG["file_pattern"],
-        )
-        if latest_file is None:
-            log(
-                f"⏭️ 쿠팡 건너뜀: {COUPANG_CONFIG['db_dir']} 폴더에 "
-                f"{COUPANG_CONFIG['file_pattern']} 에 맞는 파일이 없습니다."
-            )
-            log(
-                "   (쿠팡만 건너뜁니다. 네이버 등 다른 선택 채널 동기화는 계속 진행됩니다.)"
-            )
-            r["skipped_missing_file"] = True
-            r["ok"] = True
-            if verbose_log:
-                log("\n" + "=" * 80)
-            return r
-        realtime_file_path = latest_file
 
-    r["resolved_file"] = str(realtime_file_path)
-    log(f"📂 실시간 DB 읽기: {realtime_file_path}")
-    realtime_data = read_realtime_db(str(realtime_file_path), header_row=2)
-    r["realtime_count"] = len(realtime_data)
-    log(f"✅ 실시간 DB: {len(realtime_data)}개 제품")
-
-    log("\n📊 스프레드시트에서 기존 데이터 읽기...")
-    gc = get_authorized_gspread_client()
-    spreadsheet = gc.open_by_key(spreadsheet_id)
-    worksheet = spreadsheet.get_worksheet(COUPANG_CONFIG["sheet_index"])
-
-    spreadsheet_data = get_all_spreadsheet_data(worksheet, COUPANG_CONFIG["header_row"])
-    r["sheet_count"] = len(spreadsheet_data)
-    log(f"✅ 기존 DB: {len(spreadsheet_data)}개 제품")
-
-    spreadsheet_headers = get_spreadsheet_headers(worksheet, COUPANG_CONFIG["header_row"])
-
-    if verbose_log:
-        log(f"\n🔍 신제품 검색 중... (키: {COUPANG_CONFIG['option_id_column']})")
-        log("\n📋 기존 제품 샘플 (처음 10개):")
-        for i, row in enumerate(spreadsheet_data[:10]):
-            option_id = format_option_id_for_log(row.get(COUPANG_CONFIG["option_id_column"], ""))
-            product_name = row.get("쿠팡 노출 상품명", "N/A")
-            price = format_quantity_for_log(row.get("판매가격", "N/A"))
-            stock = format_quantity_for_log(row.get("잔여수량(재고)", "N/A"))
-            log(f"  [{i+1}] 옵션ID: {option_id}, 상품명: {product_name}, 가격: {price}, 재고: {stock}")
-
-        log("\n📋 실시간 DB 샘플 (처음 10개):")
-        for i, row in enumerate(realtime_data[:10]):
-            option_id = format_option_id_for_log(row.get(COUPANG_CONFIG["option_id_column"], ""))
-            product_name = row.get("쿠팡 노출 상품명", "N/A")
-            price = format_quantity_for_log(row.get("판매가격", "N/A"))
-            stock = format_quantity_for_log(row.get("잔여수량(재고)", "N/A"))
-            log(f"  [{i+1}] 옵션ID: {option_id}, 상품명: {product_name}, 가격: {price}, 재고: {stock}")
-    else:
-        log("\n🔍 신제품 비교 중...")
-
-    new_products = find_new_products(
-        realtime_data,
-        spreadsheet_data,
-        COUPANG_CONFIG["option_id_column"],
-    )
-    r["new_products_count"] = len(new_products)
-    log(f"\n✅ 신제품 발견: {len(new_products)}개")
-
-    if new_products:
-        if verbose_log:
-            log("\n🆕 신제품 목록 (전부 표시):")
-            for i, product in enumerate(new_products):
-                option_id = format_option_id_for_log(product.get(COUPANG_CONFIG["option_id_column"], ""))
-                product_name = product.get("쿠팡 노출 상품명", "N/A")
-                price = format_quantity_for_log(product.get("판매가격", "N/A"))
-                stock = format_quantity_for_log(product.get("잔여수량(재고)", "N/A"))
-                log(f"  [{i+1}] 옵션ID: {option_id}, 상품명: {product_name}, 가격: {price}, 재고: {stock}")
-        else:
-            log(
-                f"\n🆕 신제품 {len(new_products)}건 — 행 목록은 「로그 출력(상세)」를 켠 뒤 다시 실행하면 표시됩니다."
-            )
-
-    if new_products:
-        products_to_add = new_products
-        if test_count is not None and test_count > 0:
-            products_to_add = new_products[:test_count]
-            log(f"\n🧪 건수 제한: 상위 {test_count}개만 대상으로 합니다.")
-        r["planned_append"] = len(products_to_add)
-
-        if test_mode:
-            log(f"\n📝 추가 예정 제품 수: {len(products_to_add)}개")
-            log("⚠️  미리보기: 스프레드시트에 쓰지 않습니다.")
-        else:
-            log(f"\n📝 추가할 제품 수: {len(products_to_add)}개")
-            new_rows = []
-            for product in products_to_add:
-                aligned_row = align_to_spreadsheet_headers(product, spreadsheet_headers)
-                new_rows.append(aligned_row)
-            append_to_spreadsheet_coupang(
-                worksheet,
-                new_rows,
-                COUPANG_CONFIG["header_row"],
-                log=log,
-                verbose_log=verbose_log,
-            )
-            r["appended"] = len(new_rows)
-    else:
-        log("\n✅ 새 제품이 없습니다. 동기화 완료!")
-
-    r["ok"] = r["error"] is None
-    if verbose_log:
-        log("\n" + "=" * 80)
-    return r
+def sync_coupang(spreadsheet_id, realtime_file_path=None, test_mode=True, test_count=None, log=print, *,
+                 verbose_log=True, source=SOURCE_FILE):
+    """쿠팡 상품과 스프레드시트 동기화."""
+    return sync_channel("coupang", spreadsheet_id, source=source, realtime_file_path=realtime_file_path,
+                        test_mode=test_mode, test_count=test_count, log=log, verbose_log=verbose_log)
 
 
 def run_db_sheet_sync_job(
@@ -1021,8 +1057,13 @@ def run_db_sheet_sync_job(
     naver_path=None,
     coupang_path=None,
     verbose_log=True,
+    source=SOURCE_FILE,
 ):
-    """UI 스레드 밖에서 호출. test_count: 0이면 무제한(None과 동일). verbose_log: 샘플·상세 append 로그."""
+    """UI 스레드 밖에서 호출. test_count: 0이면 무제한(None과 동일). verbose_log: 샘플·상세 append 로그.
+
+    source: SOURCE_API면 네이버·쿠팡 API로, SOURCE_FILE이면 database 폴더 파일(naver_path·coupang_path)로 가져온다.
+    한 채널이 실패해도 다른 채널은 계속한다.
+    """
     logs = []
 
     def log(msg):
@@ -1032,53 +1073,49 @@ def run_db_sheet_sync_job(
         "ok": True,
         "logs": logs,
         "test_mode": test_mode,
+        "source": source,
         "naver": None,
         "coupang": None,
         "error": None,
     }
-    naver_path_arg = None if not naver_path else str(naver_path)
-    coupang_path_arg = None if not coupang_path else str(coupang_path)
     tc = None if test_count is None or test_count <= 0 else int(test_count)
+    where = "API" if source == SOURCE_API else "파일"
 
     if verbose_log:
         log("—" * 40)
         if test_mode:
-            log("🧪 미리보기: 스프레드시트에 행을 추가·수정하지 않습니다.")
+            log(f"🧪 미리보기({where}): 스프레드시트에 행을 추가·수정하지 않습니다.")
         else:
-            log("📝 실반영: 신규 상품이 있으면 시트에 행이 추가됩니다.")
+            log(f"📝 실반영({where}): 신규 상품이 있으면 시트에 행이 추가됩니다.")
         log("—" * 40)
     else:
-        if test_mode:
-            log("▶ 미리보기 · 시트 미적용")
-        else:
-            log("▶ 실반영 · 신규 행 시트 추가 가능")
+        log(f"▶ 미리보기 · 시트 미적용 · {where}" if test_mode else f"▶ 실반영 · 신규 행 시트 추가 가능 · {where}")
 
-    try:
-        if do_naver:
-            out["naver"] = sync_naver(
+    errors = []
+    for channel, enabled, path in (("naver", do_naver, naver_path), ("coupang", do_coupang, coupang_path)):
+        if not enabled:
+            continue
+        try:
+            out[channel] = sync_channel(
+                channel,
                 spreadsheet_id,
-                realtime_file_path=naver_path_arg,
+                source=source,
+                realtime_file_path=None if source == SOURCE_API or not path else str(path),
                 test_mode=test_mode,
                 test_count=tc,
                 log=log,
                 verbose_log=verbose_log,
             )
-            if not out["naver"].get("ok"):
-                out["ok"] = False
-        if do_coupang:
-            out["coupang"] = sync_coupang(
-                spreadsheet_id,
-                realtime_file_path=coupang_path_arg,
-                test_mode=test_mode,
-                test_count=tc,
-                log=log,
-                verbose_log=verbose_log,
-            )
-            if not out["coupang"].get("ok"):
-                out["ok"] = False
-        _log_db_sync_job_summary(log, do_naver, do_coupang, out, verbose_log=verbose_log)
-    except Exception as e:
-        out["ok"] = False
-        out["error"] = str(e)
-        log(f"❌ 예외: {e}")
+        except Exception as e:
+            result = _empty_channel_result(channel)
+            result["source"] = source
+            result["error"] = str(e)
+            out[channel] = result
+            errors.append(str(e))
+            log(f"❌ {CHANNELS[channel]['label']} 실패: {e}")
+        if not out[channel].get("ok"):
+            out["ok"] = False
+    if errors:
+        out["error"] = "\n".join(errors)
+    _log_db_sync_job_summary(log, do_naver, do_coupang, out, verbose_log=verbose_log)
     return out

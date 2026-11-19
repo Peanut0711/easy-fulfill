@@ -298,6 +298,35 @@ def fetch_order_for_transaction_statement(vendor_id, access_key, secret_key, ord
     return build_transaction_statement_order(normalized_order_id, data)
 
 
+SELLER_PRODUCTS_PATH = "/v2/providers/seller_api/apis/api/v1/marketplace/seller-products"
+SELLER_PRODUCT_PAGE_SIZE = 100   # 상품 목록 API 최대값
+SELLER_PRODUCT_MAX_PAGES = 200   # 2만 개까지(과도 호출 방지)
+
+
+def fetch_seller_products(vendor_id, access_key, secret_key, max_pages=SELLER_PRODUCT_MAX_PAGES):
+    """등록 상품 목록(최근 등록 순)을 반환한다. 항목에는 sellerProductId·productId·상품명·상태만 있고
+    옵션 ID(vendorItemId)는 없다 — 옵션은 fetch_seller_product로 상품마다 조회한다."""
+    products = []
+    next_token = ""
+    for _ in range(max_pages):
+        params = {"vendorId": vendor_id, "maxPerPage": SELLER_PRODUCT_PAGE_SIZE}
+        if next_token:
+            params["nextToken"] = next_token
+        js = _get(SELLER_PRODUCTS_PATH, params, access_key, secret_key)
+        page = js.get("data") or []
+        products.extend(page)
+        next_token = str(js.get("nextToken") or "")
+        if not next_token or not page:
+            break
+    return products
+
+
+def fetch_seller_product(seller_product_id, access_key, secret_key):
+    """등록 상품 하나의 상세(items[].vendorItemId 옵션 포함)를 반환한다. 한 번에 약 0.7초 걸린다."""
+    js = _get(f"{SELLER_PRODUCTS_PATH}/{seller_product_id}", {}, access_key, secret_key)
+    return js.get("data") or {}
+
+
 def validate_credentials(vendor_id, access_key, secret_key):
     """키 3종으로 최근 1일 온라인문의를 1회 조회해 유효성만 확인. 반환 {ok, valid, error}."""
     vid = str(vendor_id or "").strip()

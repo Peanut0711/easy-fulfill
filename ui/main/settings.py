@@ -796,17 +796,51 @@ class SettingsMixin:
                 "공유 시트에 쓰지 않고 추가될 행만 로그로 보입니다." if test_mode else
                 "공유 시트의 네이버·쿠팡 탭에 없는 상품을 실제로 추가합니다(실행 전 확인 창).")
 
+    def _db_sync_source(self) -> str:
+        """상품 목록을 가져올 곳: 「database 폴더 파일」을 고르지 않았으면 API(기본)."""
+        from sheets.db_sheet_sync import SOURCE_API, SOURCE_FILE
+
+        radio = getattr(self.ui, "radioButton_db_sync_source_file", None)
+        return SOURCE_FILE if radio is not None and radio.isChecked() else SOURCE_API
+
+    def _update_db_sync_source_ui(self, *_args):
+        """API를 고르면 파일 표시·직접지정·새로고침을 흐리게 한다(네이버·쿠팡 체크는 그대로).
+
+        실행 중에는 라디오 버튼이 꺼져 있어 불리지 않는다. 끝날 때는 스레드가 아직 isRunning일 수 있어
+        여기서 실행 중인지 보지 않는다(_set_db_sync_path_controls_busy가 담당).
+        """
+        from sheets.db_sheet_sync import SOURCE_FILE
+
+        file_mode = self._db_sync_source() == SOURCE_FILE
+        for name in (
+            "label_db_sync_naver_file",
+            "label_db_sync_coupang_file",
+            "pushButton_db_sync_naver_browse",
+            "pushButton_db_sync_coupang_browse",
+            "pushButton_db_sync_refresh_paths",
+        ):
+            widget = getattr(self.ui, name, None)
+            if widget is not None:
+                widget.setEnabled(file_mode)
+
     def _set_db_sync_path_controls_busy(self, busy: bool):
         w = self.ui
         for name in (
-            "pushButton_db_sync_refresh_paths",
             "pushButton_db_sync_run",
-            "pushButton_db_sync_naver_browse",
-            "pushButton_db_sync_coupang_browse",
+            "radioButton_db_sync_source_api",
+            "radioButton_db_sync_source_file",
         ):
             b = getattr(w, name, None)
             if b is not None:
                 b.setEnabled(not busy)
+        if busy:
+            for name in ("pushButton_db_sync_refresh_paths", "pushButton_db_sync_naver_browse",
+                         "pushButton_db_sync_coupang_browse"):
+                b = getattr(w, name, None)
+                if b is not None:
+                    b.setEnabled(False)
+        else:
+            self._update_db_sync_source_ui()
 
     def _refresh_db_sheet_sync_path_labels(self, reset_manual_overrides=False):
         if not hasattr(self.ui, "label_db_sync_naver_file"):
@@ -859,6 +893,7 @@ class SettingsMixin:
             QMessageBox.warning(self, "DB동기화", "네이버 또는 쿠팡 중 하나 이상 선택하세요.")
             return
         test_mode = self.ui.checkBox_db_sync_preview.isChecked()
+        source = self._db_sync_source()
         test_count = 0
         verbose_log = (
             hasattr(self.ui, "checkBox_db_sync_verbose_log")
@@ -876,7 +911,7 @@ class SettingsMixin:
                 return
         self._show_busy_processing_overlay(
             "DB 동기화 작업 중…",
-            "시트와 로컬 DB 파일을 처리하고 있습니다. 잠시만 기다려 주세요.",
+            "상품 목록을 받아 시트와 비교하고 있습니다. 쿠팡 신규 상품이 많으면 몇 분 걸릴 수 있습니다.",
         )
         QApplication.processEvents()
         self._set_db_sync_path_controls_busy(True)
@@ -898,6 +933,7 @@ class SettingsMixin:
                 else None
             ),
             "verbose_log": verbose_log,
+            "source": source,
         }
         self._db_sheet_sync_thread = _host(self).DbSheetSyncThread(params)
         self._db_sheet_sync_thread.result_ready.connect(self._on_db_sheet_sync_finished)

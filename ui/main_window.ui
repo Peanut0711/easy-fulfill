@@ -1727,19 +1727,53 @@
              <item>
               <widget class="QGroupBox" name="groupBox_db_sync_files">
                <property name="title">
-                <string>DB 파일 · 이 PC</string>
+                <string>상품 목록 가져올 곳 · 이 PC</string>
                </property>
                <layout class="QVBoxLayout" name="verticalLayout_db_sync_files">
                 <property name="spacing"><number>8</number></property>
                 <item>
                  <widget class="QLabel" name="label_db_sync_intro">
                   <property name="text">
-                   <string>기본은 database 폴더에서 최신 Product_*.csv·price_inventory_*.xlsx를 찾습니다.&#10;각 행 끝 「직접지정」으로 다른 위치의 파일을 지정할 수 있습니다(새로고침 시 자동 탐지로 복귀).</string>
+                   <string>기본은 네이버·쿠팡 API로 상품 목록을 바로 받아 옵니다(파일을 내려받지 않아도 됩니다).&#10;「database 폴더 파일」을 고르면 최신 Product_*.csv·price_inventory_*.xlsx를 쓰고, 각 행 끝 「직접지정」으로 다른 파일을 지정할 수 있습니다(새로고침 시 자동 탐지로 복귀).</string>
                   </property>
                   <property name="wordWrap">
                    <bool>true</bool>
                   </property>
                  </widget>
+                </item>
+                <item>
+                 <layout class="QHBoxLayout" name="horizontalLayout_db_source">
+                  <property name="spacing">
+                   <number>20</number>
+                  </property>
+                  <item>
+                   <widget class="QRadioButton" name="radioButton_db_sync_source_api">
+                    <property name="text">
+                     <string>API로 가져오기 (기본)</string>
+                    </property>
+                    <property name="checked">
+                     <bool>true</bool>
+                    </property>
+                   </widget>
+                  </item>
+                  <item>
+                   <widget class="QRadioButton" name="radioButton_db_sync_source_file">
+                    <property name="text">
+                     <string>database 폴더 파일</string>
+                    </property>
+                   </widget>
+                  </item>
+                  <item>
+                   <spacer name="horizontalSpacer_db_source">
+                    <property name="orientation">
+                     <enum>Qt::Orientation::Horizontal</enum>
+                    </property>
+                    <property name="sizeHint" stdset="0">
+                     <size><width>0</width><height>0</height></size>
+                    </property>
+                   </spacer>
+                  </item>
+                 </layout>
                 </item>
                 <item>
                  <layout class="QHBoxLayout" name="horizontalLayout_db_naver_row">
@@ -1912,7 +1946,7 @@
                 <item>
                  <widget class="QLabel" name="label_db_sync_run_intro">
                   <property name="text">
-                   <string>구글 시트의 네이버·쿠팡 탭에 아직 없는 상품만 행으로 추가하며, 기존 행의 가격·재고는 갱신하지 않습니다.</string>
+                   <string>구글 시트의 네이버·쿠팡 탭에 아직 없는 상품만 행으로 추가하며, 기존 행은 고치지 않습니다. 추가된 행의 상품코드는 비어 있으니 실물 위치를 확인해 적어 주세요. 쿠팡 API는 시트에 없는 상품만 상세 조회하므로 새 상품이 많으면 몇 분 걸릴 수 있습니다.</string>
                   </property>
                   <property name="wordWrap">
                    <bool>true</bool>
