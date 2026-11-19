@@ -526,24 +526,11 @@ class ChromeMixin:
         m_order.addSeparator()
         m_order.addAction(self.act_clear)
 
-        # 창 크기·설정 탭 계획 B-4: 확인·진단 9개는 「설정 › 프로그램」 버튼으로 옮기고, 메뉴에는
-        # 불러오기·로그인·출력 대상과 구분선 아래 실제 동작 4개만 둔다(각 실제 동작은 실행 전 확인 창).
-        # 디자인 개편 4-7: 「API(개발 중)」 → 「API·우체국」(검토 리스트 R7). 테스트·문서가 「API」로 시작하는 이름을 찾는다.
-        m_api = mb.addMenu('API·우체국(&A)')
-        m_api.addAction(self.act_api_load)
-        m_api.addAction(self.act_epost_portal_login)
-        m_api.addAction(self.act_epost_print_targets)
-        self.act_open_epost_diagnostics = QAction('우체국 확인·진단… (설정 › 프로그램)', self)
-        self.act_open_epost_diagnostics.setStatusTip('실제 동작 없는 확인·진단 버튼이 있는 「⚙ 설정 › 프로그램」으로 이동')
-        self.act_open_epost_diagnostics.triggered.connect(lambda: self.show_settings_page("program"))
-        m_api.addAction(self.act_open_epost_diagnostics)
-        m_api.addSeparator()
-        real_title = m_api.addAction('실제 동작 — 실행 전 확인 창이 뜹니다')
-        real_title.setEnabled(False)
+        # 검토 리스트 R7(2026-11-19 사용자 결정): API 기능은 개발 중이라 실무자는 쓰지 않는다. 메뉴바에 두지 않고
+        # 「⚙ 설정 › 프로그램」의 「개발 중 기능」 묶음에 모은다. 기본은 비활성, 「켜기(이 PC)」를 체크한 PC만 켜진다.
         warning_icon = self.style().standardIcon(QStyle.StandardPixmap.SP_MessageBoxWarning)
         for action in self._real_api_actions():
             action.setIcon(warning_icon)
-            m_api.addAction(action)
 
         m_link = mb.addMenu('바로가기(&L)')
         m_link.addAction(self.act_db)

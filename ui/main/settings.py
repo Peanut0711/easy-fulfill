@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
     QFileDialog,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QInputDialog,
@@ -23,7 +24,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from shared.ui_style import clear_status, COLOR_DANGER, set_band, set_status
+from shared.ui_style import clear_status, COLOR_DANGER, set_band, set_button_role, set_status
 from tracking.repository import ConfigValueChangedError
 from tracking.service import (
     CONFIG_KEY_INQUIRY_WORK_END,
@@ -611,19 +612,92 @@ class SettingsMixin:
         )
         return [(name, getattr(self, name)) for name in names if getattr(self, name, None) is not None]
 
+    DEV_FEATURES_SETTING_KEY = "dev_features_enabled"
+
+    def _dev_entry_actions(self):
+        """개발 중 기능의 진입점(실제 반영 없음): API로 주문 불러오기, 포털 로그인 연결, 출력 대상 확인."""
+        names = ("act_api_load", "act_epost_portal_login", "act_epost_print_targets")
+        return [(name, getattr(self, name)) for name in names if getattr(self, name, None) is not None]
+
+    def _dev_feature_actions(self):
+        """「개발 중 기능」 스위치가 켜고 끄는 동작 전부(진입점, 확인·진단, 실제 동작)."""
+        real = [(name, getattr(self, name)) for name in (
+            "act_dispatch", "act_epost_real_receipt", "act_epost_actual_print", "act_epost_batch_actual_print")
+            if getattr(self, name, None) is not None]
+        return self._dev_entry_actions() + self._epost_diagnostic_actions() + real
+
     def _setup_epost_diagnostic_buttons(self):
-        """확인·진단 동작을 메뉴 대신 「설정 › 프로그램」의 버튼으로 둔다. 버튼은 같은 QAction을 부른다."""
+        """「설정 › 프로그램」의 「개발 중 기능」 묶음(검토 리스트 R7).
+
+        API·우체국 포털 기능은 개발 중이라 메뉴바에 두지 않고 여기에 모은다. 버튼은 같은 QAction을 부르고,
+        「개발 중 기능 켜기(이 PC)」를 끄면 QAction 자체가 꺼져 어떤 경로로도 실행되지 않는다.
+        """
         grid = getattr(self.ui, "gridLayout_epost_diagnostics", None)
-        if grid is None or grid.count():
+        box_layout = getattr(self.ui, "verticalLayout_epost_diagnostics", None)
+        if grid is None or box_layout is None or grid.count():
             return
         host = self.ui.groupBox_epost_diagnostics
-        for index, (name, action) in enumerate(self._epost_diagnostic_actions()):
+        host.setTitle("개발 중 기능 (API·우체국) · 이 PC")
+        intro = getattr(self.ui, "label_epost_diagnostics_intro", None)
+        if intro is not None:
+            intro.setText("실무에서는 쓰지 않는 개발 중 기능입니다. 개발·시험하는 PC에서만 켜세요. "
+                          "실제 동작(접수·인쇄·발송처리)은 실행 전 확인 창이 뜹니다.")
+            intro.setProperty("hint", "true")
+
+        def caption(text):
+            label = QLabel(text, host)
+            label.setProperty("formLabel", True)
+            return label
+
+        def button_for(name, action, prefix):
             button = QPushButton(action.text().removeprefix("우체국 "), host)
-            button.setObjectName("pushButton_diag_" + name.removeprefix("act_"))
-            button.setToolTip(action.statusTip())
+            button.setObjectName(prefix + name.removeprefix("act_"))
+            button.setToolTip(action.statusTip() or action.text())
+            if not action.icon().isNull():
+                button.setIcon(action.icon())
             button.clicked.connect(action.trigger)
             action.changed.connect(lambda b=button, a=action: b.setEnabled(a.isEnabled()))
-            grid.addWidget(button, index // 2, index % 2)
+            return button
+
+        self.checkBox_dev_features = QCheckBox("개발 중 기능 켜기 (이 PC)", host)
+        self.checkBox_dev_features.setObjectName("checkBox_dev_features")
+        self.checkBox_dev_features.setToolTip("이 PC에만 저장됩니다. 끄면 아래 버튼과 동작이 모두 비활성입니다.")
+        index = box_layout.indexOf(grid) if box_layout.indexOf(grid) >= 0 else box_layout.count()
+        box_layout.insertWidget(index, self.checkBox_dev_features)
+
+        entry_grid = QGridLayout()
+        entry_grid.setHorizontalSpacing(theme.SPACE_SM)
+        entry_grid.setVerticalSpacing(theme.SPACE_SM)
+        for i, (name, action) in enumerate(self._dev_entry_actions()):
+            entry_grid.addWidget(button_for(name, action, "pushButton_dev_"), i // 2, i % 2)
+        box_layout.insertWidget(index + 1, caption("진입점"))
+        box_layout.insertLayout(index + 2, entry_grid)
+        box_layout.insertWidget(index + 3, caption("확인·진단 (실제 동작 없음)"))
+        for i, (name, action) in enumerate(self._epost_diagnostic_actions()):
+            grid.addWidget(button_for(name, action, "pushButton_diag_"), i // 2, i % 2)
+        real_grid = QGridLayout()
+        real_grid.setHorizontalSpacing(theme.SPACE_SM)
+        real_grid.setVerticalSpacing(theme.SPACE_SM)
+        for i, action in enumerate(self._real_api_actions()):
+            name = next(n for n, a in self._dev_feature_actions() if a is action)
+            button = button_for(name, action, "pushButton_real_")
+            set_button_role(button, "danger")
+            real_grid.addWidget(button, i // 2, i % 2)
+        box_layout.addWidget(caption("실제 동작 — 실행 전 확인 창이 뜹니다"))
+        box_layout.addLayout(real_grid)
+
+        enabled = bool(self.get_app_setting(self.DEV_FEATURES_SETTING_KEY, False))
+        self.checkBox_dev_features.setChecked(enabled)
+        self._apply_dev_features_enabled(enabled)
+        self.checkBox_dev_features.toggled.connect(self._on_dev_features_toggled)
+
+    def _apply_dev_features_enabled(self, enabled):
+        for _name, action in self._dev_feature_actions():
+            action.setEnabled(bool(enabled))
+
+    def _on_dev_features_toggled(self, checked):
+        self.set_app_setting(self.DEV_FEATURES_SETTING_KEY, bool(checked))
+        self._apply_dev_features_enabled(checked)
 
     def _on_settings_nav_changed(self, row):
         stack = getattr(self.ui, "stackedWidget_settings", None)
