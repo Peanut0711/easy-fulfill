@@ -116,6 +116,7 @@ from orders.bulk import (
     consolidate_gmarket_orders,
     work_order_amount,
 )
+from orders.bundle import quantity_markdown
 from orders.excel_values import excel_text
 from orders.invoice import INVOICE_COLUMNS, build_invoice_rows
 from orders.gift_event import DEFAULT_GIFT_EVENT, gift_event_from_config_rows, read_gift_event
@@ -5081,7 +5082,7 @@ class MainWindow(ChromeMixin, StartupMixin, SettingsMixin, DetailPageMixin, Quic
                     name_for_md = self._format_naver_product_name_markdown(
                         product_name, product_no
                     )
-                    markdown_text += f"▶ [{product_code}]**[ {quantity} 개 ]** - {name_for_md} ( 옵션 : {option} )\n"
+                    markdown_text += f"▶ [{product_code}]{quantity_markdown(quantity, option)} - {name_for_md} ( 옵션 : {option} )\n"
                 
                 markdown_text += "\n"  # 주문 간 구분을 위한 빈 줄
                 preview_rows.append(PreviewOrder(
@@ -5406,7 +5407,7 @@ class MainWindow(ChromeMixin, StartupMixin, SettingsMixin, DetailPageMixin, Quic
                     name_for_md = self._format_product_name_markdown_link(
                         product_name, vp_no, COUPANG_VP_PRODUCT_URL_PREFIX
                     )
-                    markdown_text += f"▶ [{product_code}]**[ {quantity} 개 ]** - {name_for_md} ( 옵션 : {option} )\n"
+                    markdown_text += f"▶ [{product_code}]{quantity_markdown(quantity, option)} - {name_for_md} ( 옵션 : {option} )\n"
                 
                 markdown_text += "\n"
                 preview_rows.append(PreviewOrder(
@@ -5607,8 +5608,7 @@ class MainWindow(ChromeMixin, StartupMixin, SettingsMixin, DetailPageMixin, Quic
                     # product_code = product['상품코드'] 
                     product_code = 'PASS'
                    
-                    # markdown_text += f"▶ [{product_code}]**[ {quantity} 개 ]** - {product_name} ( 옵션 : {option} )\n"
-                    markdown_text += f"▶ [{product_code}]**[ {quantity} 개 ]** - {product_name} ( 옵션 : {option} )\n"
+                    markdown_text += f"▶ [{product_code}]{quantity_markdown(quantity, option)} - {product_name} ( 옵션 : {option} )\n"
                     
                     # 추가구성이 있으면 표시
                     if additional_config and additional_config.strip():
@@ -5759,7 +5759,7 @@ class MainWindow(ChromeMixin, StartupMixin, SettingsMixin, DetailPageMixin, Quic
                     quantity = product['수량']
                     option = product['옵션']
                     product_code = 'PASS'
-                    markdown_text += f"▶ [{product_code}]**[ {quantity} 개 ]** - {product_name} ( 옵션 : {option} )\n"
+                    markdown_text += f"▶ [{product_code}]{quantity_markdown(quantity, option)} - {product_name} ( 옵션 : {option} )\n"
 
                 markdown_text += "\n"
                 preview_rows.append(PreviewOrder(

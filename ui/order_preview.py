@@ -12,6 +12,7 @@ from PySide6.QtCore import QEvent, QObject, Qt
 from PySide6.QtGui import QBrush, QColor, QKeySequence, QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import QAbstractItemView, QHeaderView, QTreeView
 
+from orders.bundle import bundle_note, packed_quantity
 from shared import theme
 
 STANDARD_DELIVERY = "택배,등기,소포"
@@ -61,7 +62,9 @@ class PreviewOrder:
 def product_line(product: PreviewProduct, check_codes: bool) -> str:
     code = str(product.code).strip()
     head = f"[{code or '코드 없음'}] " if check_codes else ""
-    line = f"{head}{product.quantity}개 · {product.name}"
+    note = bundle_note(product.quantity, product.option)
+    count = f"{packed_quantity(product.quantity, product.option)}개({note})" if note else f"{product.quantity}개"
+    line = f"{head}{count} · {product.name}"
     option = str(product.option).strip()
     if option and option != "없음":
         line += f" (옵션: {option})"
@@ -107,7 +110,7 @@ def build_preview_model(orders, parent=None) -> QStandardItemModel:
     center = Qt.AlignmentFlag.AlignCenter
     for order in orders:
         flags = order_flags_text(order)
-        total_qty = sum(int(p.quantity or 0) for p in order.products)
+        total_qty = sum(packed_quantity(p.quantity, p.option) for p in order.products)
         cells = [
             _item(order.number, align=right),
             _item(order.recipient),

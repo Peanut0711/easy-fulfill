@@ -37,7 +37,7 @@ EXPECTED_MARKDOWN = {
         "▶ [C-BB830]**[ 2 개 ]** - 브레드보드 830 ( 옵션 :  )\n"
         "\n"
         "[ ] 2.정다운 - 13.5만 · **🎁: 에코백**\n"
-        "▶ []**[ 1 개 ]** - 라즈베리파이 5 8GB ( 옵션 :  )\n"
+        "▶ []**[ 3 개 ]** (1세트×3개) - 라즈베리파이 5 8GB ( 옵션 : 3개 )\n"
         "\n"
     ),
     "gmarket": (
@@ -75,7 +75,7 @@ def _coupang_frame(pd):
     return pd.DataFrame([
         ["30001", "최가람", "서울 마포구 5", "010-1212-3434", "아두이노 우노 R4", "WiFi", 1, "문 앞", "04000", 501, 52000],
         ["30001", "최가람", "서울 마포구 5", "010-1212-3434", "브레드보드 830", "", 2, "문 앞", "04000", 502, 9000],
-        ["30002", "정다운", "광주 북구 6", "010-5656-7878", "라즈베리파이 5 8GB", "", 1, "", "61000", 999, 135000],
+        ["30002", "정다운", "광주 북구 6", "010-5656-7878", "라즈베리파이 5 8GB", "3개", 1, "", "61000", 999, 135000],
     ], columns=cols)
 
 
@@ -399,6 +399,9 @@ class OrderPreviewModelTests(unittest.TestCase):
         self.assertEqual(self.order(delivery="").delivery_text, "택배")
         self.assertEqual(product_line(PreviewProduct(" ", 2, "보드", "R4"), True), "[코드 없음] 2개 · 보드 (옵션: R4)")
         self.assertEqual(product_line(PreviewProduct("PASS", 1, "보드", "없음", "핀"), False), "1개 · 보드 (추가구성: 핀)")
+        # 묶음 옵션은 낱개 수와 계산식을 함께 보여 준다
+        self.assertEqual(product_line(PreviewProduct("L307", 2, "보드", "3개 ESP32-C3"), True),
+                         "[L307] 6개(2세트×3개) · 보드 (옵션: 3개 ESP32-C3)")
 
     def test_model_rows_children_and_colors(self):
         from ui.order_preview import (CODE_MISSING_BACKGROUND, NON_PARCEL_BACKGROUND, PreviewProduct,
@@ -581,7 +584,7 @@ class OrderLoadAndCopyTests(unittest.TestCase):
         ])
         self.assertEqual(rows[0]["bg"], "")
         self.assertNotEqual(rows[1]["bg"], "")
-        self.assertEqual(rows[1]["children"], ["[코드 없음] 1개 · 라즈베리파이 5 8GB"])
+        self.assertEqual(rows[1]["children"], ["[코드 없음] 3개(1세트×3개) · 라즈베리파이 5 8GB (옵션: 3개)"])
 
     def test_gmarket_file_load_table_and_copy(self):
         result = scenario("gmarket")
