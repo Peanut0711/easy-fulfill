@@ -9,7 +9,9 @@ from pathlib import Path
 from PySide6.QtCore import QFile, QIODevice, QRect, Qt, QTimer
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtUiTools import QUiLoader
-from PySide6.QtWidgets import QMessageBox
+from PySide6.QtWidgets import (
+    QDialog, QDialogButtonBox, QGridLayout, QLabel, QLayout, QMessageBox, QStyle,
+)
 
 from shared.lazy_import import preload_modules_in_background
 from shared.paths import APP_ROOT
@@ -254,41 +256,63 @@ class StartupMixin:
         if self._ask_update_notice(latest) == "snooze":
             self.set_app_setting(SETTING_UPDATE_NOTICE_SNOOZED_DAY, today)
 
-    def _version_update_dialog(self, title, icon, heading, status, footer=""):
-        box = QMessageBox(self)
-        box.setIcon(icon)
-        box.setWindowTitle(title)
-        box.setTextFormat(Qt.TextFormat.RichText)
-        box.setText(f'<font size="+1"><b>{heading}</b></font>')
+    def _version_update_dialog(self, title, icon, heading, status):
+        dialog = QDialog(self)
+        dialog.setWindowTitle(title)
+        layout = QGridLayout(dialog)
+        layout.setSizeConstraint(QLayout.SizeConstraint.SetFixedSize)
+        layout.setColumnStretch(1, 1)
+
+        icon_label = QLabel()
+        icon_label.setPixmap(dialog.style().standardIcon(icon).pixmap(32, 32))
+        layout.addWidget(icon_label, 0, 0, Qt.AlignmentFlag.AlignTop)
+        summary = QLabel(f'<p><font size="+1"><b>{heading}</b></font></p><p>{status}</p>')
+        summary.setWordWrap(True)
+        layout.addWidget(summary, 0, 1)
+
         steps = "<br>".join(
             f"{number}. <b>{html.escape(action)}</b> — {html.escape(detail)}"
             for number, (action, detail) in enumerate(SOURCETREE_UPDATE_STEPS, start=1)
         )
-        box.setInformativeText(f"<p>{status}</p><p>{steps}</p><p>{SOURCETREE_UPDATE_ERROR}</p>{footer}")
-        return box
+        guide = QLabel(f"<p>{steps}</p><p>{html.escape(SOURCETREE_UPDATE_ERROR)}</p>")
+        guide.setWordWrap(True)
+        guide.hide()
+        layout.addWidget(guide, 2, 0, 1, 2)
+
+        buttons = QDialogButtonBox()
+        details = buttons.addButton("자세한 방법 보기", QDialogButtonBox.ButtonRole.ActionRole)
+        details.setAutoDefault(False)
+        details.setCheckable(True)
+        details.toggled.connect(guide.setVisible)
+        details.toggled.connect(
+            lambda expanded: details.setText("자세한 방법 숨기기" if expanded else "자세한 방법 보기")
+        )
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons, 1, 0, 1, 2)
+        return dialog, buttons
 
     def _show_required_update_notice(self, minimum):
-        box = self._version_update_dialog(
-            "프로그램 업데이트 필요", QMessageBox.Warning,
+        dialog, buttons = self._version_update_dialog(
+            "프로그램 업데이트 필요", QStyle.StandardPixmap.SP_MessageBoxWarning,
             f"시트 쓰기 중지<br>현재 {APP_VERSION} → 최소 버전 {html.escape(minimum)}",
-            "Google 시트 읽기는 가능합니다. <b>업데이트한 뒤 시트에 쓸 수 있습니다.</b>",
+            "업데이트할 때까지 Google 시트는 읽기만 가능합니다.",
         )
-        box.setStandardButtons(QMessageBox.StandardButton.Ok)
-        box.exec()
+        buttons.setStandardButtons(QDialogButtonBox.StandardButton.Ok)
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setDefault(True)
+        dialog.exec()
 
     def _ask_update_notice(self, latest):
         """새 버전 안내 창. 반환: 'snooze'(오늘 더 이상 묻지 않음) 또는 'close'."""
-        box = self._version_update_dialog(
-            "새 버전 안내", QMessageBox.Information,
+        dialog, buttons = self._version_update_dialog(
+            "새 버전 안내", QStyle.StandardPixmap.SP_MessageBoxInformation,
             f"현재 {APP_VERSION} → 새 버전 {html.escape(latest)}",
-            "다른 PC에서 새 버전을 쓰고 있습니다. <b>업데이트 전에도 계속 사용할 수 있습니다.</b>",
-            "<p>「⚙ 설정」→「프로그램」에서 이 안내를 끌 수 있습니다.</p>",
+            "업데이트 전에도 계속 사용할 수 있습니다.",
         )
-        snooze = box.addButton("오늘 더 이상 묻지 않음", QMessageBox.ActionRole)
-        close = box.addButton("닫기", QMessageBox.RejectRole)
-        box.setDefaultButton(close)
-        box.exec()
-        return "snooze" if box.clickedButton() is snooze else "close"
+        buttons.addButton("오늘 더 이상 묻지 않음", QDialogButtonBox.ButtonRole.AcceptRole)
+        close = buttons.addButton("닫기", QDialogButtonBox.ButtonRole.RejectRole)
+        close.setDefault(True)
+        return "snooze" if dialog.exec() == QDialog.DialogCode.Accepted else "close"
 
     def _on_ignore_version_update_toggled(self, checked):
         from sheets.version_gate import SETTING_IGNORE_UPDATE_NOTICE

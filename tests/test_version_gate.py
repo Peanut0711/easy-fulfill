@@ -336,6 +336,46 @@ class StartupNoticeTests(unittest.TestCase):
         window._on_app_version_checked(blocked)
         self.assertEqual(shown, ["0.0.2"])
 
+    def test_update_guide_expands_only_on_request_in_both_notices(self):
+        from PySide6.QtWidgets import QApplication, QDialog, QDialogButtonBox, QLabel, QWidget
+        from ui.main.startup import StartupMixin
+
+        class Window(StartupMixin, QWidget):
+            pass
+
+        window = Window()
+        version_gate = gate()
+        for notice, dismiss, expected in (
+            (window._ask_update_notice, "오늘 더 이상 묻지 않음", "snooze"),
+            (window._ask_update_notice, "닫기", "close"),
+            (window._show_required_update_notice, QDialogButtonBox.StandardButton.Ok, None),
+        ):
+            with self.subTest(dismiss=dismiss):
+                def exercise(dialog):
+                    dialog.show()
+                    QApplication.processEvents()
+                    button_box = dialog.findChild(QDialogButtonBox)
+                    buttons = {button.text(): button for button in button_box.buttons()}
+                    details = buttons["자세한 방법 보기"]
+                    guide = next(label for label in dialog.findChildren(QLabel)
+                                 if version_gate.SOURCETREE_UPDATE_ERROR in label.text())
+                    self.assertFalse(guide.isVisible())
+                    details.click()
+                    self.assertTrue(dialog.isVisible())
+                    self.assertTrue(guide.isVisible())
+                    self.assertEqual(details.text(), "자세한 방법 숨기기")
+                    for action, step in version_gate.SOURCETREE_UPDATE_STEPS:
+                        self.assertIn(f"<b>{action}</b> — {step}", guide.text())
+                    details.click()
+                    self.assertFalse(guide.isVisible())
+                    self.assertEqual(details.text(), "자세한 방법 보기")
+                    (buttons[dismiss] if isinstance(dismiss, str) else button_box.button(dismiss)).click()
+                    self.assertFalse(dialog.isVisible())
+                    return dialog.result()
+
+                with patch.object(QDialog, "exec", exercise):
+                    self.assertEqual(notice("0.0.31"), expected)
+
     def test_settings_tab_has_ignore_checkbox_off_by_default(self):
         import xml.etree.ElementTree as ET
         from pathlib import Path
