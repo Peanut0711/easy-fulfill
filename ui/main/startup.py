@@ -156,7 +156,7 @@ class StartupMixin:
         return QRect(x, y, width, height)
 
     def reset_window_geometry(self):
-        """「파일 › 창 크기 기본값으로」: 최대화를 풀고 지금 창이 있는 모니터의 기본 크기로 가운데에 둔 뒤 저장한다."""
+        """「설정 › 일반」의 「창 크기 기본값으로」: 최대화를 풀고 지금 창이 있는 모니터의 기본 크기로 가운데에 둔 뒤 저장한다."""
         screen = self.screen() or QGuiApplication.primaryScreen()
         if screen is None:
             return
@@ -167,6 +167,16 @@ class StartupMixin:
         self.setGeometry(rect)
         self._save_window_geometry()
         self.notify("ok", f"창 크기를 기본값({rect.width()}×{rect.height()})으로 되돌렸습니다")
+        self._refresh_window_size_label()
+
+    def _refresh_window_size_label(self):
+        """「설정 › 일반」 버튼 옆에 지금 모니터의 기본 크기를 보인다(모니터·배율마다 다름)."""
+        label = getattr(self.ui, "label_window_size", None)
+        screen = self.screen() or QGuiApplication.primaryScreen()
+        if label is None or screen is None:
+            return
+        rect = self._default_window_rect(screen)
+        label.setText(f"이 모니터 기본 {rect.width()}×{rect.height()}")
 
     def _save_window_geometry(self):
         """창 위치·크기·최대화 여부를 이 PC의 앱 설정에만 저장한다(공유 시트에는 쓰지 않음)."""

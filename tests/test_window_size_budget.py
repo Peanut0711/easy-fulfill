@@ -57,7 +57,7 @@ class WindowSizeBudgetTests(unittest.TestCase):
 
     def test_settings_pages_need_no_horizontal_scroll(self):
         pages = measured()["settings_pages"]
-        self.assertEqual(len(pages), 6)
+        self.assertEqual(len(pages), 7)  # 일반·연동·알림·배송추적·주문·사은품·DB 동기화·프로그램
         wide = {page["name"]: page["content"] for page in pages if page["content"][0] > SETTINGS_CONTENT_MAX_WIDTH}
         self.assertEqual(wide, {}, f"설정 페이지 내용 폭 {SETTINGS_CONTENT_MAX_WIDTH} 초과(가로 스크롤)")
 

@@ -592,6 +592,10 @@ class SettingsMixin:
             page = area.widget() if isinstance(area, QScrollArea) else None
             if page is not None and page.maximumWidth() < SETTINGS_PAGE_MAX_WIDTH:
                 page.setMaximumWidth(SETTINGS_PAGE_MAX_WIDTH)
+        reset_button = getattr(self.ui, "pushButton_window_reset", None)
+        if reset_button is not None:
+            fixed_width_button(reset_button)
+            reset_button.clicked.connect(self.reset_window_geometry)
         nav.currentRowChanged.connect(self._on_settings_nav_changed)
         nav.setCurrentRow(0)
         stack.setCurrentIndex(0)
@@ -707,7 +711,7 @@ class SettingsMixin:
         self._on_settings_page_shown(row)
 
     def show_settings_page(self, key):
-        """다른 곳에서 「설정」의 특정 분류로 이동한다. key: integration·alerts·tracking·orders·db_sync·program."""
+        """다른 곳에서 「설정」의 특정 분류로 이동한다. key: general·integration·alerts·tracking·orders·db_sync·program."""
         stack = getattr(self.ui, "stackedWidget_settings", None)
         nav = getattr(self.ui, "listWidget_settings_nav", None)
         tab = getattr(self.ui, "tab_settings", None)
@@ -734,6 +738,8 @@ class SettingsMixin:
                 self._begin_tracking_config_read()
         elif name == "scrollArea_settings_db_sync":
             self._refresh_db_sheet_sync_path_labels()
+        elif name == "scrollArea_settings_general":
+            self._refresh_window_size_label()
 
     def _on_db_sync_refresh_paths_clicked(self):
         self._refresh_db_sheet_sync_path_labels(reset_manual_overrides=True)

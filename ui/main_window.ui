@@ -1109,6 +1109,11 @@
           </property>
           <item>
            <property name="text">
+            <string>일반</string>
+           </property>
+          </item>
+          <item>
+           <property name="text">
             <string>연동</string>
            </property>
           </item>
@@ -1152,6 +1157,86 @@
           <property name="currentIndex">
            <number>0</number>
           </property>
+          <widget class="QScrollArea" name="scrollArea_settings_general">
+           <property name="frameShape">
+            <enum>QFrame::Shape::NoFrame</enum>
+           </property>
+           <property name="widgetResizable">
+            <bool>true</bool>
+           </property>
+           <widget class="QWidget" name="page_settings_general">
+            <property name="maximumSize">
+             <size><width>620</width><height>16777215</height></size>
+            </property>
+           <layout class="QVBoxLayout" name="verticalLayout_settings_general">
+            <property name="spacing"><number>10</number></property>
+            <property name="leftMargin"><number>12</number></property>
+            <property name="topMargin"><number>8</number></property>
+            <property name="rightMargin"><number>12</number></property>
+            <property name="bottomMargin"><number>12</number></property>
+            <item>
+             <widget class="QGroupBox" name="groupBox_window">
+              <property name="title">
+               <string>창 · 이 PC</string>
+              </property>
+              <layout class="QVBoxLayout" name="verticalLayout_window">
+               <item>
+                <widget class="QLabel" name="label_window_reset_hint">
+                 <property name="hint" stdset="0">
+                  <string>true</string>
+                 </property>
+                 <property name="text">
+                  <string>창을 지금 모니터의 기본 크기로 되돌려 가운데에 둡니다(최대화도 풀림). 되돌린 크기는 이 PC에 저장되어 다음 실행에도 쓰입니다.</string>
+                 </property>
+                 <property name="wordWrap">
+                  <bool>true</bool>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <layout class="QHBoxLayout" name="horizontalLayout_window_reset">
+                 <item>
+                  <widget class="QPushButton" name="pushButton_window_reset">
+                   <property name="text">
+                    <string>창 크기 기본값으로</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QLabel" name="label_window_size">
+                   <property name="hint" stdset="0">
+                    <string>true</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <spacer name="horizontalSpacer_window_reset">
+                   <property name="orientation">
+                    <enum>Qt::Orientation::Horizontal</enum>
+                   </property>
+                   <property name="sizeHint" stdset="0">
+                    <size><width>0</width><height>20</height></size>
+                   </property>
+                  </spacer>
+                 </item>
+                </layout>
+               </item>
+              </layout>
+             </widget>
+            </item>
+            <item>
+             <spacer name="verticalSpacer_settings_general">
+              <property name="orientation">
+               <enum>Qt::Orientation::Vertical</enum>
+              </property>
+              <property name="sizeHint" stdset="0">
+               <size><width>20</width><height>0</height></size>
+              </property>
+             </spacer>
+            </item>
+           </layout>
+           </widget>
+          </widget>
           <widget class="QScrollArea" name="scrollArea_settings_integration">
            <property name="frameShape">
             <enum>QFrame::Shape::NoFrame</enum>

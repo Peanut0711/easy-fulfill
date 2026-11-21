@@ -128,10 +128,11 @@ def _scenario(name):
             window.showMaximized()
             app.processEvents()
             result["maximized_before"] = window.isMaximized()
-            from PySide6.QtWidgets import QMenu
-            file_menu = [m for m in window.menuBar().findChildren(QMenu) if m.title() == "파일(&F)"][-1]
-            result["in_file_menu"] = window.act_reset_window in file_menu.actions()
-            window.act_reset_window.trigger()
+            nav = window.ui.listWidget_settings_nav
+            result["first_category"] = [nav.item(0).text(), window.ui.stackedWidget_settings.widget(0).objectName()]
+            button = window.ui.pushButton_window_reset
+            result["in_general_page"] = window.ui.scrollArea_settings_general.isAncestorOf(button)
+            button.click()
             app.processEvents()
             geometry = window.geometry()
             result["after_reset"] = [geometry.x(), geometry.y(), geometry.width(), geometry.height()]
@@ -141,6 +142,7 @@ def _scenario(name):
             result["expected"] = [*centered_position((area.x(), area.y(), area.width(), area.height()), size), *size]
             result["saved"] = json.loads(settings.read_text(encoding="utf-8")).get("main_window_geometry")
             result["status"] = window.status_label.text()
+            result["size_label"] = window.ui.label_window_size.text()
     print("RESULT " + json.dumps(result, ensure_ascii=False), flush=True)
     os._exit(0)
 
@@ -184,7 +186,8 @@ class MainWindowGeometryTests(unittest.TestCase):
         result = run_scenario("reset")
         self.assertEqual(result["initial"], [20, 40, 760, 740])  # 저장값으로 열린 창
         self.assertTrue(result["maximized_before"])
-        self.assertTrue(result["in_file_menu"])
+        self.assertEqual(result["first_category"], ["일반", "scrollArea_settings_general"])
+        self.assertTrue(result["in_general_page"])
         default = result["expected"]  # 이 화면의 기본 크기(지금 최소 크기 이상)를 가운데에
         self.assertEqual(result["after_reset"], default)
         self.assertFalse(result["maximized_after"])
@@ -192,6 +195,7 @@ class MainWindowGeometryTests(unittest.TestCase):
         self.assertEqual([saved["x"], saved["y"], saved["w"], saved["h"]], default)
         self.assertFalse(saved["maximized"])
         self.assertIn(f"{default[2]}×{default[3]}", result["status"])
+        self.assertEqual(result["size_label"], f"이 모니터 기본 {default[2]}×{default[3]}")
 
     def test_never_shown_window_does_not_save(self):
         self.assertFalse(run_scenario("close_without_show")["saved"])
