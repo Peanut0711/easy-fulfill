@@ -100,11 +100,11 @@ def _scenario(name):
         if name == "restore":
             settings.parent.mkdir(exist_ok=True)
             settings.write_text(json.dumps({"main_window_geometry": {
-                "x": 20, "y": 40, "w": 700, "h": 740, "maximized": False}}), encoding="utf-8")
+                "x": 20, "y": 40, "w": 760, "h": 740, "maximized": False}}), encoding="utf-8")
         elif name == "offscreen_saved":
             settings.parent.mkdir(exist_ok=True)
             settings.write_text(json.dumps({"main_window_geometry": {
-                "x": 5000, "y": 40, "w": 700, "h": 740, "maximized": False}}), encoding="utf-8")
+                "x": 5000, "y": 40, "w": 760, "h": 740, "maximized": False}}), encoding="utf-8")
         window = module.MainWindow()
         geometry = window.geometry()
         result["initial"] = [geometry.x(), geometry.y(), geometry.width(), geometry.height()]
@@ -117,7 +117,7 @@ def _scenario(name):
         if name == "save":
             window.show()
             app.processEvents()
-            window.setGeometry(QRect(30, 50, 710, 745))
+            window.setGeometry(QRect(30, 50, 770, 745))
             app.processEvents()
             window.close()
             app.processEvents()
@@ -139,7 +139,7 @@ def run_scenario(name):
     return json.loads(line[len("RESULT "):])
 
 
-# offscreen 화면은 800×800이고 창 최소 크기가 그보다 조금 작아서, 저장값은 최소 크기 이상·화면 이하로 둔다.
+# offscreen 화면은 800×800이고 창 최소 크기가 그보다 조금 작아서(측면 툴바 포함 폭 736), 저장값은 최소 크기 이상·화면 이하로 둔다.
 class MainWindowGeometryTests(unittest.TestCase):
     def test_first_run_is_centered_and_not_below_minimum(self):
         result = run_scenario("default")
@@ -150,7 +150,7 @@ class MainWindowGeometryTests(unittest.TestCase):
         self.assertAlmostEqual((x - ax) * 2 + width, aw, delta=40)
 
     def test_saved_geometry_is_restored(self):
-        self.assertEqual(run_scenario("restore")["initial"], [20, 40, 700, 740])
+        self.assertEqual(run_scenario("restore")["initial"], [20, 40, 760, 740])
 
     def test_saved_geometry_off_screen_falls_back_to_default(self):
         result = run_scenario("offscreen_saved")
@@ -158,7 +158,7 @@ class MainWindowGeometryTests(unittest.TestCase):
 
     def test_close_saves_geometry_after_show(self):
         saved = run_scenario("save")["saved"]
-        self.assertEqual([saved["x"], saved["y"], saved["w"], saved["h"]], [30, 50, 710, 745])
+        self.assertEqual([saved["x"], saved["y"], saved["w"], saved["h"]], [30, 50, 770, 745])
         self.assertFalse(saved["maximized"])
 
     def test_never_shown_window_does_not_save(self):

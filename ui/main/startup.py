@@ -114,6 +114,7 @@ class StartupMixin:
         self.notice_bar = NoticeBar(window.centralwidget)
         window.centralwidget.layout().addWidget(self.notice_bar)
         self._apply_tab_order()
+        self._setup_navigation_rail(window.tabWidget)
         # self.setMenuBar(window.menubar)
         
         # 툴바 설정

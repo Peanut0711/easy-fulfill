@@ -116,6 +116,20 @@ QTabBar::tab {{
 QTabBar::tab:hover {{ color: {TEXT}; background: {BG_PRESSED}; }}
 QTabBar::tab:selected {{ color: {TEXT}; border-bottom: 2px solid {PRIMARY}; }}
 
+/* ── 측면 툴바(메인 탭 이동) ────────────────────────────── */
+/* 메인 탭은 이름 줄을 숨기고 왼쪽 툴바로 고른다. 탭 이름 줄이 없으니 페이지 위 경계선도 뺀다. */
+QTabWidget#tabWidget::pane {{ border: none; top: 0px; }}
+QToolBar#navigationRail {{
+    background: {BG_PRESSED}; border: none; border-right: 1px solid {BORDER};
+    padding: {SPACE_SM}px {SPACE_XS}px; spacing: {SPACE_XS}px;
+}}
+QToolButton#navigationButton {{
+    min-width: 56px; max-width: 56px; padding: 6px 2px; border: none; border-radius: {RADIUS_CARD}px;
+    background: transparent; color: {TEXT_SECONDARY};
+}}
+QToolButton#navigationButton:hover {{ background: {BORDER}; color: {TEXT}; }}
+QToolButton#navigationButton:checked {{ background: {PRIMARY_SUBTLE}; color: {PRIMARY_PRESSED}; font-weight: bold; }}
+
 /* ── 묶음(카드) ─────────────────────────────────────── */
 /* 제목을 카드 안 왼쪽 위에 굵게 둔다(공통 부품 SectionCard와 같은 모양, 계획 4-3). */
 QGroupBox {{

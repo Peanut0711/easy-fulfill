@@ -3,9 +3,10 @@
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QEasingCurve, QPropertyAnimation, QRectF, Qt, QTimer, QUrl
+from PySide6.QtCore import QEasingCurve, QPropertyAnimation, QRectF, QSize, Qt, QTimer, QUrl
 from PySide6.QtGui import (
     QAction,
+    QActionGroup,
     QColor,
     QDesktopServices,
     QFont,
@@ -13,8 +14,10 @@ from PySide6.QtGui import (
     QKeySequence,
     QPainter,
     QPen,
+    QPixmap,
     QShortcut,
 )
+from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -31,6 +34,8 @@ from PySide6.QtWidgets import (
     QStyle,
     QTableWidget,
     QTableWidgetItem,
+    QToolBar,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -45,6 +50,38 @@ STARTUP_SYNC_PROGRESS_CAP_MS = 2200
 STARTUP_SYNC_PROGRESS_TICK_MS = 40
 # 100% 도달 후 오버레이를 닫기까지 대기(너무 짧으면 급하게 사라진 느낌, 너무 길면 지루)
 STARTUP_SYNC_PROGRESS_HIDE_DELAY_MS = 500
+
+
+# 왼쪽 측면 툴바(탭 이름 줄 대신): (탭 objectName, 짧은 이름, 아이콘 모양). 설정은 맨 아래에 따로 둔다.
+NAV_RAIL_ITEMS = (
+    ("tab", "주문", '<path d="M3 7.5 12 3l9 4.5v9L12 21l-9-4.5z"/><path d="M3 7.5 12 12l9-4.5M12 12v9"/>'),
+    ("tab_tracking", "추적", '<path d="M2 6h11v10H2zM13 9h4l4 4v3h-8z"/><circle cx="6" cy="17.5" r="2"/>'
+                             '<circle cx="17" cy="17.5" r="2"/>'),
+    ("tab_quick_invoice", "송장", '<path d="M5 3h14v18l-2.5-1.5L14 21l-2-1.5L10 21l-2.5-1.5L5 21z"/>'
+                                  '<path d="M9 8h6M9 12h6"/>'),
+    ("tab_documents", "문서", '<path d="M6 3h8l5 5v13H6z"/><path d="M14 3v5h5M9 13h7M9 17h7"/>'),
+    ("tab_detail_page", "상세", '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/>'
+                                '<path d="m21 16-5-5-9 9"/>'),
+    ("tab_settings", "설정", '<path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1"/><circle cx="15" cy="6" r="2"/>'
+                             '<circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/>'),
+)
+NAV_RAIL_ICON_SIZE = 24
+
+
+def nav_rail_icon(shape: str) -> QIcon:
+    """선 아이콘(24 격자 SVG). 평소는 보조 글자색, 선택되면 강조색으로 그린다(2배 해상도로 그려 배율에서도 선명)."""
+    icon = QIcon()
+    for color, state in ((theme.TEXT_SECONDARY, QIcon.State.Off), (theme.PRIMARY_PRESSED, QIcon.State.On)):
+        svg = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><g fill="none" stroke="'
+               + color + '" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">' + shape + '</g></svg>')
+        pixmap = QPixmap(NAV_RAIL_ICON_SIZE * 2, NAV_RAIL_ICON_SIZE * 2)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        QSvgRenderer(svg.encode()).render(painter)
+        painter.end()
+        pixmap.setDevicePixelRatio(2)
+        icon.addPixmap(pixmap, QIcon.Mode.Normal, state)
+    return icon
 
 
 class CircularBusySpinner(QWidget):
@@ -112,6 +149,68 @@ class ChromeMixin:
             if cur != -1 and cur != target:
                 bar.moveTab(cur, target)
         tw.setCurrentIndex(0)
+
+    def _setup_navigation_rail(self, tabs):
+        """탭 이름 줄을 숨기고 왼쪽 측면 툴바로 탭을 고른다.
+
+        탭 화면·전환은 그대로 QTabWidget이 맡는다(단축키·currentChanged·setCurrentWidget 코드가 그대로 동작).
+        툴바 버튼은 objectName으로 탭을 찾아 이동하고, 탭이 어떤 경로로 바뀌든 currentChanged로 선택 표시를 맞춘다.
+        """
+        tabs.tabBar().hide()
+        rail = QToolBar("탭", self)
+        rail.setObjectName("navigationRail")
+        rail.setMovable(False)
+        rail.setFloatable(False)
+        rail.setAllowedAreas(Qt.ToolBarArea.LeftToolBarArea)
+        rail.setOrientation(Qt.Orientation.Vertical)
+        rail.toggleViewAction().setVisible(False)  # 오른쪽 클릭 메뉴로 툴바를 숨기지 못하게
+        rail.setContextMenuPolicy(Qt.ContextMenuPolicy.PreventContextMenu)
+        self.addToolBar(Qt.ToolBarArea.LeftToolBarArea, rail)
+        group = QActionGroup(rail)
+        group.setExclusive(True)
+        self.nav_rail = rail
+        self.nav_rail_actions = {}
+        pages = {tabs.widget(i).objectName(): tabs.widget(i) for i in range(tabs.count())}
+        for name, text, shape in NAV_RAIL_ITEMS:
+            page = pages.get(name)
+            if page is None:
+                continue
+            if name == "tab_settings":  # 업무 탭과 떼어 맨 아래에 둔다
+                spacer = QWidget(rail)
+                spacer.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
+                rail.addWidget(spacer)
+            action = QAction(nav_rail_icon(shape), text, rail)
+            action.setCheckable(True)
+            action.setObjectName(f"navAction_{name}")
+            action.triggered.connect(lambda _checked=False, p=page: tabs.setCurrentWidget(p))
+            group.addAction(action)
+            button = QToolButton(rail)
+            button.setObjectName("navigationButton")
+            button.setDefaultAction(action)
+            button.setIconSize(QSize(NAV_RAIL_ICON_SIZE, NAV_RAIL_ICON_SIZE))
+            button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            rail.addWidget(button)
+            self.nav_rail_actions[name] = action
+        tabs.currentChanged.connect(self._sync_navigation_rail)
+        self._sync_navigation_rail()
+
+    def _sync_navigation_rail(self, _index=None):
+        """현재 탭에 맞춰 측면 툴바 선택 표시와 툴팁(전체 탭 이름·단축키)을 맞춘다."""
+        tabs = getattr(self.ui, "tabWidget", None)
+        actions = getattr(self, "nav_rail_actions", None)
+        if tabs is None or not actions:
+            return
+        for index in range(tabs.count()):
+            page = tabs.widget(index)
+            action = actions.get(page.objectName())
+            if action is None:
+                continue
+            title = tabs.tabText(index).replace("⚙", "").strip()
+            tip = f"{title} (Ctrl+{index + 1})" if index < 6 else title
+            if action.toolTip() != tip:
+                action.setToolTip(tip)
+            action.setChecked(page is tabs.currentWidget())
 
     def _setup_status_chips(self):
         """상태바 오른쪽 상시 표시(계획 C-2): Google 연결 · 인덱스 동기화 · 앱 버전. 누르면 해당 설정 페이지.
