@@ -142,13 +142,30 @@ class DetailHtmlTests(unittest.TestCase):
     def test_escapes_and_shows_answer(self):
         from ui.main.inquiries import inquiry_detail_html, inquiry_summary
         row = naver_commerce.normalize_customer_inquiry(dict(CUSTOMER, inquiryContent="<b>굵게</b>\n둘째 줄"))
+        from shared import theme
         text = inquiry_detail_html(row)
         self.assertIn("&lt;b&gt;굵게&lt;/b&gt;<br>둘째 줄", text)
-        self.assertIn("주문번호: 2026112100001", text)
+        self.assertIn(">주문번호</td><td>2026112100001</td>", text)
         self.assertIn("변경해 드렸습니다.", text)
+        # 머리 배지: 고객문의는 정보 색, 답변 완료는 정상 색. 문의·답변 카드는 색 막대
+        self.assertIn(f'color:{theme.INFO}; background-color:{theme.INFO_SUBTLE}; font-weight:600;">&nbsp;고객문의', text)
+        self.assertIn(f'color:{theme.OK}; background-color:{theme.OK_SUBTLE}; font-weight:600;">&nbsp;답변 완료', text)
+        self.assertIn(f'<td width="4" bgcolor="{theme.PRIMARY_PRESSED}"></td>', text)
+        self.assertIn(f'<td width="4" bgcolor="{theme.OK}"></td>', text)
+        self.assertIn(">주소 변경</p>", text)  # 제목
+        self.assertIn(">상품</td><td>현미 5kg</td>", text)
         self.assertEqual(inquiry_summary(row), "주소 변경")
         unanswered = naver_commerce.normalize_product_qna(QNA)
-        self.assertIn("미답변", inquiry_detail_html(unanswered))
+        q_text = inquiry_detail_html(unanswered)
+        self.assertIn(f'color:{theme.DANGER}; background-color:{theme.DANGER_SUBTLE}; font-weight:600;">&nbsp;미답변', q_text)
+        self.assertIn("아직 답변하지 않았습니다.", q_text)
+        self.assertIn(">유기농 쌀 10kg</p>", q_text)  # 상품문의는 제목 자리에 상품명
+        self.assertIn(">상품번호</td><td>555</td>", q_text)
+        self.assertNotIn(">상품</td>", q_text)  # 상품명을 두 번 보이지 않는다
+        self.assertNotIn("주문·배송", q_text)
+        unknown = inquiry_detail_html(dict(unanswered, answered=None))
+        self.assertIn("답변 여부 알 수 없음", unknown)
+        self.assertNotIn("아직 답변하지 않았습니다", unknown)
         self.assertEqual(inquiry_summary(unanswered), "언제 발송되나요?")
 
 
@@ -268,18 +285,35 @@ class OrderHtmlTests(unittest.TestCase):
             order_detail("P1", delivery=dict(order_detail("P1")["delivery"], isWrongTrackingNumber=True)), ["P1"])
         other = naver_commerce.summarize_product_order(order_detail(
             "P2", status="PAYED", delivery={}, po={"productName": "<쌀>", "productOption": ""}), ["P1"])
+        from shared import theme
         text = inquiry_order_html({"ok": True, "items": [target, other]})
-        self.assertIn("(주문 2026-11-20 10:00)", text)
-        self.assertIn("<b>[문의 상품]</b> 현미 5kg / 5kg × 2", text)
-        self.assertIn("배송: 우체국택배 6012345678901 (배송완료) · 발송 2026-11-20 15:00 · 도착 2026-11-21 12:30", text)
+        self.assertIn(">주문 2026-11-20 10:00</span>", text)
+        self.assertIn("&nbsp;문의 상품&nbsp;</span>&nbsp; <b>현미 5kg</b>", text)
+        self.assertIn("5kg · × 2", text)
+        self.assertIn("배송 우체국택배 <b>6012345678901</b> · 배송완료", text)  # 송장번호는 굵게
+        self.assertIn("발송 2026-11-20 15:00 → 도착 2026-11-21 12:30", text)
         self.assertIn("송장번호 오류", text)
-        self.assertIn("&lt;쌀&gt; × 2", text)
+        self.assertIn("<b>&lt;쌀&gt;</b>", text)
         self.assertIn("아직 발송 전 · 발송기한 2026-11-22 23:59", text)
-        self.assertEqual(text.count("수령인: 홍길동"), 1)  # 같은 주소면 한 번만
-        self.assertIn("주소: (06000) 서울 강남구 테헤란로 1 101호", text)
-        self.assertIn("배송메모: 문 앞", text)
+        # 상태별 막대 색: 구매확정은 정상, 결제완료(발송 전)는 주의
+        self.assertIn(f'<td width="4" bgcolor="{theme.OK}"></td>', text)
+        self.assertIn(f'<td width="4" bgcolor="{theme.WARN}"></td>', text)
+        self.assertIn(f"&nbsp;결제완료(발주확인)&nbsp;", text)
+        self.assertEqual(text.count(">수령인</td><td><b>홍길동</b></td>"), 1)  # 같은 주소면 한 번만
+        self.assertIn(">주소</td><td>(06000) 서울 강남구 테헤란로 1 101호</td>", text)
+        self.assertIn(">배송메모</td><td>문 앞</td>", text)
         single = inquiry_order_html({"ok": True, "items": [target]})
-        self.assertNotIn("[문의 상품]", single)  # 상품이 하나면 표시하지 않는다
+        self.assertNotIn("문의 상품", single)  # 상품이 하나면 표시하지 않는다
+        moved = naver_commerce.summarize_product_order(order_detail(
+            "P4", po={"shippingAddress": {"name": "김철수", "baseAddress": "부산"}}), ["P1"])
+        two = inquiry_order_html({"ok": True, "items": [target, moved]})
+        self.assertIn("받는 분 · 현미 5kg", two)  # 받는 분이 다르면 상품별로
+        self.assertEqual(two.count("받는 분 · "), 2)
+        claim = naver_commerce.summarize_product_order(order_detail(
+            "P5", status="CANCELED", po={"claimType": "CANCEL", "claimStatus": "CANCEL_DONE"}))
+        claim_text = inquiry_order_html({"ok": True, "items": [claim]})
+        self.assertIn(f'<td width="4" bgcolor="{theme.DANGER}"></td>', claim_text)
+        self.assertIn(f'color:{theme.DANGER}; background-color:{theme.DANGER_SUBTLE}; font-weight:600;">&nbsp;취소 · 취소 완료', claim_text)
         sent = naver_commerce.summarize_product_order(order_detail(
             "P3", status="DELIVERED", delivery={"sendDate": "2026-11-20T15:00:00.0+09:00"}))
         sent_text = inquiry_order_html({"ok": True, "items": [sent]})
@@ -645,7 +679,7 @@ class InquiriesTabTests(unittest.TestCase):
 
     def test_selecting_row_shows_detail(self):
         detail = scenario()["detail"]
-        self.assertIn("[상품문의]", detail)
+        self.assertIn("상품문의", detail)
         self.assertIn("언제 발송되나요?", detail)
         self.assertIn("미답변", detail)
 
@@ -673,8 +707,8 @@ class InquiriesTabTests(unittest.TestCase):
         self.assertTrue(order["loading"])
         self.assertEqual(order["calls"], [["2026112100001", []]])
         self.assertIn("주문·배송", order["text"])
-        self.assertIn("우체국택배 6012345678901 (배송완료)", order["text"])
-        self.assertIn("수령인: 홍길동", order["text"])
+        self.assertIn("배송 우체국택배 6012345678901 · 배송완료", order["text"])
+        self.assertIn("수령인\n홍길동", order["text"])
         self.assertEqual(order["calls_after_reselect"], 1)
 
     def test_order_queue_retry_and_refresh(self):

@@ -51,118 +51,194 @@ def _esc(value):
     return html.escape(str(value or ""))
 
 
+def _block(value):
+    return _esc(value).replace("\n", "<br>")
+
+
+# ── 상세 영역 디자인 ────────────────────────────────────────────────
+# QTextBrowser 리치 텍스트는 둥근 모서리·한쪽 테두리를 지원하지 않아 표로 꾸민다.
+# 카드 = 왼쪽 색 막대(좁은 칸) + 옅은 바탕 칸. 배지 = 바탕색을 칠한 굵은 글자. 색은 모두 테마 이름.
+
+TONES = {  # 이름 → (글자·막대 색, 옅은 바탕)
+    "primary": (theme.PRIMARY_PRESSED, theme.PRIMARY_SUBTLE),
+    "info": (theme.INFO, theme.INFO_SUBTLE),
+    "ok": (theme.OK, theme.OK_SUBTLE),
+    "warn": (theme.WARN, theme.WARN_SUBTLE),
+    "danger": (theme.DANGER, theme.DANGER_SUBTLE),
+    "muted": (theme.TEXT_MUTED, theme.BG_PRESSED),
+}
+KIND_TONES = {"고객문의": "info", "상품문의": "primary"}
+# 상품주문 상태 → 색: 발송 전은 처리할 일(주의), 배송 중은 정보, 끝난 건 정상, 취소·반품·교환은 위험
+ORDER_STATUS_TONES = {
+    "PAYMENT_WAITING": "muted",
+    "PAYED": "warn",
+    "DELIVERING": "info",
+    "DELIVERED": "ok",
+    "PURCHASE_DECIDED": "ok",
+    "EXCHANGED": "danger",
+    "CANCELED": "danger",
+    "RETURNED": "danger",
+    "CANCELED_BY_NOPAYMENT": "danger",
+}
+
+
+def _chip(text, tone):
+    fg, bg = TONES[tone]
+    return (f'<span style="color:{fg}; background-color:{bg}; font-weight:600;">'
+            f'&nbsp;{_esc(text)}&nbsp;</span>')
+
+
+def _card(body, tone, plain_bg=False):
+    """왼쪽 색 막대 카드. plain_bg면 바탕은 연한 회색(색은 막대만)."""
+    accent, bg = TONES[tone]
+    if plain_bg:
+        bg = theme.BG_SUBTLE
+    return (f'<table width="100%" cellspacing="0" cellpadding="0" style="margin-bottom:{theme.SPACE_SM}px;">'
+            f'<tr><td width="4" bgcolor="{accent}"></td>'
+            f'<td bgcolor="{bg}" style="padding:{theme.SPACE_SM}px {theme.SPACE_MD}px;">{body}</td></tr></table>')
+
+
+def _section(title, tone="muted", note=""):
+    color = TONES[tone][0]
+    extra = f' <span style="color:{theme.TEXT_MUTED}; font-weight:400;">{_esc(note)}</span>' if note else ""
+    return (f'<p style="margin-top:{theme.SPACE_LG}px; margin-bottom:{theme.SPACE_XS}px; '
+            f'font-size:{theme.FONT_SIZE_SMALL}pt; font-weight:600; color:{color};">{_esc(title)}{extra}</p>')
+
+
+def _facts(pairs):
+    """흐린 라벨 · 값 두 열 표. pairs: [(라벨, 이미 이스케이프한 값 HTML)]."""
+    rows = "".join(
+        f'<tr><td style="color:{theme.TEXT_MUTED}; padding-right:{theme.SPACE_MD}px; white-space:nowrap;">'
+        f'{_esc(label)}</td><td>{value}</td></tr>'
+        for label, value in pairs if value)
+    if not rows:
+        return ""
+    return f'<table cellspacing="0" cellpadding="2">{rows}</table>'
+
+
+def _muted(text):
+    return f'<span style="color:{theme.TEXT_MUTED};">{text}</span>'
+
+
+def _order_item_card(item, mark_target):
+    """상품주문 1건 카드: 상품·상태 배지·배송(송장 굵게)·날짜·클레임."""
+    tone = ORDER_STATUS_TONES.get(item.get("status_code") or "", "muted")
+    head = ""
+    if mark_target:
+        head += _chip("문의 상품", "primary") + "&nbsp; "
+    head += f'<b>{_esc(item.get("product")) or "(상품명 없음)"}</b>'
+    sub = []
+    if item.get("option"):
+        sub.append(_esc(item["option"]))
+    if item.get("quantity"):
+        sub.append(f"× {_esc(item['quantity'])}")
+    lines = [head]
+    if sub:
+        lines.append(_muted(" · ".join(sub)))
+    chips = [_chip(item.get("status") or "상태 모름", tone)]
+    if item.get("claim"):
+        chips.append(_chip(item["claim"], "danger"))
+    if item.get("delivery_method"):
+        chips.append(_chip(item["delivery_method"], "muted"))
+    lines.append("&nbsp;".join(chips))
+    dates = []
+    if item.get("send_date"):
+        dates.append(f"발송 {_esc(item['send_date'])}")
+    if item.get("delivered_date"):
+        dates.append(f"도착 {_esc(item['delivered_date'])}")
+    if item.get("tracking") or item.get("company"):
+        ship = " ".join(x for x in (_esc(item.get("company")), f'<b>{_esc(item.get("tracking"))}</b>'
+                                    if item.get("tracking") else "") if x)
+        if item.get("delivery_status"):
+            ship += f" · {_esc(item['delivery_status'])}"
+        lines.append(f"배송 {ship}")
+        if dates:
+            lines.append(_muted(" → ".join(dates)))
+        if item.get("wrong_tracking"):
+            lines.append(f'<span style="color:{theme.DANGER}; font-weight:600;">'
+                         f'! 네이버에서 송장번호 오류로 표시된 건입니다</span>')
+    elif dates:  # 방문수령 등 송장 없이 발송 처리된 건
+        lines.append(_muted(" → ".join(dates)))
+    elif item.get("status_code") == "PAYED":
+        due = f" · 발송기한 {_esc(item['shipping_due'])}" if item.get("shipping_due") else ""
+        lines.append(f'<span style="color:{theme.WARN}; font-weight:600;">아직 발송 전{due}</span>')
+    if item.get("claim_tracking"):
+        lines.append(_muted(f"클레임 송장 {_esc(item['claim_tracking'])}"))
+    return _card("<br>".join(lines), tone, plain_bg=True)
+
+
 def inquiry_order_html(state):
     """고객문의 상세 아래 「주문·배송」 구역. state: None(해당 없음)·{"loading"}·작업 결과 dict."""
     if state is None:
         return ""
-    head = "<p><b>주문·배송</b>"
     if state.get("loading"):
-        return head + "<br>주문 정보를 불러오는 중…</p>"
+        return _section("주문·배송") + _muted("주문 정보를 불러오는 중…")
     if not state.get("ok"):
-        return head + f"<br>주문 정보를 불러오지 못했습니다: {_esc(state.get('error'))}</p>"
+        return _section("주문·배송") + _card(
+            f"주문 정보를 불러오지 못했습니다: {_esc(state.get('error'))}", "danger")
     items = state.get("items") or []
     if not items:
-        return head + "<br>주문 정보를 찾지 못했습니다.</p>"
-    if items[0].get("order_date"):
-        head += f" (주문 {_esc(items[0]['order_date'])})"
-    out = [head + "</p>"]
+        return _section("주문·배송") + _muted("주문 정보를 찾지 못했습니다.")
+    note = f"주문 {items[0]['order_date']}" if items[0].get("order_date") else ""
+    out = [_section("주문·배송", note=note)]
     for item in items:
-        title = _esc(item.get("product")) or "(상품명 없음)"
-        if item.get("option"):
-            title += f" / {_esc(item['option'])}"
-        if item.get("quantity"):
-            title += f" × {_esc(item['quantity'])}"
-        mark = "<b>[문의 상품]</b> " if item.get("is_inquiry_target") and len(items) > 1 else ""
-        lines = [mark + title]
-        status = f"상태: {_esc(item.get('status')) or '-'}"
-        if item.get("claim"):
-            status += f" · 클레임: {_esc(item['claim'])}"
-        if item.get("delivery_method"):
-            status += f" · {_esc(item['delivery_method'])}"
-        lines.append(status)
-        if item.get("tracking") or item.get("company"):
-            ship = "배송: " + " ".join(x for x in (_esc(item.get("company")), _esc(item.get("tracking"))) if x)
-            if item.get("delivery_status"):
-                ship += f" ({_esc(item['delivery_status'])})"
-            dates = []
-            if item.get("send_date"):
-                dates.append(f"발송 {_esc(item['send_date'])}")
-            if item.get("delivered_date"):
-                dates.append(f"도착 {_esc(item['delivered_date'])}")
-            if dates:
-                ship += " · " + " · ".join(dates)
-            lines.append(ship)
-            if item.get("wrong_tracking"):
-                lines.append("<b>! 네이버에서 송장번호 오류로 표시된 건입니다</b>")
-        elif item.get("send_date"):  # 방문수령 등 송장 없이 발송 처리된 건
-            lines.append(f"발송 {_esc(item['send_date'])}"
-                         + (f" · 도착 {_esc(item['delivered_date'])}" if item.get("delivered_date") else ""))
-        elif item.get("status_code") == "PAYED":
-            due = f" · 발송기한 {_esc(item['shipping_due'])}" if item.get("shipping_due") else ""
-            lines.append(f"아직 발송 전{due}")
-        if item.get("claim_tracking"):
-            lines.append(f"클레임 송장: {_esc(item['claim_tracking'])}")
-        out.append("<p>" + "<br>".join(lines) + "</p>")
-    receivers = {(i.get("receiver"), i.get("zip"), i.get("address"), i.get("memo")) for i in items}
-    if len(receivers) == 1:
-        receiver, zip_code, address, memo = next(iter(receivers))
-        lines = []
-        if receiver:
-            lines.append(f"수령인: {_esc(receiver)}")
-        if address:
-            lines.append(f"주소: {'(' + _esc(zip_code) + ') ' if zip_code else ''}{_esc(address)}")
-        if memo:
-            lines.append(f"배송메모: {_esc(memo)}")
-        if lines:
-            out.append("<p>" + "<br>".join(lines) + "</p>")
-    else:
-        for item in items:
-            out.append(f"<p>{_esc(item.get('product'))} 수령인: {_esc(item.get('receiver'))}<br>"
-                       f"주소: ({_esc(item.get('zip'))}) {_esc(item.get('address'))}"
-                       + (f"<br>배송메모: {_esc(item.get('memo'))}" if item.get("memo") else "") + "</p>")
+        out.append(_order_item_card(item, item.get("is_inquiry_target") and len(items) > 1))
+    receivers = []
+    for item in items:
+        key = (item.get("receiver"), item.get("zip"), item.get("address"), item.get("memo"))
+        if key not in [r[0] for r in receivers]:
+            receivers.append((key, item.get("product")))
+    for (receiver, zip_code, address, memo), product in receivers:
+        title = "받는 분" if len(receivers) == 1 else f"받는 분 · {product}"
+        zip_html = f"({_esc(zip_code)}) " if zip_code else ""
+        facts = _facts([("수령인", f"<b>{_esc(receiver)}</b>" if receiver else ""),
+                        ("주소", f"{zip_html}{_esc(address)}" if address else ""),
+                        ("배송메모", _esc(memo))])
+        if facts:
+            out.append(_section(title))
+            out.append(facts)
     return "".join(out)
 
 
 def inquiry_detail_html(row, order_state=None):
     """오른쪽 상세 영역 HTML. 값은 모두 이스케이프한다. 고객문의는 아래에 주문·배송 구역을 붙인다."""
-    esc = _esc
-
-    def block(value):
-        return esc(value).replace("\n", "<br>")
-
-    head = f"[{esc(row.get('kind'))}]"
-    if row.get("title"):
-        head += " " + esc(row["title"])
-    meta = [f"등록 {esc(row.get('created'))}"]
-    if row.get("writer"):
-        meta.append(f"작성자 {esc(row['writer'])}")
-    if row.get("category"):
-        meta.append(f"분류 {esc(row['category'])}")
-    lines = [f"<p><b>{head}</b><br>{' · '.join(meta)}</p>"]
-    facts = []
-    if row.get("product"):
-        no = f" ({esc(row['product_no'])})" if row.get("product_no") else ""
-        facts.append(f"상품: {esc(row['product'])}{no}")
-    if row.get("order_id"):
-        facts.append(f"주문번호: {esc(row['order_id'])}")
-    if facts:
-        lines.append("<p>" + "<br>".join(facts) + "</p>")
-    lines.append("<hr>")
-    lines.append(f"<p>{block(row.get('content')) or '(내용 없음)'}</p>")
-    lines.append("<hr>")
+    kind = row.get("kind") or ""
+    chips = [_chip(kind, KIND_TONES.get(kind, "muted"))]
     if row.get("answered"):
-        when = f" ({esc(row['answered_at'])})" if row.get("answered_at") else ""
-        answer = block(row.get("answer")) or "(답변 내용을 응답에서 찾지 못했습니다)"
-        lines.append(f"<p><b>답변{when}</b><br>{answer}</p>")
+        chips.append(_chip("답변 완료", "ok"))
     elif row.get("answered") is False:
-        lines.append("<p><b>미답변</b></p>")
+        chips.append(_chip("미답변", "danger"))
     else:
-        lines.append("<p><b>답변 여부 알 수 없음</b></p>")
-    order = inquiry_order_html(order_state)
-    if order:
-        lines.append("<hr>")
-        lines.append(order)
-    return "".join(lines)
+        chips.append(_chip("답변 여부 알 수 없음", "muted"))
+    title = row.get("title") or row.get("product") or "(제목 없음)"
+    meta = [f"등록 {_esc(row.get('created'))}"]
+    if row.get("writer"):
+        meta.append(f"작성자 {_esc(row['writer'])}")
+    if row.get("category"):
+        meta.append(f"분류 {_esc(row['category'])}")
+    product = ""
+    if row.get("product") and row.get("title"):
+        product = _esc(row["product"]) + (_muted(f" ({_esc(row['product_no'])})") if row.get("product_no") else "")
+    facts = [("상품", product), ("주문번호", _esc(row.get("order_id")))]
+    if not row.get("title"):  # 상품문의는 제목 자리에 상품명이 있어 상품번호만 보인다
+        facts = [("상품번호", _esc(row.get("product_no")))] + facts
+    out = [
+        f'<p style="margin-bottom:{theme.SPACE_XS}px;">{"&nbsp;".join(chips)}</p>',
+        f'<p style="margin-top:0; margin-bottom:{theme.SPACE_XS}px; font-size:{theme.FONT_SIZE + 3}pt; '
+        f'font-weight:600; color:{theme.TEXT};">{_esc(title)}</p>',
+        f'<p style="margin-top:0;">{_muted(" · ".join(meta))}</p>',
+        _facts(facts),
+        _section("문의", "primary"),
+        _card(_block(row.get("content")) or _muted("(내용 없음)"), "primary"),
+    ]
+    if row.get("answered"):
+        when = row.get("answered_at") or ""
+        answer = _block(row.get("answer")) or _muted("(답변 내용을 응답에서 찾지 못했습니다)")
+        out += [_section("답변", "ok", note=when), _card(answer, "ok")]
+    elif row.get("answered") is False:
+        out += [_section("답변", "danger"), _card("아직 답변하지 않았습니다.", "danger")]
+    out.append(inquiry_order_html(order_state))
+    return "".join(out)
 
 
 class InquiriesMixin:
