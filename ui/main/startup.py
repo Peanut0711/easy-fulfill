@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QDialog, QDialogButtonBox, QGridLayout, QLabel, QLayout, QMessageBox, QStyle,
 )
 
+from shared import app_log
 from shared.lazy_import import preload_modules_in_background
 from shared.paths import APP_ROOT
 from shared.ui_notice import NoticeBar
@@ -236,7 +237,7 @@ class StartupMixin:
                 self._version_blocked_notice_shown = True
                 self._show_required_update_notice(result.get("minimum", ""))
             return
-        print(f"앱 버전 {result.get('version')}")
+        app_log.log(f"앱 버전 확인 완료 ({result.get('version')}, 공유 최소 {result.get('minimum')})")
         if result.get("latest"):
             self._maybe_show_update_notice(result["latest"])
 
