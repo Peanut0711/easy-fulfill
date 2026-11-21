@@ -298,6 +298,79 @@ def fetch_inquiry_list(token, from_dt, to_dt, unanswered_only=True):
     return {"rows": rows, "errors": errors, "sample_keys": sample_keys}
 
 
+# ── 문의 탭: 답변 등록(쓰기) ────────────────────────────────────────
+# 2026-11-22 권한 확인(아무것도 만들지 않는 호출): 템플릿 조회 200, 없는 번호 0에 빈 본문을 보내면
+# 상품문의 PUT 404 「데이터를 찾을 수 없습니다」·고객문의 POST 400 ERR-NC-101004 「문의 번호 0에 해당하는
+# 문의가 없습니다」 → 두 API 모두 권한은 있다(403 아님).
+# 본문 필드: 상품문의 commentContent 는 네이버 커머스API 커뮤니티 사례로 확인했다. 고객문의 answerComment 는
+# 문서를 읽지 못해(사이트 404) 확인하지 못했다. 이름이 틀리면 400 으로 거절되고 답변은 등록되지 않는다.
+QNA_TEMPLATES_URL = QNAS_URL + "/templates"
+CUSTOMER_ANSWER_URL = API_BASE + "/v1/pay-merchant/inquiries/{inquiry_no}/answer"
+
+
+def _write_json(method, url, token, payload):
+    """쓰기 호출. 성공(2xx)이면 본문이 비었거나 JSON이 아니어도 성공으로 본다.
+
+    성공한 답변을 응답 해석 실패로 「실패」라 보이면 다시 보내 답변이 두 번 붙을 수 있어서다.
+    """
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    resp = requests.request(method, url, headers=headers, json=payload, timeout=DEFAULT_TIMEOUT)
+    _raise_for_status_with_body(resp)
+    try:
+        return resp.json() if resp.content else {}
+    except ValueError:
+        return {}
+
+
+def fetch_qna_templates(token):
+    """상품문의 답변 템플릿 [{subject, content, questionType}] (읽기 전용)."""
+    _require()
+    js = _get_json(QNA_TEMPLATES_URL, token, None)
+    items = js if isinstance(js, list) else (js.get("contents") or js.get("data") or [])
+    out = []
+    for item in items:
+        if isinstance(item, dict) and str(item.get("content") or "").strip():
+            out.append({"subject": _text(item, "subject") or "(제목 없음)",
+                        "content": str(item.get("content")),
+                        "question_type": _text(item, "questionType")})
+    return out
+
+
+def find_inquiry(token, kind, inquiry_id, created):
+    """답변 직전 다시 확인용: 등록 시각 하루 전부터 지금까지 같은 종류를 읽어 그 문의의 행 dict(없으면 None)."""
+    try:
+        start = datetime.strptime(str(created or "")[:16], "%Y-%m-%d %H:%M") - timedelta(days=1)
+    except ValueError:
+        start = datetime.now() - timedelta(days=30)
+    now = datetime.now()
+    if kind == INQUIRY_KIND_PRODUCT:
+        items, normalize = fetch_product_qnas(token, start, now), normalize_product_qna
+    else:
+        items, normalize = fetch_customer_inquiries(token, start, now), normalize_customer_inquiry
+    for item in items:
+        if isinstance(item, dict):
+            row = normalize(item)
+            if row["id"] == str(inquiry_id):
+                return row
+    return None
+
+
+def post_inquiry_answer(token, kind, inquiry_id, text):
+    """문의에 답변을 등록한다. 상품문의 PUT /v1/contents/qnas/{questionId}, 고객문의 POST …/answer."""
+    _require()
+    text = str(text or "").strip()
+    if not text:
+        raise ValueError("답변 내용이 비어 있습니다.")
+    inquiry_id = str(inquiry_id or "").strip()
+    if not inquiry_id.isdigit():
+        raise ValueError(f"문의 번호가 올바르지 않습니다: {inquiry_id}")
+    if kind == INQUIRY_KIND_PRODUCT:
+        return _write_json("PUT", f"{QNAS_URL}/{inquiry_id}", token, {"commentContent": text})
+    if kind == INQUIRY_KIND_CUSTOMER:
+        return _write_json("POST", CUSTOMER_ANSWER_URL.format(inquiry_no=inquiry_id), token, {"answerComment": text})
+    raise ValueError(f"알 수 없는 문의 종류: {kind}")
+
+
 # ── 주문(발주) 조회 ─────────────────────────────────────────────
 # 폴링 파이프라인: last-changed-statuses(변경 식별자만) → query(상세 풀세트).
 PRODUCT_ORDERS_BASE = API_BASE + "/v1/pay-order/seller/product-orders"

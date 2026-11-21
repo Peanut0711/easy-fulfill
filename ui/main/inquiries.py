@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QHBoxLayout,
     QLabel,
+    QPlainTextEdit,
     QPushButton,
     QSizePolicy,
     QSplitter,
@@ -26,7 +27,7 @@ from PySide6.QtWidgets import (
 )
 
 from shared import app_log, theme
-from shared.ui_components import EmptyState, fixed_width_button, setup_table
+from shared.ui_components import EmptyState, SectionCard, confirm_action, fixed_width_button, setup_table
 from shared.ui_style import set_button_role, set_status
 from ui.main import host as _host
 
@@ -304,13 +305,24 @@ class InquiriesMixin:
         self.textBrowser_inquiry_detail.setOpenLinks(False)
         self.textBrowser_inquiry_detail.setPlaceholderText("목록에서 문의를 고르면 내용이 보입니다.")
 
+        # 오른쪽: 위 상세 보기 · 아래 답변 작성(미답변 문의를 골랐을 때만 보인다)
+        self.textBrowser_inquiry_detail.setMinimumHeight(80)
+        self._build_inquiry_answer_panel()
+        detail_split = QSplitter(Qt.Orientation.Vertical)
+        detail_split.setObjectName("splitter_inquiry_detail")
+        detail_split.setChildrenCollapsible(False)
+        detail_split.addWidget(self.textBrowser_inquiry_detail)
+        detail_split.addWidget(self.card_inquiry_answer)
+        detail_split.setStretchFactor(0, 3)
+        detail_split.setStretchFactor(1, 1)
+
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.setObjectName("splitter_inquiries")
         splitter.setChildrenCollapsible(False)
         self.stackedWidget_inquiry_list.setMinimumWidth(200)
-        self.textBrowser_inquiry_detail.setMinimumWidth(160)
+        detail_split.setMinimumWidth(160)
         splitter.addWidget(self.stackedWidget_inquiry_list)
-        splitter.addWidget(self.textBrowser_inquiry_detail)
+        splitter.addWidget(detail_split)
         splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 2)
         layout.addWidget(splitter, 1)
@@ -331,6 +343,168 @@ class InquiriesMixin:
         if _host(self).gspread is not None:
             self._inquiry_badge_timer.start()
             QTimer.singleShot(INQUIRY_BADGE_FIRST_DELAY_MS, self._poll_inquiry_badge)
+
+    # ── 답변 작성(고객에게 보이는 쓰기) ───────────────────────────────────
+    def _build_inquiry_answer_panel(self):
+        self._inquiry_drafts = {}  # (종류, 번호) → 쓰던 답변
+        self._inquiry_answer_key = None  # 지금 답변 칸이 가리키는 문의
+        self._inquiry_answer_thread = None
+        self._inquiry_answer_sending_key = None
+        self._inquiry_templates = None  # None = 아직 안 읽음
+        self._inquiry_templates_thread = None
+
+        self.comboBox_inquiry_template = QComboBox()
+        self.comboBox_inquiry_template.setObjectName("comboBox_inquiry_template")
+        self.comboBox_inquiry_template.addItem("템플릿 넣기…")
+        self.comboBox_inquiry_template.setEnabled(False)
+        self.card_inquiry_answer = SectionCard("답변 작성", actions=[self.comboBox_inquiry_template])
+        self.card_inquiry_answer.setObjectName("card_inquiry_answer")
+        self.plainTextEdit_inquiry_answer = QPlainTextEdit()
+        self.plainTextEdit_inquiry_answer.setObjectName("plainTextEdit_inquiry_answer")
+        self.plainTextEdit_inquiry_answer.setPlaceholderText("고객에게 보낼 답변을 입력하세요.")
+        self.plainTextEdit_inquiry_answer.setMinimumHeight(60)
+        self.label_inquiry_answer_status = QLabel()
+        self.label_inquiry_answer_status.setObjectName("label_inquiry_answer_status")
+        self.label_inquiry_answer_status.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.pushButton_inquiry_answer_send = QPushButton("답변 등록")
+        self.pushButton_inquiry_answer_send.setObjectName("pushButton_inquiry_answer_send")
+        set_button_role(self.pushButton_inquiry_answer_send, "primary")
+        self.pushButton_inquiry_answer_send.setEnabled(False)
+        row = QHBoxLayout()
+        row.setSpacing(theme.SPACE_SM)
+        row.addWidget(self.label_inquiry_answer_status, 1)
+        row.addWidget(fixed_width_button(self.pushButton_inquiry_answer_send))
+        self.card_inquiry_answer.body.addWidget(self.plainTextEdit_inquiry_answer, 1)
+        self.card_inquiry_answer.body.addLayout(row)
+        self.card_inquiry_answer.setVisible(False)
+        set_status(self.label_inquiry_answer_status, "idle", "")
+
+        self.plainTextEdit_inquiry_answer.textChanged.connect(self._on_inquiry_answer_text_changed)
+        self.pushButton_inquiry_answer_send.clicked.connect(self._send_inquiry_answer)
+        self.comboBox_inquiry_template.activated.connect(self._insert_inquiry_template)
+
+    def _sync_inquiry_answer_panel(self, row):
+        """고른 문의에 맞춰 답변 칸을 보이거나 숨기고, 문의마다 쓰던 답변을 바꿔 끼운다."""
+        key = (row.get("kind"), row.get("id")) if row else None
+        show = row is not None and row.get("answered") is False
+        # 같은 문의라도 새로고침 뒤 답변됨으로 바뀌면 칸을 숨겨야 해서 보임 여부까지 비교한다
+        if key == self._inquiry_answer_key and show == self.card_inquiry_answer.isVisibleTo(self.card_inquiry_answer.parentWidget()):
+            return
+        if self._inquiry_answer_key is not None and self._inquiry_answer_key != key:  # 앞 문의에 쓰던 글을 기억
+            self._inquiry_drafts[self._inquiry_answer_key] = self.plainTextEdit_inquiry_answer.toPlainText()
+        self._inquiry_answer_key = key
+        self.card_inquiry_answer.setVisible(show)
+        self.plainTextEdit_inquiry_answer.blockSignals(True)
+        self.plainTextEdit_inquiry_answer.setPlainText(self._inquiry_drafts.get(key, "") if show else "")
+        self.plainTextEdit_inquiry_answer.blockSignals(False)
+        if show:
+            if row.get("kind") == "상품문의":
+                public, detail = "상품 페이지에 공개", "상품문의 답변은 상품 페이지에 공개되어 다른 고객도 봅니다."
+            else:
+                public, detail = "고객에게만 보임", "고객문의 답변은 문의한 고객에게만 보입니다."
+            sending = self._inquiry_answer_sending_key == key
+            set_status(self.label_inquiry_answer_status, "idle", "보내는 중…" if sending else public, detail=detail)
+            self._load_inquiry_templates()
+        self._update_inquiry_answer_button()
+
+    def _on_inquiry_answer_text_changed(self):
+        if self._inquiry_answer_key is not None:
+            self._inquiry_drafts[self._inquiry_answer_key] = self.plainTextEdit_inquiry_answer.toPlainText()
+        self._update_inquiry_answer_button()
+
+    def _update_inquiry_answer_button(self):
+        has_text = bool(self.plainTextEdit_inquiry_answer.toPlainText().strip())
+        self.pushButton_inquiry_answer_send.setEnabled(has_text and self._inquiry_answer_thread is None)
+
+    def _load_inquiry_templates(self):
+        if self._inquiry_templates is not None or self._inquiry_templates_thread is not None:
+            return
+        if _host(self).gspread is None:
+            return
+        thread = _host(self).NaverQnaTemplatesThread(self)
+        thread.result_ready.connect(self._on_inquiry_templates_loaded)
+        thread.finished.connect(lambda: setattr(self, "_inquiry_templates_thread", None))
+        self._inquiry_templates_thread = thread
+        thread.start()
+
+    def _on_inquiry_templates_loaded(self, payload):
+        combo = self.comboBox_inquiry_template
+        if not payload.get("ok"):
+            self._inquiry_templates = None  # 다음에 답변 칸을 열 때 다시 읽는다
+            combo.setEnabled(False)
+            combo.setToolTip(f"템플릿을 읽지 못했습니다: {payload.get('error')}")
+            return
+        self._inquiry_templates = list(payload.get("templates") or [])
+        while combo.count() > 1:
+            combo.removeItem(1)
+        for template in self._inquiry_templates:
+            combo.addItem(template["subject"])
+        combo.setEnabled(bool(self._inquiry_templates))
+        combo.setToolTip("" if self._inquiry_templates else "판매자센터에 등록된 상품문의 답변 템플릿이 없습니다.")
+
+    def _insert_inquiry_template(self, index):
+        """고른 템플릿 내용을 입력란의 커서 자리에 넣는다(덮어쓰지 않는다)."""
+        if index <= 0 or not self._inquiry_templates or index > len(self._inquiry_templates):
+            return
+        self.plainTextEdit_inquiry_answer.insertPlainText(self._inquiry_templates[index - 1]["content"])
+        self.plainTextEdit_inquiry_answer.setFocus()
+        self.comboBox_inquiry_template.setCurrentIndex(0)
+
+    def _send_inquiry_answer(self):
+        row = self._selected_inquiry_row()
+        text = self.plainTextEdit_inquiry_answer.toPlainText().strip()
+        if row is None or not text or row.get("answered") is not False or self._inquiry_answer_thread is not None:
+            return
+        kind = row.get("kind")
+        title = row.get("title") or row.get("product") or ""
+        public = ("상품문의 답변은 상품 페이지에 공개되어 다른 고객도 봅니다."
+                  if kind == "상품문의" else "문의한 고객에게 보입니다.")
+        preview = text if len(text) <= 300 else text[:300] + "…"
+        if not confirm_action(
+                self, "답변 등록", f"{kind} 「{title}」({row.get('writer') or '-'})에 이 답변을 등록할까요?",
+                "답변 등록", destructive=True,
+                detail=f"{public}\n등록한 답변은 앱에서 고칠 수 없습니다(판매자센터에서 수정).\n\n{preview}"):
+            return
+        key = (kind, row.get("id"))
+        self._inquiry_answer_sending_key = key
+        set_status(self.label_inquiry_answer_status, "idle", "보내는 중…")
+        thread = _host(self).NaverInquiryAnswerThread(kind, row.get("id"), row.get("created"), text, self)
+        thread.result_ready.connect(self._on_inquiry_answer_sent)
+        thread.finished.connect(self._on_inquiry_answer_thread_finished)
+        self._inquiry_answer_thread = thread
+        self._update_inquiry_answer_button()
+        thread.start()
+
+    def _on_inquiry_answer_thread_finished(self):
+        self._inquiry_answer_thread = None
+        self._inquiry_answer_sending_key = None
+        self._update_inquiry_answer_button()
+
+    def _on_inquiry_answer_sent(self, payload):
+        key = (payload.get("kind"), payload.get("id"))
+        current = key == self._inquiry_answer_key
+        if payload.get("ok"):
+            self._inquiry_drafts.pop(key, None)
+            if current:
+                self.plainTextEdit_inquiry_answer.blockSignals(True)
+                self.plainTextEdit_inquiry_answer.clear()
+                self.plainTextEdit_inquiry_answer.blockSignals(False)
+                set_status(self.label_inquiry_answer_status, "ok", "답변을 등록했습니다.")
+            print(f"✓ 문의 답변 등록: {key[0]} {key[1]}")
+            self.notify("ok", f"{key[0]} 답변을 등록했습니다.")
+        else:
+            error = str(payload.get("error") or "알 수 없는 오류")
+            if payload.get("uncertain"):
+                error = ("보내는 중 연결이 끊겨 등록됐는지 알 수 없습니다. 목록을 새로고침해 답변 여부를 확인한 뒤 "
+                         f"다시 보내세요. ({error})")
+            kind = "warn" if payload.get("already_answered") else "error"
+            if current:
+                set_status(self.label_inquiry_answer_status, kind, error, detail=error)
+            print(f"! 문의 답변 등록 실패({key[0]} {key[1]}): {error}")
+            self.notify(kind, f"답변을 등록하지 못했습니다: {error}")
+        # 답변 상태를 다시 읽어 목록·배지를 맞춘다(이미 답변됨·알 수 없음일 때도).
+        self.refresh_inquiries()
+        self._poll_inquiry_badge()
 
     # ── 측면 툴바 「문의」 배지 ──────────────────────────────────────────
     def _poll_inquiry_badge(self):
@@ -461,6 +635,7 @@ class InquiriesMixin:
 
     def _show_selected_inquiry(self):
         row = self._selected_inquiry_row()
+        self._sync_inquiry_answer_panel(row)
         if row is None:
             self._inquiry_order_wanted = None
             self.textBrowser_inquiry_detail.clear()

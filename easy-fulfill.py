@@ -1575,6 +1575,90 @@ def run_naver_inquiry_count_worker():
         return {"ok": False, "error": str(e), "checked_at": checked_at}
 
 
+def _with_inquiry_token(call):
+    """최근 토큰으로 call(token)을 부르고, 401(토큰 만료)이면 공유 「설정」으로 새 토큰을 받아 한 번 더 부른다.
+
+    401은 서버가 요청을 처리하기 전에 거절한 것이라 쓰기 호출도 다시 불러도 된다.
+    """
+    token = _recent_inquiry_token()
+    if token:
+        try:
+            return call(token)
+        except Exception as e:
+            if "HTTP 401" not in str(e):
+                raise
+            _forget_inquiry_token()
+    if gspread is None:
+        raise RuntimeError("gspread 패키지가 필요합니다.")
+    return call(_naver_inquiry_token_from_config())
+
+
+def run_naver_inquiry_answer_worker(kind, inquiry_id, created, text):
+    """「문의」 탭: 네이버 문의에 답변을 등록한다(고객에게 보이는 쓰기).
+
+    보내기 직전에 그 문의를 다시 읽어, 이미 답변됐으면(다른 PC·판매자센터) 보내지 않는다.
+    반환: {ok, kind, id} 또는 {ok: False, error, already_answered, uncertain}.
+    uncertain: 보내는 중 연결이 끊겨 등록됐는지 알 수 없음(다시 보내기 전에 새로고침으로 확인해야 함).
+    """
+    result = {"kind": kind, "id": str(inquiry_id)}
+    stage = {"sending": False}
+    try:
+        from integrations import naver_commerce
+    except ImportError as e:
+        return dict(result, ok=False, error=str(e))
+
+    def call(token):
+        stage["sending"] = False
+        current = naver_commerce.find_inquiry(token, kind, inquiry_id, created)
+        if current is None:
+            return dict(result, ok=False, error="네이버에서 이 문의를 다시 찾지 못해 보내지 않았습니다. 목록을 새로고침해 주세요.")
+        if current.get("answered"):
+            return dict(result, ok=False, already_answered=True,
+                        error="이미 답변된 문의라 보내지 않았습니다(다른 PC나 판매자센터에서 답변). 목록을 새로고침합니다.")
+        stage["sending"] = True
+        naver_commerce.post_inquiry_answer(token, kind, inquiry_id, text)
+        return dict(result, ok=True)
+
+    try:
+        return _with_inquiry_token(call)
+    except Exception as e:
+        message = str(e)
+        # 서버가 HTTP 오류로 거절했으면 등록되지 않은 것이 확실하다. 그 밖(시간 초과·연결 끊김)은 알 수 없다.
+        uncertain = stage["sending"] and not message.startswith("HTTP ")
+        return dict(result, ok=False, error=message, uncertain=uncertain)
+
+
+def run_naver_qna_templates_worker():
+    """「문의」 탭: 상품문의 답변 템플릿 목록(읽기 전용). 반환: {ok, templates} 또는 {ok: False, error}."""
+    try:
+        from integrations import naver_commerce
+        return {"ok": True, "templates": _with_inquiry_token(naver_commerce.fetch_qna_templates)}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+class NaverInquiryAnswerThread(QThread):
+    """「문의」 탭의 답변 등록을 백그라운드로 실행한다."""
+
+    result_ready = Signal(dict)
+
+    def __init__(self, kind, inquiry_id, created, text, parent=None):
+        super().__init__(parent)
+        self._args = (kind, inquiry_id, created, text)
+
+    def run(self):
+        self.result_ready.emit(run_naver_inquiry_answer_worker(*self._args))
+
+
+class NaverQnaTemplatesThread(QThread):
+    """「문의」 탭의 답변 템플릿 목록을 백그라운드로 읽는다."""
+
+    result_ready = Signal(dict)
+
+    def run(self):
+        self.result_ready.emit(run_naver_qna_templates_worker())
+
+
 class NaverInquiryCountThread(QThread):
     """측면 툴바 「문의」 배지용 미답변 수 조회를 백그라운드로 실행한다."""
 
