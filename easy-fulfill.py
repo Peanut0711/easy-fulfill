@@ -1461,7 +1461,7 @@ def run_naver_inquiry_list_worker(days, unanswered_only=True):
                     "error": "네이버 client_id/secret 이 설정되지 않았습니다. "
                              "「⚙ 설정 › 연동」의 API 키에서 등록하세요."}
         now_dt = datetime.now()
-        from_dt = now_dt - timedelta(days=max(1, int(days)))
+        from_dt = naver_commerce.inquiry_period_start(now_dt, days)
         token = naver_commerce.get_access_token(client_id, client_secret)
         _remember_inquiry_token(token)
         res = naver_commerce.fetch_inquiry_list(token, from_dt, now_dt, unanswered_only=unanswered_only)

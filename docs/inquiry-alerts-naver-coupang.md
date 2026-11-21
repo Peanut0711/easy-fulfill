@@ -88,7 +88,7 @@
   작업 스레드 `NaverInquiryListThread` → `run_naver_inquiry_list_worker(days, unanswered_only)`
   → `naver_commerce.fetch_inquiry_list`.
 - 위 알림과 별개로 API를 직접 조회해 보여 준다. 「문의알림」 시트·슬랙에는 읽지도 쓰지도 않는다.
-- 기간 최근 7일·30일(기본 30일), 「미답변만」(기본 켬). 처음 들어갈 때 한 번 자동 조회, 이후 「새로고침」·필터 변경 때
+- 기간 오늘(0시부터)·최근 7일·최근 30일(기본 오늘, `0.0.39`부터. 그 전에는 7·30일, 기본 30일), 「미답변만」(기본 켬). 처음 들어갈 때 한 번 자동 조회, 이후 「새로고침」·필터 변경 때
   조회. 한 종류(상품문의·고객문의)가 실패해도 다른 종류는 보여 주고 상태 문구에 「일부 실패」로 표시.
 - 응답 필드(2026-11-22 실응답, 최근 30일 상품문의 25·고객문의 17건, 읽기 전용 확인):
   - 상품문의: `questionId, question, answer, answered, answers[{answer, createDate}], createDate,

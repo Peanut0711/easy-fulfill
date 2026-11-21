@@ -90,6 +90,12 @@ class NormalizeTests(unittest.TestCase):
             dict(CUSTOMER, answerRegistrationDateTime="2026-11-21T10:00:00.0+09:00"))
         self.assertEqual(row["answered_at"], "2026-11-21 10:00")
 
+    def test_period_start(self):
+        now = datetime(2026, 11, 22, 15, 30, 12, 345)
+        self.assertEqual(naver_commerce.inquiry_period_start(now, 0), datetime(2026, 11, 22))  # 오늘 0시
+        self.assertEqual(naver_commerce.inquiry_period_start(now, 7), datetime(2026, 11, 15, 15, 30, 12, 345))
+        self.assertEqual(naver_commerce.inquiry_period_start(now, "30"), datetime(2026, 10, 23, 15, 30, 12, 345))
+
     def test_short_datetime(self):
         self.assertEqual(naver_commerce.short_datetime("2026-11-20 13:22:11"), "2026-11-20 13:22")
         self.assertEqual(naver_commerce.short_datetime("어제"), "어제")
@@ -358,6 +364,11 @@ def run_scenario():
             "status": window.label_inquiry_status.text(),
             "shows_table": window.stackedWidget_inquiry_list.currentWidget() is table,
             "detail_empty": window.textBrowser_inquiry_detail.toPlainText() == "",
+            "periods": [window.comboBox_inquiry_period.itemText(i) for i in range(window.comboBox_inquiry_period.count())],
+            # 유형·등록·작성자 열이 글자보다 좁아 잘리지 않는다(예전 고정 폭 64px는 125% 배율에서 「고객...」)
+            "fits": [table.columnWidth(c) >= table.fontMetrics().horizontalAdvance(table.item(r, c).text())
+                     for c in (0, 1, 2) for r in range(table.rowCount())],
+            "product_width": table.columnWidth(3) >= table.fontMetrics().horizontalAdvance("가" * 10),
         }
         table.selectRow(1)
         app.processEvents()
@@ -410,7 +421,7 @@ def run_scenario():
         window.refresh_inquiries()
         app.processEvents()
         result["button_while_loading"] = window.pushButton_inquiry_refresh.isEnabled()
-        window.comboBox_inquiry_period.setCurrentIndex(0)
+        window.comboBox_inquiry_period.setCurrentIndex(1)  # 오늘 → 최근 7일
         gate.set()
         wait_idle(window)
         result["pending"] = {
@@ -511,7 +522,7 @@ def run_scenario():
             badge["failed_red"] = red_corner()
             # 탭 목록을 배지와 같은 조건(미답변만·30일)으로 빠짐없이 불러오면 배지도 맞춘다
             window.comboBox_inquiry_period.blockSignals(True)
-            window.comboBox_inquiry_period.setCurrentIndex(1)
+            window.comboBox_inquiry_period.setCurrentIndex(2)  # 최근 30일
             window.comboBox_inquiry_period.blockSignals(False)
             window.checkBox_inquiry_unanswered.blockSignals(True)
             window.checkBox_inquiry_unanswered.setChecked(True)
@@ -621,7 +632,10 @@ class InquiriesTabTests(unittest.TestCase):
         result = scenario()
         self.assertTrue(result["before"])
         first = result["first"]
-        self.assertEqual(first["calls"], [[30, True]])
+        self.assertEqual(first["calls"], [[0, True]])  # 기본은 오늘
+        self.assertEqual(first["periods"], ["오늘", "최근 7일", "최근 30일"])
+        self.assertTrue(all(first["fits"]))
+        self.assertTrue(first["product_width"])
         self.assertEqual(first["rows"], 2)
         self.assertEqual(first["cells"], ["고객문의", "2026-11-21 09:05", "홍*동", "현미 5kg", "주소 변경"])
         self.assertEqual(first["status"], "✓ 미답변 2건 · 11:42 조회")
@@ -637,7 +651,7 @@ class InquiriesTabTests(unittest.TestCase):
 
     def test_filter_change_reloads_and_keeps_selection(self):
         f = scenario()["filter"]
-        self.assertEqual(f["call"], [30, False])
+        self.assertEqual(f["call"], [0, False])
         self.assertEqual(f["status"], "! 문의 2건 · 11:50 조회 (일부 실패)")
         self.assertEqual(f["tooltip"], "상품문의 조회 실패: HTTP 403")
         self.assertEqual(f["selected"], 1)
@@ -647,7 +661,7 @@ class InquiriesTabTests(unittest.TestCase):
         result = scenario()
         self.assertFalse(result["button_while_loading"])
         pending = result["pending"]
-        self.assertEqual(pending["calls"], [[30, False], [7, False]])
+        self.assertEqual(pending["calls"], [[0, False], [7, False]])
         self.assertTrue(pending["empty_shown"])
         self.assertEqual(pending["empty_text"], "이 기간에 들어온 문의가 없습니다.")
         self.assertTrue(pending["button"])

@@ -11,6 +11,7 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QHeaderView,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -29,7 +30,10 @@ from shared.ui_components import EmptyState, fixed_width_button, setup_table
 from shared.ui_style import set_button_role, set_status
 from ui.main import host as _host
 
-INQUIRY_PERIODS = (("최근 7일", 7), ("최근 30일", 30))
+# (이름, 일 수). 0 = 오늘 0시부터. 첫 항목이 기본값이다.
+INQUIRY_PERIODS = (("오늘", 0), ("최근 7일", 7), ("최근 30일", 30))
+# 「상품」 열 처음 폭(글자 수). 유형·등록·작성자는 내용에 맞추고 「내용」은 남는 폭을 쓴다.
+INQUIRY_PRODUCT_COLUMN_CHARS = 10
 INQUIRY_COLUMNS = ("유형", "등록", "작성자", "상품", "내용")
 INQUIRY_EMPTY_TEXT = "「새로고침」을 누르면 네이버 상품문의·고객문의를 불러옵니다."
 # 측면 툴바 「문의」 배지(네이버 미답변 수): 시작 후 잠시 뒤 한 번, 그 뒤 5분마다 센다.
@@ -186,7 +190,7 @@ class InquiriesMixin:
         self.comboBox_inquiry_period.setObjectName("comboBox_inquiry_period")
         for label, days in INQUIRY_PERIODS:
             self.comboBox_inquiry_period.addItem(label, days)
-        self.comboBox_inquiry_period.setCurrentIndex(len(INQUIRY_PERIODS) - 1)
+        self.comboBox_inquiry_period.setCurrentIndex(0)
         self.checkBox_inquiry_unanswered = QCheckBox("미답변만")
         self.checkBox_inquiry_unanswered.setObjectName("checkBox_inquiry_unanswered")
         self.checkBox_inquiry_unanswered.setChecked(True)
@@ -211,8 +215,11 @@ class InquiriesMixin:
         self.tableWidget_inquiries.setHorizontalHeaderLabels(list(INQUIRY_COLUMNS))
         self.tableWidget_inquiries.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         setup_table(self.tableWidget_inquiries)
-        for column, width in enumerate((64, 112, 72, 120)):
-            self.tableWidget_inquiries.setColumnWidth(column, width)
+        # 픽셀 고정 폭은 화면 배율·글꼴에 따라 「고객...」처럼 잘려서, 짧은 열은 내용에 맞춘다.
+        header = self.tableWidget_inquiries.horizontalHeader()
+        for column in (0, 1, 2):
+            header.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
+        self._inquiry_product_column_sized = False
         self.stackedWidget_inquiry_list.addWidget(self.emptyState_inquiry)
         self.stackedWidget_inquiry_list.addWidget(self.tableWidget_inquiries)
 
@@ -290,7 +297,9 @@ class InquiriesMixin:
             return
         self._inquiries_loaded_once = True
         self._inquiry_orders = {}  # 주문·배송 상태도 다시 읽게 한다
-        days = self.comboBox_inquiry_period.currentData() or INQUIRY_PERIODS[-1][1]
+        days = self.comboBox_inquiry_period.currentData()
+        if days is None:  # 0(오늘)도 올바른 값이라 `or`로 기본값을 고르지 않는다
+            days = INQUIRY_PERIODS[0][1]
         unanswered_only = self.checkBox_inquiry_unanswered.isChecked()
         self.pushButton_inquiry_refresh.setEnabled(False)
         set_status(self.label_inquiry_status, "idle", "불러오는 중…")
@@ -352,6 +361,10 @@ class InquiriesMixin:
             if (row.get("kind"), row.get("id")) == selected:
                 restore = index
         table.blockSignals(False)
+        if rows and not self._inquiry_product_column_sized:
+            # 처음 채울 때 한 번만 글자 폭으로 정한다(그 뒤로는 사용자가 바꾼 폭을 지킨다)
+            self._inquiry_product_column_sized = True
+            table.setColumnWidth(3, table.fontMetrics().horizontalAdvance("가" * INQUIRY_PRODUCT_COLUMN_CHARS) + 16)
         self.stackedWidget_inquiry_list.setCurrentWidget(table if rows else self.emptyState_inquiry)
         if restore >= 0:
             table.selectRow(restore)

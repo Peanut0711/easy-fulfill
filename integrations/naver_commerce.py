@@ -189,6 +189,14 @@ def _answered_flag(d):
     return None
 
 
+def inquiry_period_start(now, days):
+    """문의 조회 시작 시각. days 0 = 오늘 0시부터, 그 밖에는 지금부터 days일 전."""
+    days = int(days)
+    if days <= 0:
+        return now.replace(hour=0, minute=0, second=0, microsecond=0)
+    return now - timedelta(days=days)
+
+
 def short_datetime(value):
     """'2026-11-20T13:22:11.0+09:00' 같은 값을 '2026-11-20 13:22'로 줄인다(모르는 형식은 그대로)."""
     s = str(value or "").strip()
