@@ -1,6 +1,6 @@
 """메인 탭 측면 툴바(탭 이름 줄 대신 왼쪽 세로 버튼)를 검증한다.
 
-- 탭 이름 줄은 숨고, 왼쪽 툴바에 짧은 이름 버튼 6개가 탭 순서대로 있다(설정은 맨 아래).
+- 탭 이름 줄은 숨고, 왼쪽 툴바에 짧은 이름 버튼 7개가 있다(설정은 맨 아래, 문의는 설정 바로 위).
 - 버튼을 누르면 그 탭으로 가고, 단축키·코드로 탭이 바뀌어도 툴바 선택 표시가 따라간다.
 - 툴팁에 전체 탭 이름과 단축키가 보이고, 오른쪽 클릭 메뉴로 툴바를 숨길 수 없다.
 """
@@ -62,6 +62,10 @@ def run_scenario():
         app.processEvents()
         result["after_code"] = [tabs.currentWidget().objectName(), checked()]
         result["tooltips"] = {name: action.toolTip() for name, action in window.nav_rail_actions.items()}
+        hint = window.minimumSizeHint()
+        window.resize(hint)
+        app.processEvents()
+        result["visible_at_minimum"] = [b.defaultAction().text() for b in buttons if b.isVisible()]
     print("RESULT " + json.dumps(result, ensure_ascii=False), flush=True)
     os._exit(0)
 
@@ -91,7 +95,7 @@ class NavigationRailTests(unittest.TestCase):
         self.assertFalse(result["tab_bar_visible"])
         self.assertTrue(result["rail_area"])
         self.assertFalse(result["rail_toggle_visible"])
-        self.assertEqual(result["labels"], ["주문", "추적", "송장", "문서", "상세", "설정"])
+        self.assertEqual(result["labels"], ["주문", "추적", "송장", "문서", "상세", "문의", "설정"])
 
     def test_settings_is_pushed_to_bottom(self):
         result = scenario()
@@ -104,11 +108,17 @@ class NavigationRailTests(unittest.TestCase):
         self.assertEqual(result["after_shortcut"], ["tab_documents", ["tab_documents"]])
         self.assertEqual(result["after_code"], ["tab_settings", ["tab_settings"]])
 
+    def test_no_button_hidden_at_minimum_size(self):
+        # 버튼이 많아져 창 최소 높이보다 길어지면 「»」 확장 메뉴로 숨는다(문의 탭 추가 때 설정이 숨었음).
+        result = scenario()
+        self.assertEqual(result["visible_at_minimum"], result["labels"])
+
     def test_tooltips_show_full_name_and_shortcut(self):
         tips = scenario()["tooltips"]
         self.assertEqual(tips["tab"], "주문·발송 (Ctrl+1)")
         self.assertEqual(tips["tab_documents"], "문서 만들기 (Ctrl+4)")
         self.assertEqual(tips["tab_settings"], "설정 (Ctrl+6)")
+        self.assertEqual(tips["tab_inquiries"], "네이버 문의 (Ctrl+7)")
 
 
 if __name__ == "__main__":

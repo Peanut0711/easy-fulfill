@@ -62,10 +62,12 @@ NAV_RAIL_ITEMS = (
     ("tab_documents", "문서", '<path d="M6 3h8l5 5v13H6z"/><path d="M14 3v5h5M9 13h7M9 17h7"/>'),
     ("tab_detail_page", "상세", '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/>'
                                 '<path d="m21 16-5-5-9 9"/>'),
+    ("tab_inquiries", "문의", '<path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8M8 12h5"/>'),
     ("tab_settings", "설정", '<path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1"/><circle cx="15" cy="6" r="2"/>'
                              '<circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/>'),
 )
 NAV_RAIL_ICON_SIZE = 24
+TAB_SHORTCUT_COUNT = 7  # Ctrl+1~7(상위 탭 수)
 
 
 def nav_rail_icon(shape: str) -> QIcon:
@@ -129,7 +131,7 @@ class ChromeMixin:
     """MainWindow 믹스인. 메인 창 공통 틀: 메뉴바, 상태바·상태 칩, 알림 띠, 시작·작업 중 오버레이, 탭 순서, 단축키·도움말."""
 
     def _apply_tab_order(self):
-        """합의된 6개 상위 탭 순서를 런타임에서 보장합니다.
+        """합의된 7개 상위 탭 순서를 런타임에서 보장합니다.
         (UI 파일의 정의 순서와 무관하게 런타임에서 보장)"""
         tw = getattr(self.ui, "tabWidget", None)
         if tw is None:
@@ -137,6 +139,9 @@ class ChromeMixin:
         desired = [
             "tab", "tab_tracking", "tab_quick_invoice", "tab_documents",
             "tab_detail_page", "tab_settings",
+            # 문의(0.0.36)는 기존 Ctrl+1~6(설정=Ctrl+6)을 바꾸지 않도록 맨 뒤(Ctrl+7)에 둔다.
+            # 측면 툴바에서는 NAV_RAIL_ITEMS 순서대로 상세 아래·설정 위에 보인다.
+            "tab_inquiries",
         ]
         bar = tw.tabBar()
         for target in range(len(desired)):
@@ -192,6 +197,9 @@ class ChromeMixin:
             button.setCursor(Qt.CursorShape.PointingHandCursor)
             rail.addWidget(button)
             self.nav_rail_actions[name] = action
+        # 창을 가장 낮게 줄여도 버튼이 「»」 확장 메뉴로 숨지 않게 툴바 높이만큼 창 최소 높이를 잡는다
+        # (버튼 7개부터 기존 창 최소 높이보다 커졌다).
+        rail.setMinimumHeight(rail.sizeHint().height())
         tabs.currentChanged.connect(self._sync_navigation_rail)
         self._sync_navigation_rail()
 
@@ -207,7 +215,7 @@ class ChromeMixin:
             if action is None:
                 continue
             title = tabs.tabText(index).replace("⚙", "").strip()
-            tip = f"{title} (Ctrl+{index + 1})" if index < 6 else title
+            tip = f"{title} (Ctrl+{index + 1})" if index < TAB_SHORTCUT_COUNT else title
             if action.toolTip() != tip:
                 action.setToolTip(tip)
             action.setChecked(page is tabs.currentWidget())
@@ -722,9 +730,9 @@ class ChromeMixin:
     )
 
     def _setup_tab_shortcuts(self, tabs):
-        """Ctrl+1~6: 상위 탭으로 바로 이동(왼쪽부터 순서대로). 탭 순서가 바뀌어도 위치 기준으로 동작한다."""
+        """Ctrl+1~7: 상위 탭으로 바로 이동(왼쪽부터 순서대로). 탭 순서가 바뀌어도 위치 기준으로 동작한다."""
         self._tab_shortcuts = []
-        for index in range(6):
+        for index in range(TAB_SHORTCUT_COUNT):
             shortcut = QShortcut(QKeySequence(f"Ctrl+{index + 1}"), self)
             shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
             shortcut.activated.connect(lambda i=index: tabs.setCurrentIndex(i) if i < tabs.count() else None)

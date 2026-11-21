@@ -97,6 +97,7 @@ from ui.main.order_ship import OrderShipMixin
 from ui.main.documents import DocumentsMixin
 from ui.main.quick_invoice import QuickInvoiceMixin
 from ui.main.detail_page import DetailPageMixin
+from ui.main.inquiries import InquiriesMixin
 from ui.main.settings import SettingsMixin
 from ui.main.startup import StartupMixin
 from ui.main.chrome import ChromeMixin
@@ -1409,6 +1410,55 @@ class NaverInquiryPollThread(QThread):
 
     def run(self):
         self.result_ready.emit(run_naver_inquiry_poll_worker())
+
+
+def run_naver_inquiry_list_worker(days, unanswered_only=True):
+    """「문의」 탭: 공유 「설정」의 네이버 키로 상품문의·고객문의를 조회한다(읽기 전용).
+
+    「문의알림」 시트·슬랙 알림과는 별개로 API 응답을 그대로 보여 주며 시트에는 쓰지 않는다.
+    반환: {ok, rows, errors, sample_keys, fetched_at} 또는 {ok: False, error}.
+    """
+    if gspread is None:
+        return {"ok": False, "error": "gspread 패키지가 필요합니다."}
+    try:
+        from sheets.google_sheets_oauth import get_authorized_gspread_client
+        from integrations import naver_commerce
+    except ImportError as e:
+        return {"ok": False, "error": str(e)}
+    try:
+        gc = get_authorized_gspread_client()
+        cfg = _read_config_values_map(_standalone_open_config_ws(gc))
+        client_id = cfg.get(CONFIG_KEY_NAVER_CLIENT_ID, "")
+        client_secret = cfg.get(CONFIG_KEY_NAVER_CLIENT_SECRET, "")
+        if not (client_id and client_secret):
+            return {"ok": False,
+                    "error": "네이버 client_id/secret 이 설정되지 않았습니다. "
+                             "「⚙ 설정 › 연동」의 API 키에서 등록하세요."}
+        now_dt = datetime.now()
+        from_dt = now_dt - timedelta(days=max(1, int(days)))
+        token = naver_commerce.get_access_token(client_id, client_secret)
+        res = naver_commerce.fetch_inquiry_list(token, from_dt, now_dt, unanswered_only=unanswered_only)
+        if not res["rows"] and res["errors"]:
+            return {"ok": False, "error": " / ".join(res["errors"])}
+        res["ok"] = True
+        res["fetched_at"] = now_dt.strftime("%H:%M")
+        return res
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+class NaverInquiryListThread(QThread):
+    """「문의」 탭의 네이버 문의 조회를 백그라운드로 실행한다."""
+
+    result_ready = Signal(dict)
+
+    def __init__(self, days, unanswered_only, parent=None):
+        super().__init__(parent)
+        self._days = days
+        self._unanswered_only = unanswered_only
+
+    def run(self):
+        self.result_ready.emit(run_naver_inquiry_list_worker(self._days, self._unanswered_only))
 
 
 class NaverCredsValidateThread(QThread):
@@ -3223,7 +3273,7 @@ class KpostAddressSearchDialog(QDialog):
 register_host(globals())
 
 
-class MainWindow(ChromeMixin, StartupMixin, SettingsMixin, DetailPageMixin, QuickInvoiceMixin, DocumentsMixin, OrderShipMixin, QMainWindow):
+class MainWindow(ChromeMixin, StartupMixin, SettingsMixin, DetailPageMixin, InquiriesMixin, QuickInvoiceMixin, DocumentsMixin, OrderShipMixin, QMainWindow):
     def __init__(self):
         super().__init__()
         self.selected_file_path = None
@@ -4486,6 +4536,8 @@ class MainWindow(ChromeMixin, StartupMixin, SettingsMixin, DetailPageMixin, Quic
             self._enter_tracking_tab()
         elif name == "tab_quick_invoice":
             self._refresh_quick_today_list()
+        elif name == "tab_inquiries":
+            self._enter_inquiries_tab()
         elif name == "tab_documents":
             self._mount_document_widget()
             if self._document_widget is not None:

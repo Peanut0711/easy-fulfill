@@ -157,6 +157,131 @@ def fetch_customer_inquiries(token, start_date, end_date, answered=None):
     return items
 
 
+# ── 문의 탭(조회 전용) ──────────────────────────────────────────
+# 필드 이름은 2026-11-22 실응답(최근 30일 상품문의 25·고객문의 17건, 읽기 전용)으로 확인했다.
+# 응답이 바뀔 때를 대비해 몇 곳은 후보 이름을 함께 두고, 실제 응답 키는 fetch_inquiry_list 의
+# sample_keys 로 프로그램 로그에 남긴다.
+
+INQUIRY_KIND_PRODUCT = "상품문의"
+INQUIRY_KIND_CUSTOMER = "고객문의"
+
+
+def _pick(d, *keys):
+    """d 에서 keys 를 순서대로 보고 None·빈 문자열이 아닌 첫 값을 반환(없으면 None)."""
+    for k in keys:
+        v = d.get(k)
+        if v not in (None, ""):
+            return v
+    return None
+
+
+def _text(d, *keys):
+    v = _pick(d, *keys)
+    return "" if v is None else str(v).strip()
+
+
+def _answered_flag(d):
+    v = d.get("answered")
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, str) and v.strip().lower() in ("true", "false"):
+        return v.strip().lower() == "true"
+    return None
+
+
+def short_datetime(value):
+    """'2026-11-20T13:22:11.0+09:00' 같은 값을 '2026-11-20 13:22'로 줄인다(모르는 형식은 그대로)."""
+    s = str(value or "").strip()
+    if len(s) >= 16 and s[4] == "-" and s[7] == "-" and s[10] in "T " and s[13] == ":":
+        return s[:10] + " " + s[11:16]
+    return s
+
+
+def normalize_product_qna(item):
+    """상품문의(GET /v1/contents/qnas) 항목 1개 → 문의 탭 행 dict."""
+    # 실응답(2026-11-22): answer(문자열)와 answers([{answer, createDate}]). 답변 시각은 answers 에만 있다.
+    answers = [a for a in (item.get("answers") or []) if isinstance(a, dict)]
+    latest = answers[-1] if answers else {}
+    answer = _text(item, "answer", "answerContent") or _text(latest, "answer")
+    answered = _answered_flag(item)
+    if answered is None and answer:
+        answered = True
+    return {
+        "kind": INQUIRY_KIND_PRODUCT,
+        "id": _text(item, "questionId"),
+        "created": short_datetime(_pick(item, "createDate", "createdDate")),
+        "writer": _text(item, "maskedWriterId", "writerId"),
+        "product": _text(item, "productName"),
+        "product_no": _text(item, "productId", "channelProductNo", "originProductNo"),
+        "order_id": "",
+        "category": "",
+        "title": "",
+        "content": _text(item, "question", "content"),
+        "answered": answered,
+        "answer": answer,
+        "answered_at": short_datetime(_pick(latest, "createDate")),
+    }
+
+
+def normalize_customer_inquiry(item):
+    """고객문의(GET /v1/pay-user/inquiries) 항목 1개 → 문의 탭 행 dict."""
+    answer = _text(item, "answerContent", "answer")
+    answered = _answered_flag(item)
+    if answered is None and answer:
+        answered = True
+    return {
+        "kind": INQUIRY_KIND_CUSTOMER,
+        "id": _text(item, "inquiryNo"),
+        "created": short_datetime(_pick(item, "inquiryRegistrationDateTime", "inquiryRegistrationDate")),
+        "writer": _text(item, "customerName", "customerId"),
+        "product": _text(item, "productName"),
+        "product_no": _text(item, "productNo", "productId"),
+        "order_id": _text(item, "orderId"),
+        "category": _text(item, "category"),
+        "title": _text(item, "title"),
+        "content": _text(item, "inquiryContent", "content"),
+        "answered": answered,
+        "answer": answer,
+        "answered_at": short_datetime(_pick(item, "answerRegistrationDateTime", "answerRegistrationDate")),
+    }
+
+
+def fetch_inquiry_list(token, from_dt, to_dt, unanswered_only=True):
+    """상품문의·고객문의를 함께 조회해 최근 등록 순의 문의 탭 행 목록으로 돌려준다.
+
+    한 종류가 실패해도 다른 종류는 보여 주도록 오류는 errors 에 모은다.
+    반환: {rows, errors, sample_keys: {종류: 첫 항목의 키 목록}}.
+    unanswered_only 면 미답변만 조회하고, 응답에 답변 여부가 없으면 미답변으로 본다.
+    """
+    answered = False if unanswered_only else None
+    rows = []
+    errors = []
+    sample_keys = {}
+    sources = (
+        (INQUIRY_KIND_PRODUCT, fetch_product_qnas, normalize_product_qna),
+        (INQUIRY_KIND_CUSTOMER, fetch_customer_inquiries, normalize_customer_inquiry),
+    )
+    for kind, fetch, normalize in sources:
+        try:
+            items = fetch(token, from_dt, to_dt, answered=answered)
+        except Exception as e:
+            errors.append(f"{kind} 조회 실패: {e}")
+            continue
+        if items:
+            sample_keys[kind] = sorted(str(k) for k in items[0].keys())
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            row = normalize(item)
+            if not row["id"]:
+                continue
+            if unanswered_only and row["answered"] is None:
+                row["answered"] = False
+            rows.append(row)
+    rows.sort(key=lambda r: r["created"], reverse=True)
+    return {"rows": rows, "errors": errors, "sample_keys": sample_keys}
+
+
 # ── 주문(발주) 조회 ─────────────────────────────────────────────
 # 폴링 파이프라인: last-changed-statuses(변경 식별자만) → query(상세 풀세트).
 PRODUCT_ORDERS_BASE = API_BASE + "/v1/pay-order/seller/product-orders"

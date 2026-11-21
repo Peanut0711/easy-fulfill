@@ -82,6 +82,23 @@
 - **날짜 범위 최대 ~7일 제한** → `_date_windows`로 30일 조회기간을 7일씩 끊어 호출. 페이지네이션은
   `pageNum` 증가(페이지 항목 수 < `PAGE_SIZE` 면 종료), `MAX_PAGES=20` 안전장치.
 
+## 문의 탭 (조회 전용, `0.0.36`)
+
+- 측면 툴바 「문의」(탭 이름 「네이버 문의」, Ctrl+7). `ui/main/inquiries.py` `InquiriesMixin`,
+  작업 스레드 `NaverInquiryListThread` → `run_naver_inquiry_list_worker(days, unanswered_only)`
+  → `naver_commerce.fetch_inquiry_list`.
+- 위 알림과 별개로 API를 직접 조회해 보여 준다. 「문의알림」 시트·슬랙에는 읽지도 쓰지도 않는다.
+- 기간 최근 7일·30일(기본 30일), 「미답변만」(기본 켬). 처음 들어갈 때 한 번 자동 조회, 이후 「새로고침」·필터 변경 때
+  조회. 한 종류(상품문의·고객문의)가 실패해도 다른 종류는 보여 주고 상태 문구에 「일부 실패」로 표시.
+- 응답 필드(2026-11-22 실응답, 최근 30일 상품문의 25·고객문의 17건, 읽기 전용 확인):
+  - 상품문의: `questionId, question, answer, answered, answers[{answer, createDate}], createDate,
+    maskedWriterId, productId, productName`. 답변 시각은 `answers`의 `createDate`에만 있다.
+  - 고객문의: `inquiryNo, title, inquiryContent, category, inquiryRegistrationDateTime, answered,
+    answerContent, answerContentId, answerRegistrationDateTime, answerTemplateNo, customerId, customerName,
+    orderId, productNo, productName, productOrderIdList, productOrderOption`.
+  - 조회할 때마다 종류별 첫 항목의 키 목록을 「도움말 › 프로그램 로그」에 남긴다(내용은 남기지 않음).
+- 답변 등록은 아직 없다(`docs/TODO.md`).
+
 ## 키 관리 / 설정 UI
 
 - 모든 비밀키는 **비공개 「설정」 탭에만 저장**(코드/레포 금지 — 퍼블릭 레포). 우체국 regkey·네이버

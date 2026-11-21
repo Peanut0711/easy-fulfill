@@ -7,6 +7,14 @@ Easy Fulfill 추후 작업 백로그. 완료 시 항목을 지우지 말고 `- [
 - [x] 미답변 문의 리마인더 모델로 전환(네이버) — 2026-06-26
       → `docs/inquiry-alerts-naver-coupang.md`
 - [x] 쿠팡 미답변 문의 통합(온라인·콜센터, HMAC 인증) — 2026-06-26
+- [x] **「문의」 탭 — 네이버 문의 조회**(상품문의·고객문의 목록·내용, 조회 전용) — 2026-11-22 (`0.0.36`)
+      → `docs/inquiry-alerts-naver-coupang.md` 「문의 탭」. 쿠팡은 회사 IP에서만 API가 열려 보류.
+- [ ] **문의 탭 — 네이버 답변 등록·수정**
+      - 고객문의 `POST /v1/pay-merchant/inquiries/{inquiryNo}/answer`, 수정 `PUT …/answer/{answerContentId}`
+        (등록 API 목록에 있음). 상품문의 `PUT /v1/contents/qnas/{questionId}`·템플릿 `GET /v1/contents/qnas/templates`는
+        목록 파일에 없어 권한을 실호출로 먼저 확인.
+      - 상품문의 답변은 상품 페이지에 공개 → 확인 창 필수. 보내기 직전 다시 조회해 이미 답변됐으면 막기(여러 PC 동시 답변).
+      - 첫 실호출은 실제 미답변 1건으로.
 - [x] **네이버 주문 직접 불러오기 API**(엑셀 다운로드 대체) — 2026-06-29
       → `docs/naver-order-dispatch-api.md` / 커밋 `f877693`. 실키 동작 확인됨.
 - [x] **네이버 발송처리(dispatch) API**(송장 등록, 업로드 엑셀 대체) — 2026-06-29
