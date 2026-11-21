@@ -145,10 +145,28 @@ class StartupMixin:
                 if maximized:
                     self.setWindowState(self.windowState() | Qt.WindowState.WindowMaximized)
                 return
+        self.setGeometry(self._default_window_rect(screen))
+
+    def _default_window_rect(self, screen):
+        """``screen`` 작업 영역에 맞춘 기본 창 크기(FHD 100%에서 900×800)를 가운데에 둔 영역."""
+        hint = self.minimumSizeHint()
         area = screen.availableGeometry()
-        width, height = default_window_size((area.width(), area.height()), minimum)
+        width, height = default_window_size((area.width(), area.height()), (hint.width(), hint.height()))
         x, y = centered_position((area.x(), area.y(), area.width(), area.height()), (width, height))
-        self.setGeometry(QRect(x, y, width, height))
+        return QRect(x, y, width, height)
+
+    def reset_window_geometry(self):
+        """「파일 › 창 크기 기본값으로」: 최대화를 풀고 지금 창이 있는 모니터의 기본 크기로 가운데에 둔 뒤 저장한다."""
+        screen = self.screen() or QGuiApplication.primaryScreen()
+        if screen is None:
+            return
+        if self.windowState() & (Qt.WindowState.WindowMaximized | Qt.WindowState.WindowFullScreen
+                                 | Qt.WindowState.WindowMinimized):
+            self.showNormal()
+        rect = self._default_window_rect(screen)
+        self.setGeometry(rect)
+        self._save_window_geometry()
+        self.notify("ok", f"창 크기를 기본값({rect.width()}×{rect.height()})으로 되돌렸습니다")
 
     def _save_window_geometry(self):
         """창 위치·크기·최대화 여부를 이 PC의 앱 설정에만 저장한다(공유 시트에는 쓰지 않음)."""

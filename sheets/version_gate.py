@@ -24,7 +24,7 @@ import threading
 import time
 from datetime import datetime
 
-APP_VERSION = "0.0.31"
+APP_VERSION = "0.0.32"
 MIN_COMPATIBLE_VERSION = "2026.11.17.1"
 # 기존 앱도 min_app_version의 숫자 비교만으로 향후 호환성 변경을 감지할 수 있게 한다.
 _VERSION_RESET_PREFIX = (2026, 11, 18, 1)

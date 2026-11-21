@@ -581,6 +581,10 @@ class ChromeMixin:
         self.act_coupang_store.setStatusTip('쿠팡 스토어 페이지로 이동')
         self.act_coupang_store.triggered.connect(lambda: QDesktopServices.openUrl(QUrl("https://wing.coupang.com/")))
 
+        self.act_reset_window = QAction('창 크기 기본값으로(&W)', self)
+        self.act_reset_window.setStatusTip('창을 이 모니터의 기본 크기로 되돌려 가운데에 둡니다(이 PC에 저장)')
+        self.act_reset_window.triggered.connect(self.reset_window_geometry)
+
         self.act_exit = QAction(QIcon('image/exit-icon.png'), '종료', self)
         self.act_exit.setShortcut('Ctrl+Q')
         self.act_exit.setStatusTip('프로그램 종료 (Ctrl+Q)')
@@ -616,6 +620,8 @@ class ChromeMixin:
         m_file.addAction(self.act_openfolder)
         m_file.addSeparator()
         m_file.addAction(self.act_courier_export)
+        m_file.addSeparator()
+        m_file.addAction(self.act_reset_window)
         m_file.addSeparator()
         m_file.addAction(self.act_exit)
 

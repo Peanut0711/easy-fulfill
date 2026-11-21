@@ -97,7 +97,7 @@ def _scenario(name):
         spec.loader.exec_module(module)
         area = app.primaryScreen().availableGeometry()
         result["area"] = [area.x(), area.y(), area.width(), area.height()]
-        if name == "restore":
+        if name in ("restore", "reset"):
             settings.parent.mkdir(exist_ok=True)
             settings.write_text(json.dumps({"main_window_geometry": {
                 "x": 20, "y": 40, "w": 760, "h": 740, "maximized": False}}), encoding="utf-8")
@@ -122,6 +122,25 @@ def _scenario(name):
             window.close()
             app.processEvents()
             result["saved"] = json.loads(settings.read_text(encoding="utf-8")).get("main_window_geometry")
+        if name == "reset":
+            window.show()
+            app.processEvents()
+            window.showMaximized()
+            app.processEvents()
+            result["maximized_before"] = window.isMaximized()
+            from PySide6.QtWidgets import QMenu
+            file_menu = [m for m in window.menuBar().findChildren(QMenu) if m.title() == "파일(&F)"][-1]
+            result["in_file_menu"] = window.act_reset_window in file_menu.actions()
+            window.act_reset_window.trigger()
+            app.processEvents()
+            geometry = window.geometry()
+            result["after_reset"] = [geometry.x(), geometry.y(), geometry.width(), geometry.height()]
+            result["maximized_after"] = window.isMaximized()
+            hint = window.minimumSizeHint()
+            size = default_window_size((area.width(), area.height()), (hint.width(), hint.height()))
+            result["expected"] = [*centered_position((area.x(), area.y(), area.width(), area.height()), size), *size]
+            result["saved"] = json.loads(settings.read_text(encoding="utf-8")).get("main_window_geometry")
+            result["status"] = window.status_label.text()
     print("RESULT " + json.dumps(result, ensure_ascii=False), flush=True)
     os._exit(0)
 
@@ -160,6 +179,19 @@ class MainWindowGeometryTests(unittest.TestCase):
         saved = run_scenario("save")["saved"]
         self.assertEqual([saved["x"], saved["y"], saved["w"], saved["h"]], [30, 50, 770, 745])
         self.assertFalse(saved["maximized"])
+
+    def test_reset_returns_to_default_and_saves(self):
+        result = run_scenario("reset")
+        self.assertEqual(result["initial"], [20, 40, 760, 740])  # 저장값으로 열린 창
+        self.assertTrue(result["maximized_before"])
+        self.assertTrue(result["in_file_menu"])
+        default = result["expected"]  # 이 화면의 기본 크기(지금 최소 크기 이상)를 가운데에
+        self.assertEqual(result["after_reset"], default)
+        self.assertFalse(result["maximized_after"])
+        saved = result["saved"]
+        self.assertEqual([saved["x"], saved["y"], saved["w"], saved["h"]], default)
+        self.assertFalse(saved["maximized"])
+        self.assertIn(f"{default[2]}×{default[3]}", result["status"])
 
     def test_never_shown_window_does_not_save(self):
         self.assertFalse(run_scenario("close_without_show")["saved"])
