@@ -7,6 +7,7 @@ import re
 import contextlib
 import html
 import math
+import threading
 import time
 from datetime import datetime, date, timedelta
 from pathlib import Path
@@ -1412,6 +1413,31 @@ class NaverInquiryPollThread(QThread):
         self.result_ready.emit(run_naver_inquiry_poll_worker())
 
 
+# 문의 탭 작업자끼리 네이버 토큰을 잠시 같이 쓴다(문의를 고를 때마다 공유 「설정」 읽기·토큰 발급을
+# 하지 않게). 네이버 토큰 유효 시간(약 3시간)보다 훨씬 짧게 둔다.
+INQUIRY_TOKEN_REUSE_SECONDS = 30 * 60
+_inquiry_token_lock = threading.Lock()
+_inquiry_token = {"value": "", "at": 0.0}
+
+
+def _remember_inquiry_token(token):
+    with _inquiry_token_lock:
+        _inquiry_token["value"] = token
+        _inquiry_token["at"] = time.monotonic()
+
+
+def _forget_inquiry_token():
+    with _inquiry_token_lock:
+        _inquiry_token["value"] = ""
+
+
+def _recent_inquiry_token():
+    with _inquiry_token_lock:
+        if _inquiry_token["value"] and time.monotonic() - _inquiry_token["at"] < INQUIRY_TOKEN_REUSE_SECONDS:
+            return _inquiry_token["value"]
+    return ""
+
+
 def run_naver_inquiry_list_worker(days, unanswered_only=True):
     """「문의」 탭: 공유 「설정」의 네이버 키로 상품문의·고객문의를 조회한다(읽기 전용).
 
@@ -1437,6 +1463,7 @@ def run_naver_inquiry_list_worker(days, unanswered_only=True):
         now_dt = datetime.now()
         from_dt = now_dt - timedelta(days=max(1, int(days)))
         token = naver_commerce.get_access_token(client_id, client_secret)
+        _remember_inquiry_token(token)
         res = naver_commerce.fetch_inquiry_list(token, from_dt, now_dt, unanswered_only=unanswered_only)
         if not res["rows"] and res["errors"]:
             return {"ok": False, "error": " / ".join(res["errors"])}
@@ -1459,6 +1486,66 @@ class NaverInquiryListThread(QThread):
 
     def run(self):
         self.result_ready.emit(run_naver_inquiry_list_worker(self._days, self._unanswered_only))
+
+
+def _naver_inquiry_token_from_config():
+    """공유 「설정」의 네이버 키로 토큰을 새로 받아 기억한다. 키가 없으면 ValueError."""
+    from sheets.google_sheets_oauth import get_authorized_gspread_client
+    from integrations import naver_commerce
+
+    gc = get_authorized_gspread_client()
+    cfg = _read_config_values_map(_standalone_open_config_ws(gc))
+    client_id = cfg.get(CONFIG_KEY_NAVER_CLIENT_ID, "")
+    client_secret = cfg.get(CONFIG_KEY_NAVER_CLIENT_SECRET, "")
+    if not (client_id and client_secret):
+        raise ValueError("네이버 client_id/secret 이 설정되지 않았습니다. 「⚙ 설정 › 연동」의 API 키에서 등록하세요.")
+    token = naver_commerce.get_access_token(client_id, client_secret)
+    _remember_inquiry_token(token)
+    return token
+
+
+def run_naver_inquiry_order_worker(order_id, product_order_ids=()):
+    """「문의」 탭: 고객문의의 주문번호로 주문·배송 상태를 조회한다(읽기 전용).
+
+    최근에 받은 토큰이 있으면 그대로 쓰고, 그 토큰이 거절되면(만료 등) 한 번만 새로 받아 다시 조회한다.
+    반환: {ok, order_id, items} 또는 {ok: False, order_id, error}.
+    """
+    order_id = str(order_id or "").strip()
+    try:
+        from integrations import naver_commerce
+    except ImportError as e:
+        return {"ok": False, "order_id": order_id, "error": str(e)}
+    try:
+        token = _recent_inquiry_token()
+        if token:
+            try:
+                items = naver_commerce.fetch_inquiry_order_summary(token, order_id, product_order_ids)
+                return {"ok": True, "order_id": order_id, "items": items}
+            except Exception as e:
+                if "HTTP 401" not in str(e) and "HTTP 403" not in str(e):
+                    raise
+                _forget_inquiry_token()
+        if gspread is None:
+            return {"ok": False, "order_id": order_id, "error": "gspread 패키지가 필요합니다."}
+        token = _naver_inquiry_token_from_config()
+        items = naver_commerce.fetch_inquiry_order_summary(token, order_id, product_order_ids)
+        return {"ok": True, "order_id": order_id, "items": items}
+    except Exception as e:
+        return {"ok": False, "order_id": order_id, "error": str(e)}
+
+
+class NaverInquiryOrderThread(QThread):
+    """「문의」 탭에서 고른 고객문의의 주문·배송 정보를 백그라운드로 조회한다."""
+
+    result_ready = Signal(dict)
+
+    def __init__(self, order_id, product_order_ids, parent=None):
+        super().__init__(parent)
+        self._order_id = order_id
+        self._product_order_ids = list(product_order_ids or ())
+
+    def run(self):
+        self.result_ready.emit(run_naver_inquiry_order_worker(self._order_id, self._product_order_ids))
 
 
 class NaverCredsValidateThread(QThread):

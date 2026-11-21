@@ -146,6 +146,134 @@ class DetailHtmlTests(unittest.TestCase):
         self.assertEqual(inquiry_summary(unanswered), "언제 발송되나요?")
 
 
+def order_detail(poid, status="PURCHASE_DECIDED", **extra):
+    detail = {
+        "order": {"orderId": "2026112100001", "orderDate": "2026-11-20T10:00:00.0+09:00"},
+        "productOrder": {
+            "productOrderId": poid, "productOrderStatus": status, "placeOrderStatus": "OK",
+            "productName": "현미 5kg", "productOption": "5kg", "quantity": 2,
+            "expectedDeliveryMethod": "DELIVERY", "shippingDueDate": "2026-11-22T23:59:59.0+09:00",
+            "shippingMemo": "문 앞",
+            "shippingAddress": {"name": "홍길동", "zipCode": "06000", "baseAddress": "서울 강남구 테헤란로 1",
+                                "detailedAddress": "101호", "tel1": "010-0000-0000"},
+        },
+        "delivery": {"deliveryCompany": "EPOST", "trackingNumber": "6012345678901",
+                     "deliveryStatus": "DELIVERY_COMPLETION", "deliveryMethod": "DELIVERY",
+                     "sendDate": "2026-11-20T15:00:00.0+09:00", "deliveredDate": "2026-11-21T12:30:00.0+09:00",
+                     "isWrongTrackingNumber": False},
+    }
+    for key, value in extra.items():
+        if key == "po":
+            detail["productOrder"].update(value)
+        else:
+            detail[key] = value
+    return detail
+
+
+class OrderSummaryTests(unittest.TestCase):
+    def test_delivered_order(self):
+        s = naver_commerce.summarize_product_order(order_detail("P1"), ["P1"])
+        self.assertTrue(s["is_inquiry_target"])
+        self.assertEqual(s["status"], "구매확정")
+        self.assertEqual((s["company"], s["tracking"], s["delivery_status"]),
+                         ("우체국택배", "6012345678901", "배송완료"))
+        self.assertEqual((s["send_date"], s["delivered_date"]), ("2026-11-20 15:00", "2026-11-21 12:30"))
+        self.assertEqual(s["address"], "서울 강남구 테헤란로 1 101호")
+        self.assertEqual((s["receiver"], s["zip"], s["memo"]), ("홍길동", "06000", "문 앞"))
+        self.assertEqual(s["order_date"], "2026-11-20 10:00")
+        self.assertEqual(s["delivery_method"], "")
+        self.assertNotIn("010-0000-0000", json.dumps(s, ensure_ascii=False))  # 연락처는 넣지 않는다
+
+    def test_not_yet_shipped_and_claims(self):
+        waiting = naver_commerce.summarize_product_order(
+            order_detail("P2", status="PAYED", delivery={}, po={"placeOrderStatus": "NOT_YET"}))
+        self.assertEqual(waiting["status"], "결제완료(발주 미확인)")
+        self.assertFalse(waiting["is_inquiry_target"])
+        self.assertEqual(waiting["shipping_due"], "2026-11-22 23:59")
+        exchange = naver_commerce.summarize_product_order(order_detail(
+            "P3", status="EXCHANGED", po={"claimType": "EXCHANGE", "claimStatus": "EXCHANGE_DONE"},
+            exchange={"exchangeReason": "BROKEN_AND_BAD", "collectDeliveryCompany": "EPOST",
+                      "collectTrackingNumber": "6000", "reDeliveryCompany": "CJGLS",
+                      "reDeliveryTrackingNumber": "7000"}))
+        self.assertEqual(exchange["claim"], "교환 · 교환 완료 · 사유: 상품 파손·불량")
+        self.assertEqual(exchange["claim_tracking"], "수거 우체국택배 6000 / 재배송 CJ대한통운 7000")
+        unknown = naver_commerce.summarize_product_order(order_detail(
+            "P4", status="NEW_STATUS", po={"claimType": "CANCEL", "claimStatus": "CANCEL_DONE"},
+            cancel={"cancelReason": "NEW_REASON"}, delivery={"deliveryCompany": "NEWCO", "trackingNumber": "1"}))
+        self.assertEqual(unknown["status"], "NEW_STATUS")
+        self.assertEqual(unknown["claim"], "취소 · 취소 완료 · 사유: NEW_REASON")
+        self.assertEqual(unknown["company"], "NEWCO")
+        visit = naver_commerce.summarize_product_order(order_detail(
+            "P5", po={"expectedDeliveryMethod": "VISIT_RECEIPT"}, delivery={"deliveryMethod": "VISIT_RECEIPT"}))
+        self.assertEqual(visit["delivery_method"], "방문수령")
+
+    def test_split_ids(self):
+        self.assertEqual(naver_commerce._split_ids("2026A"), ["2026A"])
+        self.assertEqual(naver_commerce._split_ids("A, B,"), ["A", "B"])
+        self.assertEqual(naver_commerce._split_ids(["A", 1]), ["A", "1"])
+        self.assertEqual(naver_commerce._split_ids(None), [])
+        row = naver_commerce.normalize_customer_inquiry(dict(CUSTOMER, productOrderIdList="P1"))
+        self.assertEqual(row["product_order_ids"], ["P1"])
+
+    def test_fetch_puts_inquiry_target_first(self):
+        asked = []
+
+        def details(token, ids):
+            asked.append(list(ids))
+            return [order_detail(i) for i in ids]
+
+        with patch.object(naver_commerce, "fetch_product_order_ids_of_order", return_value=["P0", "P1"]), \
+                patch.object(naver_commerce, "fetch_product_order_details", side_effect=details):
+            rows = naver_commerce.fetch_inquiry_order_summary("t", "O1", ["P1"])
+        self.assertEqual(asked, [["P0", "P1"]])
+        self.assertEqual([r["product_order_id"] for r in rows], ["P1", "P0"])
+
+    def test_fetch_falls_back_to_inquiry_ids(self):
+        with patch.object(naver_commerce, "fetch_product_order_ids_of_order", side_effect=RuntimeError("HTTP 500")), \
+                patch.object(naver_commerce, "fetch_product_order_details",
+                             side_effect=lambda t, ids: [order_detail(i) for i in ids]):
+            rows = naver_commerce.fetch_inquiry_order_summary("t", "O1", ["P1"])
+            self.assertEqual([r["product_order_id"] for r in rows], ["P1"])
+            with self.assertRaises(RuntimeError):
+                naver_commerce.fetch_inquiry_order_summary("t", "O1", [])
+
+
+class OrderHtmlTests(unittest.TestCase):
+    def test_states(self):
+        from ui.main.inquiries import inquiry_detail_html, inquiry_order_html
+        self.assertEqual(inquiry_order_html(None), "")
+        self.assertIn("불러오는 중", inquiry_order_html({"loading": True}))
+        self.assertIn("불러오지 못했습니다: HTTP 500 &lt;x&gt;",
+                      inquiry_order_html({"ok": False, "error": "HTTP 500 <x>"}))
+        self.assertIn("찾지 못했습니다", inquiry_order_html({"ok": True, "items": []}))
+        row = naver_commerce.normalize_customer_inquiry(CUSTOMER)
+        self.assertNotIn("주문·배송", inquiry_detail_html(row))
+
+    def test_items(self):
+        from ui.main.inquiries import inquiry_order_html
+        target = naver_commerce.summarize_product_order(
+            order_detail("P1", delivery=dict(order_detail("P1")["delivery"], isWrongTrackingNumber=True)), ["P1"])
+        other = naver_commerce.summarize_product_order(order_detail(
+            "P2", status="PAYED", delivery={}, po={"productName": "<쌀>", "productOption": ""}), ["P1"])
+        text = inquiry_order_html({"ok": True, "items": [target, other]})
+        self.assertIn("(주문 2026-11-20 10:00)", text)
+        self.assertIn("<b>[문의 상품]</b> 현미 5kg / 5kg × 2", text)
+        self.assertIn("배송: 우체국택배 6012345678901 (배송완료) · 발송 2026-11-20 15:00 · 도착 2026-11-21 12:30", text)
+        self.assertIn("송장번호 오류", text)
+        self.assertIn("&lt;쌀&gt; × 2", text)
+        self.assertIn("아직 발송 전 · 발송기한 2026-11-22 23:59", text)
+        self.assertEqual(text.count("수령인: 홍길동"), 1)  # 같은 주소면 한 번만
+        self.assertIn("주소: (06000) 서울 강남구 테헤란로 1 101호", text)
+        self.assertIn("배송메모: 문 앞", text)
+        single = inquiry_order_html({"ok": True, "items": [target]})
+        self.assertNotIn("[문의 상품]", single)  # 상품이 하나면 표시하지 않는다
+        sent = naver_commerce.summarize_product_order(order_detail(
+            "P3", status="DELIVERED", delivery={"sendDate": "2026-11-20T15:00:00.0+09:00"}))
+        sent_text = inquiry_order_html({"ok": True, "items": [sent]})
+        self.assertIn("발송 2026-11-20 15:00", sent_text)
+        self.assertNotIn("아직 발송 전", sent_text)
+
+
 def run_scenario():
     import importlib.util
     import threading
@@ -171,6 +299,29 @@ def run_scenario():
         gate.wait(10)
         return responses.pop(0)
 
+    order_calls = []
+    order_gate = threading.Event()
+    order_gate.set()
+
+    def fake_order_worker(order_id, product_order_ids=()):
+        order_calls.append([order_id, list(product_order_ids)])
+        order_gate.wait(10)
+        if order_id == "FAIL":
+            return {"ok": False, "order_id": order_id, "error": "HTTP 500"}
+        item = naver_commerce.summarize_product_order(order_detail("P1"), product_order_ids)
+        return {"ok": True, "order_id": order_id, "items": [item]}
+
+    def wait_order(window):
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            app.processEvents()
+            wanted = window._inquiry_order_wanted
+            if window._inquiry_order_thread is None and (wanted is None or wanted[0] in window._inquiry_orders):
+                app.processEvents()
+                return
+            time.sleep(0.01)
+        raise AssertionError("주문 정보 조회가 끝나지 않음")
+
     def wait_idle(window):
         deadline = time.time() + 10
         while time.time() < deadline:
@@ -182,7 +333,8 @@ def run_scenario():
         raise AssertionError("문의 조회가 끝나지 않음")
 
     with patch.object(oauth, "get_authorized_gspread_client", side_effect=RuntimeError("네트워크 금지")), \
-            patch.object(module, "run_naver_inquiry_list_worker", fake_worker):
+            patch.object(module, "run_naver_inquiry_list_worker", fake_worker), \
+            patch.object(module, "run_naver_inquiry_order_worker", fake_order_worker):
         window = module.MainWindow()
         window.show()
         app.processEvents()
@@ -203,6 +355,27 @@ def run_scenario():
         table.selectRow(1)
         app.processEvents()
         result["detail"] = window.textBrowser_inquiry_detail.toPlainText()
+        result["qna_order_calls"] = len(order_calls)  # 상품문의는 주문 정보를 부르지 않는다
+
+        # 고객문의를 고르면 주문·배송 정보를 불러와 상세 아래에 붙이고, 다시 골라도 다시 부르지 않는다
+        order_gate.clear()
+        table.selectRow(0)
+        app.processEvents()
+        loading_text = window.textBrowser_inquiry_detail.toPlainText()
+        order_gate.set()
+        wait_order(window)
+        result["order"] = {
+            "loading": "주문 정보를 불러오는 중" in loading_text,
+            "calls": list(order_calls),
+            "text": window.textBrowser_inquiry_detail.toPlainText(),
+        }
+        table.selectRow(1)
+        app.processEvents()
+        table.selectRow(0)
+        wait_order(window)
+        result["order"]["calls_after_reselect"] = len(order_calls)
+        table.selectRow(1)  # 아래 단계(필터 변경 시 선택 유지)는 상품문의를 고른 상태에서 본다
+        app.processEvents()
 
         # 다시 들어와도 자동 조회는 처음 한 번뿐
         window.nav_rail_actions["tab"].trigger()
@@ -244,6 +417,70 @@ def run_scenario():
         window.refresh_inquiries()
         wait_idle(window)
         result["error_status"] = window.label_inquiry_status.text()
+
+        # 주문 정보를 불러오는 중에 다른 고객문의를 고르면 끝난 뒤 마지막으로 고른 것만 불러온다.
+        # 실패한 주문은 다시 고르면 다시 부른다. 목록을 새로 불러오면 주문 정보도 다시 읽는다.
+        many = [naver_commerce.normalize_customer_inquiry(dict(CUSTOMER, inquiryNo=900 + i, orderId=oid,
+                                                                productOrderIdList=f"P{i}"))
+                for i, oid in enumerate(("A", "B", "C", "FAIL"))]
+        responses.append({"ok": True, "rows": many, "errors": [], "sample_keys": {}, "fetched_at": "12:10"})
+        window.refresh_inquiries()
+        wait_idle(window)
+        del order_calls[:]
+        order_gate.clear()
+        table.selectRow(0)
+        app.processEvents()
+        table.selectRow(1)
+        app.processEvents()
+        table.selectRow(2)
+        app.processEvents()
+        order_gate.set()
+        wait_order(window)
+        queued = [c[0] for c in order_calls]
+        table.selectRow(3)
+        wait_order(window)
+        fail_text = window.textBrowser_inquiry_detail.toPlainText()
+        table.selectRow(2)
+        wait_order(window)
+        table.selectRow(3)
+        wait_order(window)
+        refetch_fail = [c[0] for c in order_calls].count("FAIL")
+        responses.append({"ok": True, "rows": many, "errors": [], "sample_keys": {}, "fetched_at": "12:20"})
+        window.refresh_inquiries()
+        wait_idle(window)
+        wait_order(window)
+        result["order_queue"] = {
+            "queued": queued,
+            "fail_text": "주문 정보를 불러오지 못했습니다: HTTP 500" in fail_text,
+            "fail_calls": refetch_fail,
+            "after_refresh": [c[0] for c in order_calls][-1:],
+            "selected_after_refresh": table.currentRow(),
+        }
+
+    # 작업자: 최근 토큰을 다시 쓰고, 거절되면 한 번만 새로 받아 다시 조회한다
+    tokens = []
+    summary_calls = []
+
+    def fake_summary(token, order_id, product_order_ids=()):
+        summary_calls.append(token)
+        if token == "old":
+            raise RuntimeError("HTTP 401: 토큰 만료")
+        return [{"product_order_id": "P1"}]
+
+    def fake_new_token():
+        tokens.append("new")
+        module._remember_inquiry_token("new")
+        return "new"
+
+    with patch.object(naver_commerce, "fetch_inquiry_order_summary", fake_summary), \
+            patch.object(module, "_naver_inquiry_token_from_config", fake_new_token):
+        module._remember_inquiry_token("old")
+        first = module.run_naver_inquiry_order_worker("O1", ["P1"])
+        second = module.run_naver_inquiry_order_worker("O1", ["P1"])
+        module._forget_inquiry_token()
+        third = module.run_naver_inquiry_order_worker("O1", ["P1"])
+    result["token"] = {"oks": [first["ok"], second["ok"], third["ok"]],
+                       "summary_calls": summary_calls, "new_tokens": len(tokens)}
     print("RESULT " + json.dumps(result, ensure_ascii=False), flush=True)
     os._exit(0)
 
@@ -302,6 +539,31 @@ class InquiriesTabTests(unittest.TestCase):
         self.assertTrue(pending["empty_shown"])
         self.assertEqual(pending["empty_text"], "이 기간에 들어온 문의가 없습니다.")
         self.assertTrue(pending["button"])
+
+    def test_customer_inquiry_shows_order(self):
+        result = scenario()
+        self.assertEqual(result["qna_order_calls"], 0)
+        order = result["order"]
+        self.assertTrue(order["loading"])
+        self.assertEqual(order["calls"], [["2026112100001", []]])
+        self.assertIn("주문·배송", order["text"])
+        self.assertIn("우체국택배 6012345678901 (배송완료)", order["text"])
+        self.assertIn("수령인: 홍길동", order["text"])
+        self.assertEqual(order["calls_after_reselect"], 1)
+
+    def test_order_queue_retry_and_refresh(self):
+        q = scenario()["order_queue"]
+        self.assertEqual(q["queued"], ["A", "C"])  # 불러오는 중에 고른 B는 건너뛴다
+        self.assertTrue(q["fail_text"])
+        self.assertEqual(q["fail_calls"], 2)  # 실패한 주문은 다시 고르면 다시 부른다
+        self.assertEqual(q["after_refresh"], ["FAIL"])  # 새로 불러온 뒤 선택 유지 → 다시 읽음
+        self.assertEqual(q["selected_after_refresh"], 3)
+
+    def test_worker_reuses_token_and_retries_once(self):
+        token = scenario()["token"]
+        self.assertEqual(token["oks"], [True, True, True])
+        self.assertEqual(token["summary_calls"], ["old", "new", "new", "new"])
+        self.assertEqual(token["new_tokens"], 2)
 
     def test_failure_is_shown(self):
         self.assertEqual(scenario()["error_status"],

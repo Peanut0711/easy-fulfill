@@ -9,6 +9,8 @@ Easy Fulfill 추후 작업 백로그. 완료 시 항목을 지우지 말고 `- [
 - [x] 쿠팡 미답변 문의 통합(온라인·콜센터, HMAC 인증) — 2026-06-26
 - [x] **「문의」 탭 — 네이버 문의 조회**(상품문의·고객문의 목록·내용, 조회 전용) — 2026-11-22 (`0.0.36`)
       → `docs/inquiry-alerts-naver-coupang.md` 「문의 탭」. 쿠팡은 회사 IP에서만 API가 열려 보류.
+- [x] **문의 탭 — 고객문의 주문·배송 정보**(상품별 상태·클레임·송장·수령인, 조회 전용) — 2026-11-22 (`0.0.37`)
+- [ ] (검토) 문의 탭 — 미답변 건수 배지(측면 툴바·상태바). 미답변 알림 폴링 결과를 재사용하면 추가 호출 없음.
 - [ ] **문의 탭 — 네이버 답변 등록·수정**
       - 고객문의 `POST /v1/pay-merchant/inquiries/{inquiryNo}/answer`, 수정 `PUT …/answer/{answerContentId}`
         (등록 API 목록에 있음). 상품문의 `PUT /v1/contents/qnas/{questionId}`·템플릿 `GET /v1/contents/qnas/templates`는

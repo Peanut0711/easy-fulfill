@@ -38,10 +38,85 @@ def inquiry_summary(row):
     return " ".join(str(text).split())
 
 
-def inquiry_detail_html(row):
-    """오른쪽 상세 영역 HTML. 값은 모두 이스케이프한다."""
-    def esc(value):
-        return html.escape(str(value or ""))
+def _esc(value):
+    return html.escape(str(value or ""))
+
+
+def inquiry_order_html(state):
+    """고객문의 상세 아래 「주문·배송」 구역. state: None(해당 없음)·{"loading"}·작업 결과 dict."""
+    if state is None:
+        return ""
+    head = "<p><b>주문·배송</b>"
+    if state.get("loading"):
+        return head + "<br>주문 정보를 불러오는 중…</p>"
+    if not state.get("ok"):
+        return head + f"<br>주문 정보를 불러오지 못했습니다: {_esc(state.get('error'))}</p>"
+    items = state.get("items") or []
+    if not items:
+        return head + "<br>주문 정보를 찾지 못했습니다.</p>"
+    if items[0].get("order_date"):
+        head += f" (주문 {_esc(items[0]['order_date'])})"
+    out = [head + "</p>"]
+    for item in items:
+        title = _esc(item.get("product")) or "(상품명 없음)"
+        if item.get("option"):
+            title += f" / {_esc(item['option'])}"
+        if item.get("quantity"):
+            title += f" × {_esc(item['quantity'])}"
+        mark = "<b>[문의 상품]</b> " if item.get("is_inquiry_target") and len(items) > 1 else ""
+        lines = [mark + title]
+        status = f"상태: {_esc(item.get('status')) or '-'}"
+        if item.get("claim"):
+            status += f" · 클레임: {_esc(item['claim'])}"
+        if item.get("delivery_method"):
+            status += f" · {_esc(item['delivery_method'])}"
+        lines.append(status)
+        if item.get("tracking") or item.get("company"):
+            ship = "배송: " + " ".join(x for x in (_esc(item.get("company")), _esc(item.get("tracking"))) if x)
+            if item.get("delivery_status"):
+                ship += f" ({_esc(item['delivery_status'])})"
+            dates = []
+            if item.get("send_date"):
+                dates.append(f"발송 {_esc(item['send_date'])}")
+            if item.get("delivered_date"):
+                dates.append(f"도착 {_esc(item['delivered_date'])}")
+            if dates:
+                ship += " · " + " · ".join(dates)
+            lines.append(ship)
+            if item.get("wrong_tracking"):
+                lines.append("<b>! 네이버에서 송장번호 오류로 표시된 건입니다</b>")
+        elif item.get("send_date"):  # 방문수령 등 송장 없이 발송 처리된 건
+            lines.append(f"발송 {_esc(item['send_date'])}"
+                         + (f" · 도착 {_esc(item['delivered_date'])}" if item.get("delivered_date") else ""))
+        elif item.get("status_code") == "PAYED":
+            due = f" · 발송기한 {_esc(item['shipping_due'])}" if item.get("shipping_due") else ""
+            lines.append(f"아직 발송 전{due}")
+        if item.get("claim_tracking"):
+            lines.append(f"클레임 송장: {_esc(item['claim_tracking'])}")
+        out.append("<p>" + "<br>".join(lines) + "</p>")
+    receivers = {(i.get("receiver"), i.get("zip"), i.get("address"), i.get("memo")) for i in items}
+    if len(receivers) == 1:
+        receiver, zip_code, address, memo = next(iter(receivers))
+        lines = []
+        if receiver:
+            lines.append(f"수령인: {_esc(receiver)}")
+        if address:
+            lines.append(f"주소: {'(' + _esc(zip_code) + ') ' if zip_code else ''}{_esc(address)}")
+        if memo:
+            lines.append(f"배송메모: {_esc(memo)}")
+        if lines:
+            out.append("<p>" + "<br>".join(lines) + "</p>")
+    else:
+        for item in items:
+            out.append(f"<p>{_esc(item.get('product'))} 수령인: {_esc(item.get('receiver'))}<br>"
+                       f"주소: ({_esc(item.get('zip'))}) {_esc(item.get('address'))}"
+                       + (f"<br>배송메모: {_esc(item.get('memo'))}" if item.get("memo") else "") + "</p>")
+    return "".join(out)
+
+
+def inquiry_detail_html(row, order_state=None):
+    """오른쪽 상세 영역 HTML. 값은 모두 이스케이프한다. 고객문의는 아래에 주문·배송 구역을 붙인다."""
+    esc = _esc
 
     def block(value):
         return esc(value).replace("\n", "<br>")
@@ -74,6 +149,10 @@ def inquiry_detail_html(row):
         lines.append("<p><b>미답변</b></p>")
     else:
         lines.append("<p><b>답변 여부 알 수 없음</b></p>")
+    order = inquiry_order_html(order_state)
+    if order:
+        lines.append("<hr>")
+        lines.append(order)
     return "".join(lines)
 
 
@@ -85,6 +164,10 @@ class InquiriesMixin:
         self._inquiry_thread = None
         self._inquiries_loaded_once = False
         self._inquiry_refresh_pending = False
+        # 고객문의 주문·배송 정보: 주문번호 → 작업 결과. 목록을 새로 불러오면 비운다.
+        self._inquiry_orders = {}
+        self._inquiry_order_thread = None
+        self._inquiry_order_wanted = None  # (주문번호, 상품주문번호 목록) — 지금 고른 문의
         tabs = self.ui.tabWidget
         page = QWidget()
         page.setObjectName("tab_inquiries")
@@ -164,6 +247,7 @@ class InquiriesMixin:
             self._inquiry_refresh_pending = True
             return
         self._inquiries_loaded_once = True
+        self._inquiry_orders = {}  # 주문·배송 상태도 다시 읽게 한다
         days = self.comboBox_inquiry_period.currentData() or INQUIRY_PERIODS[-1][1]
         unanswered_only = self.checkBox_inquiry_unanswered.isChecked()
         self.pushButton_inquiry_refresh.setEnabled(False)
@@ -243,6 +327,51 @@ class InquiriesMixin:
     def _show_selected_inquiry(self):
         row = self._selected_inquiry_row()
         if row is None:
+            self._inquiry_order_wanted = None
             self.textBrowser_inquiry_detail.clear()
             return
-        self.textBrowser_inquiry_detail.setHtml(inquiry_detail_html(row))
+        order_state = None
+        order_id = str(row.get("order_id") or "")
+        if order_id:
+            order_state = self._inquiry_orders.get(order_id)
+            if order_state is None or not order_state.get("ok"):
+                # 처음 고른 주문이거나 지난번에 실패했으면 (다시) 불러온다
+                order_state = {"loading": True}
+                self._inquiry_orders.pop(order_id, None)
+                self._request_inquiry_order(order_id, row.get("product_order_ids") or [])
+        else:
+            self._inquiry_order_wanted = None
+        self._render_inquiry_detail(row, order_state)
+
+    def _render_inquiry_detail(self, row, order_state, keep_scroll=False):
+        bar = self.textBrowser_inquiry_detail.verticalScrollBar()
+        position = bar.value()
+        self.textBrowser_inquiry_detail.setHtml(inquiry_detail_html(row, order_state))
+        if keep_scroll:  # 같은 문의에 주문 정보만 채울 때는 읽던 위치를 지킨다
+            bar.setValue(position)
+
+    def _request_inquiry_order(self, order_id, product_order_ids):
+        """고른 문의의 주문 정보를 불러온다. 이미 불러오는 중이면 끝난 뒤 마지막으로 고른 것을 불러온다."""
+        self._inquiry_order_wanted = (order_id, list(product_order_ids))
+        if self._inquiry_order_thread is not None:
+            return
+        thread = _host(self).NaverInquiryOrderThread(order_id, product_order_ids, self)
+        thread.result_ready.connect(self._on_inquiry_order_loaded)
+        thread.finished.connect(self._on_inquiry_order_thread_finished)
+        self._inquiry_order_thread = thread
+        thread.start()
+
+    def _on_inquiry_order_loaded(self, payload):
+        order_id = str(payload.get("order_id") or "")
+        self._inquiry_orders[order_id] = payload
+        if not payload.get("ok"):
+            print(f"! 문의 주문 정보 조회 실패({order_id}): {payload.get('error')}")
+        row = self._selected_inquiry_row()
+        if row is not None and str(row.get("order_id") or "") == order_id:
+            self._render_inquiry_detail(row, payload, keep_scroll=True)
+
+    def _on_inquiry_order_thread_finished(self):
+        self._inquiry_order_thread = None
+        wanted = self._inquiry_order_wanted
+        if wanted is not None and wanted[0] not in self._inquiry_orders:
+            self._request_inquiry_order(*wanted)

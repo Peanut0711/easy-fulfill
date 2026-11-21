@@ -97,6 +97,20 @@
     answerContent, answerContentId, answerRegistrationDateTime, answerTemplateNo, customerId, customerName,
     orderId, productNo, productName, productOrderIdList, productOrderOption`.
   - 조회할 때마다 종류별 첫 항목의 키 목록을 「도움말 › 프로그램 로그」에 남긴다(내용은 남기지 않음).
+- 고객문의 주문·배송(`0.0.37`): 고객문의를 고르면 `NaverInquiryOrderThread` →
+  `run_naver_inquiry_order_worker` → `naver_commerce.fetch_inquiry_order_summary`(주문번호 →
+  상품주문번호 목록 → 상세)로 같은 주문의 상품주문을 모두 읽어 상세 아래 「주문·배송」에 붙인다.
+  문의 대상(`productOrderIdList`, 실응답은 상품주문번호 문자열 1개)을 맨 위에 둔다.
+  - 보이는 것: 주문일, 상품·옵션·수량, 상태(결제완료면 발주확인 여부), 클레임(종류·상태·사유,
+    수거·재배송 송장), 택배사·송장·배송상태·발송·도착 시각(송장번호 오류 표시 포함), 아직 발송 전이면
+    발송기한, 수령인·주소·배송메모. 연락처는 넣지 않는다.
+  - 고른 주문만 부르고 주문번호별로 기억한다. 「새로고침」하면 비운다. 실패한 주문은 다시 고르면 다시 부른다.
+    불러오는 중에 다른 문의를 고르면 끝난 뒤 마지막으로 고른 것만 부른다.
+  - 문의 탭 작업자끼리 네이버 토큰을 30분 동안 같이 써서 고를 때마다 공유 「설정」을 읽지 않는다.
+    토큰이 거절되면(HTTP 401·403) 한 번만 새로 받아 다시 조회한다.
+  - 상태·클레임·사유·택배사 코드는 한글로 바꾸고, 모르는 코드는 원래 값을 그대로 보인다.
+  - 실응답 확인(2026-11-22, 읽기 전용, 상태 값과 칸 채움 여부만): 최근 30일 고객문의 17건 모두 조회 성공,
+    상품주문 43건(1~7개/주문), 약 0.5초/건.
 - 답변 등록은 아직 없다(`docs/TODO.md`).
 
 ## 키 관리 / 설정 UI

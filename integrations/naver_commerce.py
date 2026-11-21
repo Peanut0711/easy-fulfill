@@ -214,6 +214,7 @@ def normalize_product_qna(item):
         "product": _text(item, "productName"),
         "product_no": _text(item, "productId", "channelProductNo", "originProductNo"),
         "order_id": "",
+        "product_order_ids": [],
         "category": "",
         "title": "",
         "content": _text(item, "question", "content"),
@@ -221,6 +222,12 @@ def normalize_product_qna(item):
         "answer": answer,
         "answered_at": short_datetime(_pick(latest, "createDate")),
     }
+
+
+def _split_ids(value):
+    """productOrderIdList(실응답은 상품주문번호 문자열, 쉼표로 여럿일 수 있음) → 문자열 목록."""
+    parts = value if isinstance(value, (list, tuple)) else str(value or "").split(",")
+    return [str(x).strip() for x in parts if str(x or "").strip()]
 
 
 def normalize_customer_inquiry(item):
@@ -237,6 +244,7 @@ def normalize_customer_inquiry(item):
         "product": _text(item, "productName"),
         "product_no": _text(item, "productNo", "productId"),
         "order_id": _text(item, "orderId"),
+        "product_order_ids": _split_ids(item.get("productOrderIdList")),
         "category": _text(item, "category"),
         "title": _text(item, "title"),
         "content": _text(item, "inquiryContent", "content"),
@@ -681,6 +689,191 @@ def build_transaction_statement_order(order_id, details):
         "shipping_gross": sum(shipping_by_package.values()),
         "items": items,
     }
+
+
+# ── 문의 탭: 고객문의에 딸린 주문·배송 정보(읽기 전용) ─────────────────
+# 필드는 2026-11-22 실응답(고객문의 17건의 상품주문 16건, 키 이름과 상태 코드만 확인)에 맞췄다.
+# 상세 항목: order, productOrder, delivery, cancel/return/exchange, currentClaim, completedClaims.
+# 모르는 코드는 원래 값을 그대로 보인다.
+
+PRODUCT_ORDER_STATUS_LABELS = {
+    "PAYMENT_WAITING": "결제대기",
+    "PAYED": "결제완료",
+    "DELIVERING": "배송중",
+    "DELIVERED": "배송완료",
+    "PURCHASE_DECIDED": "구매확정",
+    "EXCHANGED": "교환",
+    "CANCELED": "취소",
+    "RETURNED": "반품",
+    "CANCELED_BY_NOPAYMENT": "미결제 취소",
+}
+PLACE_ORDER_STATUS_LABELS = {"NOT_YET": "발주 미확인", "OK": "발주확인", "CANCEL": "발주확인 해제"}
+CLAIM_TYPE_LABELS = {
+    "CANCEL": "취소",
+    "RETURN": "반품",
+    "EXCHANGE": "교환",
+    "PURCHASE_DECISION_HOLDBACK": "구매확정 보류",
+    "ADMIN_CANCEL": "직권취소",
+}
+CLAIM_STATUS_LABELS = {
+    "CANCEL_REQUEST": "취소 요청",
+    "CANCELING": "취소 처리 중",
+    "CANCEL_DONE": "취소 완료",
+    "CANCEL_REJECT": "취소 철회",
+    "RETURN_REQUEST": "반품 요청",
+    "COLLECTING": "수거 중",
+    "COLLECT_DONE": "수거 완료",
+    "RETURN_DONE": "반품 완료",
+    "RETURN_REJECT": "반품 철회",
+    "EXCHANGE_REQUEST": "교환 요청",
+    "EXCHANGE_REDELIVERING": "교환 재배송 중",
+    "EXCHANGE_DONE": "교환 완료",
+    "EXCHANGE_REJECT": "교환 철회",
+    "PURCHASE_DECISION_HOLDBACK": "구매확정 보류",
+    "PURCHASE_DECISION_HOLDBACK_REDELIVERING": "구매확정 보류 재배송 중",
+    "PURCHASE_DECISION_REQUEST": "구매확정 요청",
+    "PURCHASE_DECISION_HOLDBACK_RELEASE": "구매확정 보류 해제",
+    "ADMIN_CANCELING": "직권취소 중",
+    "ADMIN_CANCEL_DONE": "직권취소 완료",
+    "ADMIN_CANCEL_REJECT": "직권취소 철회",
+}
+CLAIM_REASON_LABELS = {
+    "INTENT_CHANGED": "구매 의사 취소",
+    "SIMPLE_INTENT_CHANGED": "단순 변심",
+    "MISTAKE_ORDER": "주문 실수",
+    "COLOR_AND_SIZE": "색상·사이즈 변경",
+    "WRONG_ORDER": "다른 상품 잘못 주문",
+    "PRODUCT_UNSATISFIED": "상품 불만족",
+    "DELAYED_DELIVERY": "배송 지연",
+    "SOLD_OUT": "상품 품절",
+    "DROPPED_DELIVERY": "배송 누락",
+    "BROKEN": "상품 파손",
+    "BROKEN_AND_BAD": "상품 파손·불량",
+    "INCORRECT_INFO": "상품 정보 상이",
+    "WRONG_DELIVERY": "오배송",
+    "WRONG_OPTION": "옵션 다름",
+}
+DELIVERY_STATUS_LABELS = {
+    "COLLECT_REQUEST": "수거 요청",
+    "COLLECT_WAITING": "수거 대기",
+    "COLLECT_CARGO": "집화",
+    "DELIVERING": "배송중",
+    "DELIVERY_COMPLETION": "배송완료",
+    "DELIVERY_FAIL": "배송 실패",
+    "WRONG_INVOICE": "잘못된 송장",
+    "COLLECT_CARGO_FAIL": "집화 실패",
+    "COLLECT_CARGO_CANCEL": "집화 취소",
+    "NOT_TRACKING": "추적 안 됨",
+}
+DELIVERY_COMPANY_LABELS = {
+    "EPOST": "우체국택배",
+    "REGISTPOST": "우편등기",
+    "GENERALPOST": "일반우편",
+    "CJGLS": "CJ대한통운",
+    "HANJIN": "한진택배",
+    "LOTTE": "롯데택배",
+    "HYUNDAI": "롯데택배",
+    "LOGEN": "로젠택배",
+    "KDEXP": "경동택배",
+    "DAESIN": "대신택배",
+    "CHUNILPS": "천일택배",
+    "CVSNET": "GS편의점택배",
+    "CUPARCEL": "CU편의점택배",
+}
+
+
+def _label(labels, code):
+    code = str(code or "").strip()
+    return labels.get(code.upper(), code) if code else ""
+
+
+def summarize_product_order(detail, inquiry_product_order_ids=()):
+    """query 응답 항목 1개 → 문의 탭 상세의 주문·배송 요약 dict(읽기 전용 표시용)."""
+    order = detail.get("order") or {}
+    po = detail.get("productOrder") or {}
+    delivery = detail.get("delivery") or {}
+    addr = po.get("shippingAddress") or {}
+    poid = _text(po, "productOrderId")
+
+    status = _label(PRODUCT_ORDER_STATUS_LABELS, po.get("productOrderStatus"))
+    if str(po.get("productOrderStatus") or "").upper() == "PAYED" and po.get("placeOrderStatus"):
+        status += f"({_label(PLACE_ORDER_STATUS_LABELS, po.get('placeOrderStatus'))})"
+
+    claim = ""
+    claim_tracking = ""
+    claim_type = str(po.get("claimType") or "").upper()
+    if claim_type:
+        claim = _label(CLAIM_TYPE_LABELS, claim_type)
+        if po.get("claimStatus"):
+            claim += " · " + _label(CLAIM_STATUS_LABELS, po.get("claimStatus"))
+        info = detail.get({"CANCEL": "cancel", "ADMIN_CANCEL": "cancel", "RETURN": "return",
+                           "EXCHANGE": "exchange"}.get(claim_type, "")) or {}
+        reason = _pick(info, "cancelReason", "returnReason", "exchangeReason")
+        if reason:
+            claim += f" · 사유: {_label(CLAIM_REASON_LABELS, reason)}"
+        parts = []
+        if info.get("collectTrackingNumber"):
+            parts.append("수거 " + " ".join(x for x in (
+                _label(DELIVERY_COMPANY_LABELS, info.get("collectDeliveryCompany")),
+                _text(info, "collectTrackingNumber")) if x))
+        if info.get("reDeliveryTrackingNumber"):
+            parts.append("재배송 " + " ".join(x for x in (
+                _label(DELIVERY_COMPANY_LABELS, info.get("reDeliveryCompany")),
+                _text(info, "reDeliveryTrackingNumber")) if x))
+        claim_tracking = " / ".join(parts)
+
+    method = str(_pick(delivery, "deliveryMethod") or _pick(po, "expectedDeliveryMethod") or "").upper()
+    base = _text(addr, "baseAddress")
+    detailed = _text(addr, "detailedAddress")
+    return {
+        "product_order_id": poid,
+        "is_inquiry_target": bool(poid) and poid in {str(x) for x in inquiry_product_order_ids},
+        "order_date": short_datetime(_pick(order, "orderDate", "paymentDate")),
+        "product": _text(po, "productName"),
+        "option": _text(po, "productOption"),
+        "quantity": _text(po, "quantity"),
+        "status_code": str(po.get("productOrderStatus") or "").upper(),
+        "status": status,
+        "claim": claim,
+        "claim_tracking": claim_tracking,
+        "delivery_method": "" if method in ("", "DELIVERY") else DELIVERY_METHOD_LABELS.get(method, method),
+        "company": _label(DELIVERY_COMPANY_LABELS, delivery.get("deliveryCompany")),
+        "tracking": _text(delivery, "trackingNumber"),
+        "wrong_tracking": delivery.get("isWrongTrackingNumber") is True,
+        "delivery_status": _label(DELIVERY_STATUS_LABELS, delivery.get("deliveryStatus")),
+        "send_date": short_datetime(delivery.get("sendDate")),
+        "delivered_date": short_datetime(delivery.get("deliveredDate")),
+        "shipping_due": short_datetime(po.get("shippingDueDate")),
+        "receiver": _text(addr, "name"),
+        "zip": _text(addr, "zipCode"),
+        "address": (base + " " + detailed).strip(),
+        "memo": _text(po, "shippingMemo"),
+    }
+
+
+def fetch_inquiry_order_summary(token, order_id, product_order_ids=()):
+    """고객문의의 주문번호로 같은 주문의 상품주문을 모두 읽어 요약 목록으로 돌려준다.
+
+    주문번호로 상품주문번호를 찾지 못하면 문의에 적힌 상품주문번호만 조회한다.
+    문의 대상 상품주문을 앞에 둔다.
+    """
+    _require()
+    wanted = [str(x).strip() for x in product_order_ids if str(x or "").strip()]
+    ids = []
+    if str(order_id or "").strip():
+        try:
+            ids = fetch_product_order_ids_of_order(token, str(order_id).strip())
+        except Exception:
+            if not wanted:
+                raise
+    for poid in wanted:
+        if poid not in ids:
+            ids.append(poid)
+    if not ids:
+        return []
+    rows = [summarize_product_order(d, wanted) for d in fetch_product_order_details(token, ids)]
+    rows.sort(key=lambda r: not r["is_inquiry_target"])
+    return rows
 
 
 def fetch_order_for_transaction_statement(token, order_id):
