@@ -33,6 +33,7 @@ ALLOWED = {
     ("easy-fulfill.py", "color:#475569; pointer-events:none;"): "웹 미리보기 안에 넣는 CSS",
     ("easy-fulfill.py", "border: '2px solid #1976d2',"): "웹 미리보기 안에서 실행하는 JS",
     ("order_ship_panel.py", "font = QFont()"): "QPainter로 스토어 글자 배지를 그리는 글꼴(위젯 스타일 아님)",
+    ("chrome.py", "font = QFont()"): "QPainter로 측면 툴바 숫자 배지를 그리는 글꼴(위젯 스타일 아님)",
 }
 
 

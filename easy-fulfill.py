@@ -1469,6 +1469,8 @@ def run_naver_inquiry_list_worker(days, unanswered_only=True):
             return {"ok": False, "error": " / ".join(res["errors"])}
         res["ok"] = True
         res["fetched_at"] = now_dt.strftime("%H:%M")
+        res["days"] = int(days)
+        res["unanswered_only"] = bool(unanswered_only)
         return res
     except Exception as e:
         return {"ok": False, "error": str(e)}
@@ -1532,6 +1534,54 @@ def run_naver_inquiry_order_worker(order_id, product_order_ids=()):
         return {"ok": True, "order_id": order_id, "items": items}
     except Exception as e:
         return {"ok": False, "order_id": order_id, "error": str(e)}
+
+
+def _token_rejected(errors):
+    return any("HTTP 401" in str(e) or "HTTP 403" in str(e) for e in errors)
+
+
+def run_naver_inquiry_count_worker():
+    """측면 툴바 「문의」 배지: 최근 NAVER_INQUIRY_LOOKBACK_DAYS일 네이버 미답변 문의 수(읽기 전용).
+
+    「문의알림」 시트·슬랙 알림과 별개로 PC마다 센다(알림 조회는 켠 PC에서만, 한 PC만 돌기 때문).
+    문의 탭과 토큰을 같이 써서 공유 「설정」은 토큰이 없거나 거절될 때만 읽는다.
+    반환: {ok, count, partial, checked_at} 또는 {ok: False, error, checked_at}.
+    """
+    now_dt = datetime.now()
+    checked_at = now_dt.strftime("%H:%M")
+    try:
+        from integrations import naver_commerce
+    except ImportError as e:
+        return {"ok": False, "error": str(e), "checked_at": checked_at}
+    from_dt = now_dt - timedelta(days=NAVER_INQUIRY_LOOKBACK_DAYS)
+    try:
+        res = None
+        token = _recent_inquiry_token()
+        if token:
+            res = naver_commerce.fetch_inquiry_list(token, from_dt, now_dt, unanswered_only=True)
+            if not res["rows"] and _token_rejected(res["errors"]):
+                _forget_inquiry_token()
+                res = None
+        if res is None:
+            if gspread is None:
+                return {"ok": False, "error": "gspread 패키지가 필요합니다.", "checked_at": checked_at}
+            token = _naver_inquiry_token_from_config()
+            res = naver_commerce.fetch_inquiry_list(token, from_dt, now_dt, unanswered_only=True)
+        if len(res["errors"]) >= 2:  # 상품문의·고객문의 모두 실패
+            return {"ok": False, "error": " / ".join(res["errors"]), "checked_at": checked_at}
+        return {"ok": True, "count": len(res["rows"]), "partial": bool(res["errors"]),
+                "checked_at": checked_at}
+    except Exception as e:
+        return {"ok": False, "error": str(e), "checked_at": checked_at}
+
+
+class NaverInquiryCountThread(QThread):
+    """측면 툴바 「문의」 배지용 미답변 수 조회를 백그라운드로 실행한다."""
+
+    result_ready = Signal(dict)
+
+    def run(self):
+        self.result_ready.emit(run_naver_inquiry_count_worker())
 
 
 class NaverInquiryOrderThread(QThread):

@@ -42,6 +42,7 @@ class ContrastTests(unittest.TestCase):
         self.assertReadable(theme.TEXT_SECONDARY, theme.BG_PRESSED)  # 측면 툴바 평소
         self.assertReadable(theme.TEXT, theme.BORDER)  # 마우스 올림
         self.assertReadable(theme.PRIMARY_PRESSED, theme.PRIMARY_SUBTLE)  # 선택
+        self.assertReadable(theme.ON_DANGER, theme.DANGER)  # 숫자 배지
 
     def test_contrast_ratio_reference_values(self):
         self.assertAlmostEqual(theme.contrast_ratio("#000000", "#ffffff"), 21.0, places=2)

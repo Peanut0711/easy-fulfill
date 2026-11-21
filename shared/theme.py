@@ -27,6 +27,7 @@ PRIMARY_SUBTLE = "#e8f0fe"
 DANGER = "#c0392b"
 DANGER_SUBTLE = "#fdecea"
 DANGER_BORDER = "#e6b0aa"
+ON_DANGER = "#ffffff"  # danger 바탕 위 글자(측면 툴바 숫자 배지)
 OK = "#2e7d32"
 OK_SUBTLE = "#edf7ee"
 OK_BORDER = "#a5d6a7"

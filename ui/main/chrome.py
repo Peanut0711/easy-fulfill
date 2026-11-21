@@ -70,8 +70,39 @@ NAV_RAIL_ICON_SIZE = 24
 TAB_SHORTCUT_COUNT = 7  # Ctrl+1~7(상위 탭 수)
 
 
-def nav_rail_icon(shape: str) -> QIcon:
-    """선 아이콘(24 격자 SVG). 평소는 보조 글자색, 선택되면 강조색으로 그린다(2배 해상도로 그려 배율에서도 선명)."""
+def nav_badge_text(count) -> str:
+    """측면 툴바 배지 글자. 0·없음이면 빈 글자(배지 없음), 100 이상은 「99+」."""
+    try:
+        count = int(count or 0)
+    except (TypeError, ValueError):
+        return ""
+    if count <= 0:
+        return ""
+    return "99+" if count > 99 else str(count)
+
+
+def _paint_nav_badge(painter, size, text):
+    """아이콘 오른쪽 위에 빨간 둥근 배지와 흰 숫자를 그린다(2배 해상도 좌표)."""
+    font = QFont()
+    font.setBold(True)
+    font.setPixelSize(18)  # 100% 배율에서 9px
+    painter.setFont(font)
+    height = 24
+    width = max(height, painter.fontMetrics().horizontalAdvance(text) + 8)
+    rect = QRectF(size - width, 0, width, height)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(QColor(theme.DANGER))
+    painter.drawRoundedRect(rect, height / 2, height / 2)
+    painter.setPen(QColor(theme.ON_DANGER))
+    painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, text)
+
+
+def nav_rail_icon(shape: str, badge: str = "") -> QIcon:
+    """선 아이콘(24 격자 SVG). 평소는 보조 글자색, 선택되면 강조색으로 그린다(2배 해상도로 그려 배율에서도 선명).
+
+    ``badge``가 있으면 오른쪽 위에 빨간 숫자 배지를 겹쳐 그린다(아이콘 크기 안이라 버튼 크기는 그대로).
+    """
     icon = QIcon()
     for color, state in ((theme.TEXT_SECONDARY, QIcon.State.Off), (theme.PRIMARY_PRESSED, QIcon.State.On)):
         svg = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><g fill="none" stroke="'
@@ -80,6 +111,8 @@ def nav_rail_icon(shape: str) -> QIcon:
         pixmap.fill(Qt.GlobalColor.transparent)
         painter = QPainter(pixmap)
         QSvgRenderer(svg.encode()).render(painter)
+        if badge:
+            _paint_nav_badge(painter, NAV_RAIL_ICON_SIZE * 2, badge)
         painter.end()
         pixmap.setDevicePixelRatio(2)
         icon.addPixmap(pixmap, QIcon.Mode.Normal, state)
@@ -175,6 +208,8 @@ class ChromeMixin:
         group.setExclusive(True)
         self.nav_rail = rail
         self.nav_rail_actions = {}
+        self._nav_rail_shapes = {}
+        self._nav_rail_badges = {}  # 탭 이름 → (배지 글자, 툴팁 덧붙임)
         pages = {tabs.widget(i).objectName(): tabs.widget(i) for i in range(tabs.count())}
         for name, text, shape in NAV_RAIL_ITEMS:
             page = pages.get(name)
@@ -197,11 +232,28 @@ class ChromeMixin:
             button.setCursor(Qt.CursorShape.PointingHandCursor)
             rail.addWidget(button)
             self.nav_rail_actions[name] = action
+            self._nav_rail_shapes[name] = shape
         # 창을 가장 낮게 줄여도 버튼이 「»」 확장 메뉴로 숨지 않게 툴바 높이만큼 창 최소 높이를 잡는다
         # (버튼 7개부터 기존 창 최소 높이보다 커졌다).
         rail.setMinimumHeight(rail.sizeHint().height())
         tabs.currentChanged.connect(self._sync_navigation_rail)
         self._sync_navigation_rail()
+
+    def set_nav_rail_badge(self, name, count, note=""):
+        """측면 툴바 버튼 아이콘에 숫자 배지를 붙이거나(count>0) 떼고, 툴팁 뒤에 ``note``를 붙인다."""
+        action = getattr(self, "nav_rail_actions", {}).get(name)
+        if action is None:
+            return
+        text = nav_badge_text(count)
+        previous = self._nav_rail_badges.get(name, ("", ""))[0]
+        self._nav_rail_badges[name] = (text, note)
+        if text != previous:
+            action.setIcon(nav_rail_icon(self._nav_rail_shapes[name], text))
+        self._sync_navigation_rail()
+
+    def nav_rail_badge(self, name):
+        """지금 붙어 있는 (배지 글자, 툴팁 덧붙임)."""
+        return getattr(self, "_nav_rail_badges", {}).get(name, ("", ""))
 
     def _sync_navigation_rail(self, _index=None):
         """현재 탭에 맞춰 측면 툴바 선택 표시와 툴팁(전체 탭 이름·단축키)을 맞춘다."""
@@ -216,6 +268,9 @@ class ChromeMixin:
                 continue
             title = tabs.tabText(index).replace("⚙", "").strip()
             tip = f"{title} (Ctrl+{index + 1})" if index < TAB_SHORTCUT_COUNT else title
+            note = getattr(self, "_nav_rail_badges", {}).get(page.objectName(), ("", ""))[1]
+            if note:
+                tip += f" · {note}"
             if action.toolTip() != tip:
                 action.setToolTip(tip)
             action.setChecked(page is tabs.currentWidget())

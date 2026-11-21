@@ -349,7 +349,7 @@ class StartupMixin:
     # ── 종료: 대기 중인 공유 시트 반영을 마친 뒤 닫는다 ─────────────────────
     _BACKGROUND_TIMER_NAMES = (
         "_index_sheet_poll_timer", "_tracking_list_timer", "_tracking_auto_refresh_timer",
-        "_naver_inquiry_timer", "_app_version_timer",
+        "_naver_inquiry_timer", "_app_version_timer", "_inquiry_badge_timer",
     )
 
     def _stop_background_timers(self):

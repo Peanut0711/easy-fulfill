@@ -238,6 +238,13 @@ class OrderSummaryTests(unittest.TestCase):
                 naver_commerce.fetch_inquiry_order_summary("t", "O1", [])
 
 
+class BadgeTextTests(unittest.TestCase):
+    def test_badge_text(self):
+        from ui.main.chrome import nav_badge_text
+        self.assertEqual([nav_badge_text(v) for v in (None, 0, -1, "x", 1, 99, 100, "7")],
+                         ["", "", "", "", "1", "99", "99+", "7"])
+
+
 class OrderHtmlTests(unittest.TestCase):
     def test_states(self):
         from ui.main.inquiries import inquiry_detail_html, inquiry_order_html
@@ -457,6 +464,82 @@ def run_scenario():
             "selected_after_refresh": table.currentRow(),
         }
 
+        # 측면 툴바 「문의」 배지: 주기 조회 결과로 숫자를 붙이고, 실패하면 떼고 툴팁에 알린다
+        from PySide6.QtGui import QColor
+        from shared import theme
+
+        startup_names = list(type(window)._BACKGROUND_TIMER_NAMES)
+        counts = []
+
+        def fake_count():
+            return counts.pop(0)
+
+        def wait_badge():
+            deadline = time.time() + 10
+            while time.time() < deadline:
+                app.processEvents()
+                if window._inquiry_badge_thread is None:
+                    app.processEvents()
+                    return
+                time.sleep(0.01)
+            raise AssertionError("배지 조회가 끝나지 않음")
+
+        def red_corner():
+            image = window.nav_rail_actions["tab_inquiries"].icon().pixmap(48, 48).toImage()
+            pixel = image.pixelColor(image.width() - 6, 6)
+            danger = QColor(theme.DANGER)
+            return pixel.alpha() > 200 and abs(pixel.red() - danger.red()) < 30 and pixel.green() < 100
+
+        badge = {"timer": [window._inquiry_badge_timer.interval(), window._inquiry_badge_timer.isActive(),
+                           "_inquiry_badge_timer" in startup_names],
+                 "initial": list(window.nav_rail_badge("tab_inquiries")), "initial_red": red_corner()}
+        with patch.object(module, "run_naver_inquiry_count_worker", fake_count):
+            counts.append({"ok": True, "count": 3, "partial": False, "checked_at": "13:00"})
+            window._poll_inquiry_badge()
+            wait_badge()
+            badge["three"] = list(window.nav_rail_badge("tab_inquiries"))
+            badge["three_tip"] = window.nav_rail_actions["tab_inquiries"].toolTip()
+            badge["three_red"] = red_corner()
+            counts.append({"ok": True, "count": 120, "partial": True, "checked_at": "13:05"})
+            window._poll_inquiry_badge()
+            wait_badge()
+            badge["many"] = list(window.nav_rail_badge("tab_inquiries"))
+            counts.append({"ok": False, "error": "HTTP 500", "checked_at": "13:10"})
+            window._poll_inquiry_badge()
+            wait_badge()
+            badge["failed"] = list(window.nav_rail_badge("tab_inquiries"))
+            badge["failed_red"] = red_corner()
+            # 탭 목록을 배지와 같은 조건(미답변만·30일)으로 빠짐없이 불러오면 배지도 맞춘다
+            window.comboBox_inquiry_period.blockSignals(True)
+            window.comboBox_inquiry_period.setCurrentIndex(1)
+            window.comboBox_inquiry_period.blockSignals(False)
+            window.checkBox_inquiry_unanswered.blockSignals(True)
+            window.checkBox_inquiry_unanswered.setChecked(True)
+            window.checkBox_inquiry_unanswered.blockSignals(False)
+            two = many[:2]
+            responses.append({"ok": True, "rows": two, "errors": [], "sample_keys": {}, "fetched_at": "13:20",
+                              "days": 30, "unanswered_only": True})
+            window.refresh_inquiries()
+            wait_idle(window)
+            badge["from_list"] = list(window.nav_rail_badge("tab_inquiries"))
+            responses.append({"ok": True, "rows": many, "errors": [], "sample_keys": {}, "fetched_at": "13:25",
+                              "days": 7, "unanswered_only": True})
+            window.refresh_inquiries()
+            wait_idle(window)
+            badge["from_short_period"] = list(window.nav_rail_badge("tab_inquiries"))
+            responses.append({"ok": True, "rows": many, "errors": ["상품문의 조회 실패: HTTP 500"],
+                              "sample_keys": {}, "fetched_at": "13:30", "days": 30, "unanswered_only": True})
+            window.refresh_inquiries()
+            wait_idle(window)
+            badge["from_partial_list"] = list(window.nav_rail_badge("tab_inquiries"))
+            window._close_ready = True  # 종료 중에는 세지 않는다
+            window._poll_inquiry_badge()
+            badge["skipped_when_closing"] = window._inquiry_badge_thread is None
+            window._close_ready = False
+            window._stop_background_timers()
+            badge["stopped"] = not window._inquiry_badge_timer.isActive()
+        result["badge"] = badge
+
     # 작업자: 최근 토큰을 다시 쓰고, 거절되면 한 번만 새로 받아 다시 조회한다
     tokens = []
     summary_calls = []
@@ -481,6 +564,35 @@ def run_scenario():
         third = module.run_naver_inquiry_order_worker("O1", ["P1"])
     result["token"] = {"oks": [first["ok"], second["ok"], third["ok"]],
                        "summary_calls": summary_calls, "new_tokens": len(tokens)}
+
+    # 배지 작업자: 토큰을 다시 쓰고, 두 종류 모두 거절되면 새 토큰으로 한 번 더 센다
+    list_calls = []
+
+    def fake_list(token, from_dt, to_dt, unanswered_only=True):
+        list_calls.append([token, unanswered_only, (to_dt - from_dt).days])
+        if token == "old":
+            return {"rows": [], "errors": ["상품문의 조회 실패: HTTP 401", "고객문의 조회 실패: HTTP 401"],
+                    "sample_keys": {}}
+        if token == "half":
+            return {"rows": [{"id": "1"}], "errors": ["상품문의 조회 실패: HTTP 500"], "sample_keys": {}}
+        return {"rows": [{"id": "1"}, {"id": "2"}], "errors": [], "sample_keys": {}}
+
+    tokens.clear()
+    with patch.object(naver_commerce, "fetch_inquiry_list", fake_list), \
+            patch.object(module, "_naver_inquiry_token_from_config", fake_new_token):
+        module._remember_inquiry_token("old")
+        rejected = module.run_naver_inquiry_count_worker()
+        reused = module.run_naver_inquiry_count_worker()
+        module._remember_inquiry_token("half")
+        partial = module.run_naver_inquiry_count_worker()
+    result["count_worker"] = {
+        "rejected": [rejected["ok"], rejected.get("count")],
+        "reused": [reused["ok"], reused.get("count"), reused.get("partial")],
+        "partial": [partial["ok"], partial.get("count"), partial.get("partial")],
+        "calls": [c[0] for c in list_calls],
+        "unanswered_days": sorted({(c[1], c[2]) for c in list_calls}),
+        "new_tokens": len(tokens),
+    }
     print("RESULT " + json.dumps(result, ensure_ascii=False), flush=True)
     os._exit(0)
 
@@ -564,6 +676,32 @@ class InquiriesTabTests(unittest.TestCase):
         self.assertEqual(token["oks"], [True, True, True])
         self.assertEqual(token["summary_calls"], ["old", "new", "new", "new"])
         self.assertEqual(token["new_tokens"], 2)
+
+    def test_badge(self):
+        b = scenario()["badge"]
+        self.assertEqual(b["timer"], [300000, True, True])
+        self.assertEqual(b["initial"], ["", ""])
+        self.assertFalse(b["initial_red"])
+        self.assertEqual(b["three"], ["3", "미답변 3건 · 13:00 확인"])
+        self.assertEqual(b["three_tip"], "네이버 문의 (Ctrl+7) · 미답변 3건 · 13:00 확인")
+        self.assertTrue(b["three_red"])
+        self.assertEqual(b["many"], ["99+", "미답변 120건 · 13:05 확인 (일부 실패)"])
+        self.assertEqual(b["failed"], ["", "미답변 수 확인 실패 · 13:10"])
+        self.assertFalse(b["failed_red"])
+        self.assertEqual(b["from_list"], ["2", "미답변 2건 · 13:20 확인"])
+        self.assertEqual(b["from_short_period"], ["2", "미답변 2건 · 13:20 확인"])  # 7일은 배지와 기간이 달라 그대로
+        self.assertEqual(b["from_partial_list"], ["2", "미답변 2건 · 13:20 확인"])  # 일부 실패면 그대로
+        self.assertTrue(b["skipped_when_closing"])
+        self.assertTrue(b["stopped"])
+
+    def test_count_worker(self):
+        c = scenario()["count_worker"]
+        self.assertEqual(c["rejected"], [True, 2])
+        self.assertEqual(c["reused"], [True, 2, False])
+        self.assertEqual(c["partial"], [True, 1, True])
+        self.assertEqual(c["calls"], ["old", "new", "new", "half"])
+        self.assertEqual(c["unanswered_days"], [[True, 30]])
+        self.assertEqual(c["new_tokens"], 1)
 
     def test_failure_is_shown(self):
         self.assertEqual(scenario()["error_status"],

@@ -5,7 +5,9 @@
 
 import html
 
-from PySide6.QtCore import Qt
+from datetime import datetime
+
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -30,6 +32,9 @@ from ui.main import host as _host
 INQUIRY_PERIODS = (("최근 7일", 7), ("최근 30일", 30))
 INQUIRY_COLUMNS = ("유형", "등록", "작성자", "상품", "내용")
 INQUIRY_EMPTY_TEXT = "「새로고침」을 누르면 네이버 상품문의·고객문의를 불러옵니다."
+# 측면 툴바 「문의」 배지(네이버 미답변 수): 시작 후 잠시 뒤 한 번, 그 뒤 5분마다 센다.
+INQUIRY_BADGE_FIRST_DELAY_MS = 15_000
+INQUIRY_BADGE_POLL_MS = 300_000
 
 
 def inquiry_summary(row):
@@ -236,6 +241,43 @@ class InquiriesMixin:
         self.checkBox_inquiry_unanswered.toggled.connect(lambda _on: self.refresh_inquiries())
         set_status(self.label_inquiry_status, "idle", "")
 
+        self._inquiry_badge_thread = None
+        self._inquiry_badge_timer = QTimer(self)
+        self._inquiry_badge_timer.setInterval(INQUIRY_BADGE_POLL_MS)
+        self._inquiry_badge_timer.timeout.connect(self._poll_inquiry_badge)
+        if _host(self).gspread is not None:
+            self._inquiry_badge_timer.start()
+            QTimer.singleShot(INQUIRY_BADGE_FIRST_DELAY_MS, self._poll_inquiry_badge)
+
+    # ── 측면 툴바 「문의」 배지 ──────────────────────────────────────────
+    def _poll_inquiry_badge(self):
+        """네이버 미답변 문의 수를 백그라운드로 센다(이미 세는 중이거나 종료 중이면 건너뜀)."""
+        if (self._inquiry_badge_thread is not None or _host(self).gspread is None
+                or getattr(self, "_close_ready", False) or getattr(self, "_close_flush_timer", None) is not None):
+            return
+        thread = _host(self).NaverInquiryCountThread(self)
+        thread.result_ready.connect(self._on_inquiry_badge_counted)
+        thread.finished.connect(self._on_inquiry_badge_thread_finished)
+        self._inquiry_badge_thread = thread
+        thread.start()
+
+    def _on_inquiry_badge_thread_finished(self):
+        self._inquiry_badge_thread = None
+
+    def _on_inquiry_badge_counted(self, payload):
+        checked_at = payload.get("checked_at", "")
+        if payload.get("ok"):
+            self._set_inquiry_badge(payload.get("count", 0), checked_at, partial=payload.get("partial", False))
+        else:
+            error = str(payload.get("error") or "")
+            app_log.log(f"[문의 배지] 미답변 수 확인 실패: {error}")
+            # 틀린 숫자를 남기지 않도록 배지는 떼고 툴팁에 실패만 알린다.
+            self.set_nav_rail_badge("tab_inquiries", 0, f"미답변 수 확인 실패 · {checked_at}")
+
+    def _set_inquiry_badge(self, count, checked_at, partial=False):
+        note = f"미답변 {count}건 · {checked_at} 확인" + (" (일부 실패)" if partial else "")
+        self.set_nav_rail_badge("tab_inquiries", count, note)
+
     def _enter_inquiries_tab(self):
         """처음 들어올 때 한 번 자동으로 불러온다(조회 전용이라 바로 호출해도 된다)."""
         if not self._inquiries_loaded_once:
@@ -284,6 +326,10 @@ class InquiriesMixin:
             print("! 문의 조회 일부 실패: " + " / ".join(errors))
         else:
             set_status(self.label_inquiry_status, "ok", text)
+        # 배지와 같은 조건(미답변만·같은 기간)으로 빠짐없이 불러왔으면 배지도 바로 맞춘다.
+        if (payload.get("unanswered_only") and not errors
+                and payload.get("days") == _host(self).NAVER_INQUIRY_LOOKBACK_DAYS):
+            self._set_inquiry_badge(len(rows), payload.get("fetched_at") or datetime.now().strftime("%H:%M"))
         if not rows:
             self.emptyState_inquiry.set_text(
                 "미답변 문의가 없습니다." if unanswered_only else "이 기간에 들어온 문의가 없습니다.")
