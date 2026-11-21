@@ -1,6 +1,6 @@
 """단축키(알림·상태바 계획 E-1)를 검증한다.
 
-- 탭 이동 Ctrl+1~7(문의는 기존 단축키를 바꾸지 않게 Ctrl+7), 송장 불러오기 Ctrl+Shift+O
+- 탭 이동 Ctrl+1~8(문의·발주는 기존 단축키를 바꾸지 않게 Ctrl+7·8), 송장 불러오기 Ctrl+Shift+O
 - 메뉴 동작·창 단축키가 겹치지 않음(탭 안 단축키 Ctrl+Enter도 메뉴와 겹치지 않음)
 - 「도움말 › 단축키」 목록에 탭 이동·메뉴 단축키·탭 안 단축키가 모두 보임
 """
@@ -107,17 +107,19 @@ class ShortcutTests(unittest.TestCase):
 
     def test_tab_shortcuts_move_in_order(self):
         result = scenario()
-        self.assertEqual(sorted(result["window_keys"]), [f"Ctrl+{i}" for i in range(1, 8)])
+        self.assertEqual(sorted(result["window_keys"]), [f"Ctrl+{i}" for i in range(1, 9)])
         self.assertEqual(result["moved"], ["tab", "tab_tracking", "tab_quick_invoice", "tab_documents",
-                                           "tab_detail_page", "tab_settings", "tab_inquiries"])
+                                           "tab_detail_page", "tab_settings", "tab_inquiries",
+                                           "tab_naver_orders"])
         self.assertEqual(result["load_invoice"], "Ctrl+Shift+O")
 
     def test_shortcut_help_lists_everything(self):
         result = scenario()
         rows = result["rows"]
-        self.assertEqual(sum(1 for row in rows if row[0] == "탭 이동"), 7)
+        self.assertEqual(sum(1 for row in rows if row[0] == "탭 이동"), 8)
         self.assertIn(["탭 이동", "「설정」 탭", "Ctrl+6"], rows)
         self.assertIn(["탭 이동", "「네이버 문의」 탭", "Ctrl+7"], rows)
+        self.assertIn(["탭 이동", "「네이버 발주」 탭", "Ctrl+8"], rows)
         self.assertTrue(any(row[1] == "송장 불러오기" and row[2] == "Ctrl+Shift+O" for row in rows))
         self.assertTrue(any(row[2] == "Ctrl+Enter" for row in rows))
         self.assertEqual(result["dialog"], {"title": "단축키", "rows": len(rows)})

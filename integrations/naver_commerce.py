@@ -108,9 +108,30 @@ def validate_credentials(client_id, client_secret):
         return {"ok": True, "valid": False, "error": str(e)}
 
 
+# 호출 한도(HTTP 429 GW.RATE_LIMIT): 2026-11-22 점검 중 24시간 창 조회를 연달아 20번 넘게 부르자 걸렸고,
+# 1분 쉰 뒤 한 번 부르면 풀렸다. 429는 게이트웨이가 처리 전에 거절한 것이라 잠시 기다렸다 같은 요청을 다시 보낸다.
+RATE_LIMIT_WAITS_SEC = (1.0, 2.0, 4.0)
+WINDOW_PAUSE_SEC = 0.3  # 변경 주문 조회(24시간 창) 사이 간격
+
+
+def _sleep(seconds):
+    """테스트에서 바꿔 끼우는 대기."""
+    time.sleep(seconds)
+
+
+def _request(method, url, **kwargs):
+    """requests 호출. 429면 RATE_LIMIT_WAITS_SEC 만큼 기다렸다 다시 보낸다(마지막 응답을 돌려줌)."""
+    for wait in RATE_LIMIT_WAITS_SEC + (None,):
+        resp = getattr(requests, method)(url, timeout=DEFAULT_TIMEOUT, **kwargs)
+        if resp.status_code != 429 or wait is None:
+            return resp
+        _sleep(wait)
+    return resp
+
+
 def _get_json(url, token, params):
     headers = {"Authorization": f"Bearer {token}"}
-    resp = requests.get(url, headers=headers, params=params, timeout=DEFAULT_TIMEOUT)
+    resp = _request("get", url, headers=headers, params=params)
     _raise_for_status_with_body(resp)
     return resp.json()
 
@@ -416,7 +437,7 @@ DELIVERY_METHOD_LABELS = {
 
 def _post_json(url, token, payload):
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-    resp = requests.post(url, headers=headers, json=payload, timeout=DEFAULT_TIMEOUT)
+    resp = _request("post", url, headers=headers, json=payload)
     _raise_for_status_with_body(resp)
     return resp.json()
 
@@ -527,6 +548,8 @@ def fetch_changed_product_order_ids(token, from_dt, to_dt=None,
                 params["lastChangedType"] = changed_type
             if more_seq:
                 params["moreSequence"] = more_seq
+            if pages > 1:
+                _sleep(WINDOW_PAUSE_SEC)  # 하루 단위 창을 연달아 부르면 호출 한도(429)에 걸린다
             js = _get_json(LAST_CHANGED_URL, token, params)
             data = js.get("data") or {}
             for it in (data.get("lastChangeStatuses") or []):
@@ -930,6 +953,84 @@ def summarize_product_order(detail, inquiry_product_order_ids=()):
         "address": (base + " " + detailed).strip(),
         "memo": _text(po, "shippingMemo"),
     }
+
+
+# ── 발주 탭: 발송 전(신규주문·발주확인) 주문 조회(읽기 전용) ───────────────
+# 신규주문과 발주확인은 둘 다 productOrderStatus PAYED 이고 placeOrderStatus(NOT_YET/OK)만 다르다.
+PENDING_NEW = "신규주문"
+PENDING_CONFIRMED = "발주확인"
+
+
+def group_pending_orders(details):
+    """query 응답 목록 → 발송 전(PAYED) 상품주문을 주문번호별로 묶은 dict 목록(발송기한·결제 빠른 순).
+
+    주문 dict: order_id, stage(신규주문/발주확인, 하나라도 미확인이면 신규주문), paid_at, orderer, receiver, tel,
+    zip, address, memo, delivery_method, shipping_due(가장 이른 것), total_amount, total_quantity, has_claim,
+    items[{product_order_id, product, option, quantity, amount, stage, claim}],
+    rows(order_detail_to_row 형식 — 다음 단계에서 엑셀 처리 경로에 그대로 넘긴다).
+    """
+    orders = {}
+    for detail in details:
+        if not isinstance(detail, dict):
+            continue
+        order = detail.get("order") or {}
+        po = detail.get("productOrder") or {}
+        if str(po.get("productOrderStatus") or "").upper() != "PAYED":
+            continue
+        order_id = _text(order, "orderId") or _text(po, "orderId")
+        if not order_id:
+            continue
+        addr = po.get("shippingAddress") or {}
+        stage = PENDING_NEW if str(po.get("placeOrderStatus") or "").upper() == "NOT_YET" else PENDING_CONFIRMED
+        claim = ""
+        if po.get("claimType"):
+            claim = _label(CLAIM_TYPE_LABELS, po.get("claimType"))
+            if po.get("claimStatus"):
+                claim += " · " + _label(CLAIM_STATUS_LABELS, po.get("claimStatus"))
+        amount = _as_positive_int(_pick(po, "totalPaymentAmount", "totalProductAmount"))
+        quantity = _as_positive_int(po.get("quantity"), 1)
+        due = short_datetime(po.get("shippingDueDate"))
+        method = str(_pick(po, "expectedDeliveryMethod") or "").upper()
+        entry = orders.get(order_id)
+        if entry is None:
+            entry = orders[order_id] = {
+                "order_id": order_id,
+                "stage": stage,
+                "paid_at": short_datetime(_pick(order, "paymentDate", "orderDate")),
+                "orderer": _text(order, "ordererName"),
+                "receiver": _text(addr, "name"),
+                "tel": _text(addr, "tel1", "tel2"),
+                "zip": _text(addr, "zipCode"),
+                "address": (_text(addr, "baseAddress") + " " + _text(addr, "detailedAddress")).strip(),
+                "memo": _text(po, "shippingMemo"),
+                "delivery_method": DELIVERY_METHOD_LABELS.get(method, method) if method else "",
+                "shipping_due": due,
+                "total_amount": 0,
+                "total_quantity": 0,
+                "has_claim": False,
+                "items": [],
+                "rows": [],
+            }
+        if stage == PENDING_NEW:
+            entry["stage"] = PENDING_NEW
+        if due and (not entry["shipping_due"] or due < entry["shipping_due"]):
+            entry["shipping_due"] = due
+        if not entry["memo"]:
+            entry["memo"] = _text(po, "shippingMemo")
+        entry["total_amount"] += amount
+        entry["total_quantity"] += quantity
+        entry["has_claim"] = entry["has_claim"] or bool(claim)
+        entry["items"].append({
+            "product_order_id": _text(po, "productOrderId"),
+            "product": _text(po, "productName"),
+            "option": _text(po, "productOption"),
+            "quantity": quantity,
+            "amount": amount,
+            "stage": stage,
+            "claim": claim,
+        })
+        entry["rows"].append(order_detail_to_row(detail))
+    return sorted(orders.values(), key=lambda o: (o["shipping_due"] or "9999", o["paid_at"], o["order_id"]))
 
 
 def fetch_inquiry_order_summary(token, order_id, product_order_ids=()):

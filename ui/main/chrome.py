@@ -55,6 +55,8 @@ STARTUP_SYNC_PROGRESS_HIDE_DELAY_MS = 500
 # 왼쪽 측면 툴바(탭 이름 줄 대신): (탭 objectName, 짧은 이름, 아이콘 모양). 설정은 맨 아래에 따로 둔다.
 NAV_RAIL_ITEMS = (
     ("tab", "주문", '<path d="M3 7.5 12 3l9 4.5v9L12 21l-9-4.5z"/><path d="M3 7.5 12 12l9-4.5M12 12v9"/>'),
+    ("tab_naver_orders", "발주", '<rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1"/>'
+                                 '<path d="m9 12 2 2 4-4M9 17h6"/>'),
     ("tab_tracking", "추적", '<path d="M2 6h11v10H2zM13 9h4l4 4v3h-8z"/><circle cx="6" cy="17.5" r="2"/>'
                              '<circle cx="17" cy="17.5" r="2"/>'),
     ("tab_quick_invoice", "송장", '<path d="M5 3h14v18l-2.5-1.5L14 21l-2-1.5L10 21l-2.5-1.5L5 21z"/>'
@@ -67,7 +69,7 @@ NAV_RAIL_ITEMS = (
                              '<circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/>'),
 )
 NAV_RAIL_ICON_SIZE = 24
-TAB_SHORTCUT_COUNT = 7  # Ctrl+1~7(상위 탭 수)
+TAB_SHORTCUT_COUNT = 8  # Ctrl+1~8(상위 탭 수)
 
 
 def nav_badge_text(count) -> str:
@@ -164,7 +166,7 @@ class ChromeMixin:
     """MainWindow 믹스인. 메인 창 공통 틀: 메뉴바, 상태바·상태 칩, 알림 띠, 시작·작업 중 오버레이, 탭 순서, 단축키·도움말."""
 
     def _apply_tab_order(self):
-        """합의된 7개 상위 탭 순서를 런타임에서 보장합니다.
+        """합의된 8개 상위 탭 순서를 런타임에서 보장합니다.
         (UI 파일의 정의 순서와 무관하게 런타임에서 보장)"""
         tw = getattr(self.ui, "tabWidget", None)
         if tw is None:
@@ -175,6 +177,8 @@ class ChromeMixin:
             # 문의(0.0.36)는 기존 Ctrl+1~6(설정=Ctrl+6)을 바꾸지 않도록 맨 뒤(Ctrl+7)에 둔다.
             # 측면 툴바에서는 NAV_RAIL_ITEMS 순서대로 상세 아래·설정 위에 보인다.
             "tab_inquiries",
+            # 발주(0.0.43)도 기존 단축키를 바꾸지 않게 맨 뒤(Ctrl+8). 측면 툴바에서는 주문 바로 아래.
+            "tab_naver_orders",
         ]
         bar = tw.tabBar()
         for target in range(len(desired)):
@@ -785,7 +789,7 @@ class ChromeMixin:
     )
 
     def _setup_tab_shortcuts(self, tabs):
-        """Ctrl+1~7: 상위 탭으로 바로 이동(왼쪽부터 순서대로). 탭 순서가 바뀌어도 위치 기준으로 동작한다."""
+        """Ctrl+1~8: 상위 탭으로 바로 이동(왼쪽부터 순서대로). 탭 순서가 바뀌어도 위치 기준으로 동작한다."""
         self._tab_shortcuts = []
         for index in range(TAB_SHORTCUT_COUNT):
             shortcut = QShortcut(QKeySequence(f"Ctrl+{index + 1}"), self)

@@ -125,7 +125,7 @@ QToolBar#navigationRail {{
     padding: {SPACE_SM}px {SPACE_XS}px; spacing: {SPACE_XS}px;
 }}
 QToolButton#navigationButton {{
-    min-width: 56px; max-width: 56px; padding: 6px 2px; border: none; border-radius: {RADIUS_CARD}px;
+    min-width: 56px; max-width: 56px; padding: 5px 2px; border: none; border-radius: {RADIUS_CARD}px;
     background: transparent; color: {TEXT_SECONDARY};
 }}
 QToolButton#navigationButton:hover {{ background: {BORDER}; color: {TEXT}; }}

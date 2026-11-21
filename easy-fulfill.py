@@ -99,6 +99,7 @@ from ui.main.documents import DocumentsMixin
 from ui.main.quick_invoice import QuickInvoiceMixin
 from ui.main.detail_page import DetailPageMixin
 from ui.main.inquiries import InquiriesMixin
+from ui.main.naver_orders import NaverOrdersMixin
 from ui.main.settings import SettingsMixin
 from ui.main.startup import StartupMixin
 from ui.main.chrome import ChromeMixin
@@ -1636,6 +1637,43 @@ def run_naver_qna_templates_worker():
         return {"ok": True, "templates": _with_inquiry_token(naver_commerce.fetch_qna_templates)}
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
+
+# 「발주」 탭: 최근 며칠 안에 결제·발주확인 등 상태가 바뀐 주문을 본다. 당일 처리가 원칙이라 금·토·일을 넘기는
+# 일이 드물어 3일이면 충분하다(사용자 확인, 2026-11-22). 3일보다 오래 변화 없는 주문은 잡히지 않는다.
+NAVER_ORDER_VIEW_DAYS = 3
+
+
+def run_naver_pending_orders_worker(days=NAVER_ORDER_VIEW_DAYS):
+    """「발주」 탭: 네이버 발송 전(신규주문·발주확인) 주문을 주문번호별로 묶어 돌려준다(읽기 전용).
+
+    주문번호 인덱스·공유 시트에는 쓰지 않는다. 토큰은 문의 탭 작업자와 같이 쓴다.
+    반환: {ok, orders, fetched_at, days} 또는 {ok: False, error}.
+    """
+    now_dt = datetime.now()
+    try:
+        from integrations import naver_commerce
+
+        from_dt = now_dt - timedelta(days=max(1, int(days)))
+
+        def call(token):
+            ids = naver_commerce.fetch_changed_product_order_ids(token, from_dt, now_dt)
+            details = naver_commerce.fetch_product_order_details(token, ids)
+            return naver_commerce.group_pending_orders(details)
+
+        orders = _with_inquiry_token(call)
+        return {"ok": True, "orders": orders, "fetched_at": now_dt.strftime("%H:%M"), "days": int(days)}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+class NaverPendingOrdersThread(QThread):
+    """「발주」 탭의 네이버 발송 전 주문 조회를 백그라운드로 실행한다."""
+
+    result_ready = Signal(dict)
+
+    def run(self):
+        self.result_ready.emit(run_naver_pending_orders_worker())
 
 
 class NaverInquiryAnswerThread(QThread):
@@ -3495,7 +3533,7 @@ class KpostAddressSearchDialog(QDialog):
 register_host(globals())
 
 
-class MainWindow(ChromeMixin, StartupMixin, SettingsMixin, DetailPageMixin, InquiriesMixin, QuickInvoiceMixin, DocumentsMixin, OrderShipMixin, QMainWindow):
+class MainWindow(ChromeMixin, StartupMixin, SettingsMixin, DetailPageMixin, InquiriesMixin, NaverOrdersMixin, QuickInvoiceMixin, DocumentsMixin, OrderShipMixin, QMainWindow):
     def __init__(self):
         super().__init__()
         self.selected_file_path = None
@@ -4760,6 +4798,8 @@ class MainWindow(ChromeMixin, StartupMixin, SettingsMixin, DetailPageMixin, Inqu
             self._refresh_quick_today_list()
         elif name == "tab_inquiries":
             self._enter_inquiries_tab()
+        elif name == "tab_naver_orders":
+            self._enter_naver_orders_tab()
         elif name == "tab_documents":
             self._mount_document_widget()
             if self._document_widget is not None:

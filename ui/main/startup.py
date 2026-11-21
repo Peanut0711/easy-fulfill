@@ -105,6 +105,7 @@ class StartupMixin:
         self._setup_order_preview()
         self._mount_detail_page_tab()
         self._mount_inquiries_tab()
+        self._mount_naver_orders_tab()
         
         # 메인 윈도우 설정
         self.setCentralWidget(window.centralwidget)

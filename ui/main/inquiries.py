@@ -1,9 +1,7 @@
-"""메인 창 「문의」 탭: 네이버 상품문의·고객문의를 API로 조회해 목록과 내용을 보여 준다(조회 전용).
+"""메인 창 「문의」 탭: 네이버 상품문의·고객문의를 API로 조회해 목록과 내용을 보여 주고, 미답변 문의에 답변을 등록한다.
 
-답변 등록은 아직 없다. 「문의알림」 시트·슬랙 알림과는 따로 API 응답을 그대로 보여 주고 시트에는 쓰지 않는다.
+「문의알림」 시트·슬랙 알림과는 따로 API 응답을 그대로 보여 주고 시트에는 쓰지 않는다.
 """
-
-import html
 
 from datetime import datetime
 
@@ -30,6 +28,16 @@ from shared import app_log, theme
 from shared.ui_components import EmptyState, SectionCard, confirm_action, fixed_width_button, setup_table
 from shared.ui_style import set_button_role, set_status
 from ui.main import host as _host
+from ui.main.rich_cards import (  # noqa: F401  (아래 이름들은 문의 상세 HTML에서 쓴다)
+    TONES,
+    block as _block,
+    card as _card,
+    chip as _chip,
+    esc as _esc,
+    facts as _facts,
+    muted as _muted,
+    section as _section,
+)
 
 # (이름, 일 수). 0 = 오늘 0시부터. 첫 항목이 기본값이다.
 INQUIRY_PERIODS = (("오늘", 0), ("최근 7일", 7), ("최근 30일", 30))
@@ -48,26 +56,6 @@ def inquiry_summary(row):
     return " ".join(str(text).split())
 
 
-def _esc(value):
-    return html.escape(str(value or ""))
-
-
-def _block(value):
-    return _esc(value).replace("\n", "<br>")
-
-
-# ── 상세 영역 디자인 ────────────────────────────────────────────────
-# QTextBrowser 리치 텍스트는 둥근 모서리·한쪽 테두리를 지원하지 않아 표로 꾸민다.
-# 카드 = 왼쪽 색 막대(좁은 칸) + 옅은 바탕 칸. 배지 = 바탕색을 칠한 굵은 글자. 색은 모두 테마 이름.
-
-TONES = {  # 이름 → (글자·막대 색, 옅은 바탕)
-    "primary": (theme.PRIMARY_PRESSED, theme.PRIMARY_SUBTLE),
-    "info": (theme.INFO, theme.INFO_SUBTLE),
-    "ok": (theme.OK, theme.OK_SUBTLE),
-    "warn": (theme.WARN, theme.WARN_SUBTLE),
-    "danger": (theme.DANGER, theme.DANGER_SUBTLE),
-    "muted": (theme.TEXT_MUTED, theme.BG_PRESSED),
-}
 KIND_TONES = {"고객문의": "info", "상품문의": "primary"}
 # 상품주문 상태 → 색: 발송 전은 처리할 일(주의), 배송 중은 정보, 끝난 건 정상, 취소·반품·교환은 위험
 ORDER_STATUS_TONES = {
@@ -81,44 +69,6 @@ ORDER_STATUS_TONES = {
     "RETURNED": "danger",
     "CANCELED_BY_NOPAYMENT": "danger",
 }
-
-
-def _chip(text, tone):
-    fg, bg = TONES[tone]
-    return (f'<span style="color:{fg}; background-color:{bg}; font-weight:600;">'
-            f'&nbsp;{_esc(text)}&nbsp;</span>')
-
-
-def _card(body, tone, plain_bg=False):
-    """왼쪽 색 막대 카드. plain_bg면 바탕은 연한 회색(색은 막대만)."""
-    accent, bg = TONES[tone]
-    if plain_bg:
-        bg = theme.BG_SUBTLE
-    return (f'<table width="100%" cellspacing="0" cellpadding="0" style="margin-bottom:{theme.SPACE_SM}px;">'
-            f'<tr><td width="4" bgcolor="{accent}"></td>'
-            f'<td bgcolor="{bg}" style="padding:{theme.SPACE_SM}px {theme.SPACE_MD}px;">{body}</td></tr></table>')
-
-
-def _section(title, tone="muted", note=""):
-    color = TONES[tone][0]
-    extra = f' <span style="color:{theme.TEXT_MUTED}; font-weight:400;">{_esc(note)}</span>' if note else ""
-    return (f'<p style="margin-top:{theme.SPACE_LG}px; margin-bottom:{theme.SPACE_XS}px; '
-            f'font-size:{theme.FONT_SIZE_SMALL}pt; font-weight:600; color:{color};">{_esc(title)}{extra}</p>')
-
-
-def _facts(pairs):
-    """흐린 라벨 · 값 두 열 표. pairs: [(라벨, 이미 이스케이프한 값 HTML)]."""
-    rows = "".join(
-        f'<tr><td style="color:{theme.TEXT_MUTED}; padding-right:{theme.SPACE_MD}px; white-space:nowrap;">'
-        f'{_esc(label)}</td><td>{value}</td></tr>'
-        for label, value in pairs if value)
-    if not rows:
-        return ""
-    return f'<table cellspacing="0" cellpadding="2">{rows}</table>'
-
-
-def _muted(text):
-    return f'<span style="color:{theme.TEXT_MUTED};">{text}</span>'
 
 
 def _order_item_card(item, mark_target):
