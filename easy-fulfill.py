@@ -66,7 +66,7 @@ from shiboken6 import isValid
 from shared.paths import APP_ROOT
 from shared.lazy_import import deferred_module, optional_deferred_module
 from shared.qt_background import run_in_background
-from shared import theme
+from shared import app_log, theme
 from shared.ui_components import ButtonRow, FormGrid
 from shared.ui_style import apply_app_style, set_button_role, set_status
 from product_detail.detail_image_upload import upload_image_for_editor, validated_cdn_url
@@ -3226,7 +3226,6 @@ register_host(globals())
 class MainWindow(ChromeMixin, StartupMixin, SettingsMixin, DetailPageMixin, QuickInvoiceMixin, DocumentsMixin, OrderShipMixin, QMainWindow):
     def __init__(self):
         super().__init__()
-        print("초기화 시작")
         self.selected_file_path = None
         self.store_type = None
         self.orders = {}  # orders 변수를 인스턴스 변수로 초기화
@@ -3353,7 +3352,7 @@ class MainWindow(ChromeMixin, StartupMixin, SettingsMixin, DetailPageMixin, Quic
         # 모든 탭 내용을 만든 뒤에 창 크기를 정한다(최소 크기를 정확히 알 수 있게).
         self._apply_initial_window_geometry()
 
-        print("초기화 완료")
+        app_log.log("초기화 완료")
 
     def _normalize_key_for_mapping(self, value):
         """상품번호/옵션ID 비교용 문자열로 정규화합니다."""
@@ -3655,7 +3654,7 @@ class MainWindow(ChromeMixin, StartupMixin, SettingsMixin, DetailPageMixin, Quic
                         if hasattr(self.ui, 'lineEdit_idx_11st'):
                             self.ui.lineEdit_idx_11st.setText(str(self.current_idx_11st))
 
-                print(f"· 로컬 인덱스 캐시 적용 후 Google 시트와 동기화합니다. (날짜: {today})")
+                app_log.log(f"· 로컬 인덱스 캐시 적용 후 Google 시트와 동기화합니다. (날짜: {today})")
             else:
                 print("· 로컬 인덱스 캐시가 없습니다. 기본값으로 Google 시트 동기화를 대기합니다.")
                 if hasattr(self.ui, 'lineEdit_idx_naver'):
@@ -4474,8 +4473,6 @@ class MainWindow(ChromeMixin, StartupMixin, SettingsMixin, DetailPageMixin, Quic
         if hasattr(self.ui, "radioButton_db_sync_source_file"):
             self.ui.radioButton_db_sync_source_file.toggled.connect(self._update_db_sync_source_ui)
             self._update_db_sync_source_ui()
-
-        print("버튼과 메뉴 연결 완료")
 
     def _on_main_tab_changed(self, index):
         # 탭 순서가 바뀌어도 동작하도록 인덱스가 아닌 objectName으로 분기
@@ -8081,7 +8078,8 @@ class MainWindow(ChromeMixin, StartupMixin, SettingsMixin, DetailPageMixin, Quic
             QMessageBox.warning(self, "오류", f"폴더를 열 수 없습니다: {str(e)}")
 
 def main():
-    print("프로그램 시작")
+    app_log.install()  # print 출력을 「도움말 › 프로그램 로그」에도 남긴다
+    app_log.log("프로그램 시작")
     # 고DPI(125%/150% 등 배율) 환경에서 글자/위젯이 잘리거나 창 밖으로 넘치는 문제 방지.
     # QApplication 생성 전에 라운딩 정책을 지정해야 적용됨.
     QApplication.setHighDpiScaleFactorRoundingPolicy(
@@ -8097,7 +8095,6 @@ def main():
         pass
     window = MainWindow()
     window.show()
-    print("메인 윈도우 표시")
     ret = app.exec()
     # 창을 닫으면 즉시 종료. 백그라운드 QThread 파괴로 인한 종료 크래시
     # (QThread: Destroyed while thread is still running)를 피하려고 Qt/파이썬 정리

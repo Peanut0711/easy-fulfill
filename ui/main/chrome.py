@@ -642,6 +642,10 @@ class ChromeMixin:
         self.act_shortcut_help.setStatusTip('이 프로그램의 단축키 목록')
         self.act_shortcut_help.triggered.connect(self.show_shortcut_help)
         m_help.addAction(self.act_shortcut_help)
+        self.act_program_log = QAction('프로그램 로그(&L)', self)
+        self.act_program_log.setStatusTip('프로그램이 남긴 기록(시작·동기화·오류 메시지)을 시각과 함께 보기')
+        self.act_program_log.triggered.connect(self.show_program_log)
+        m_help.addAction(self.act_program_log)
         self.act_about = QAction('프로그램 정보(&A)', self)
         self.act_about.triggered.connect(self.show_about)
         m_help.addAction(self.act_about)
@@ -767,6 +771,16 @@ class ChromeMixin:
         layout.addWidget(close, 0, Qt.AlignmentFlag.AlignRight)
         dialog.resize(460, 420)
         dialog.exec()
+
+    def show_program_log(self):
+        """「도움말 › 프로그램 로그」: 모달이 아닌 창 하나를 띄워 두고 다시 누르면 앞으로 가져온다."""
+        window = getattr(self, "_program_log_window", None)
+        if window is None:
+            from ui.log_window import LogWindow
+            window = self._program_log_window = LogWindow(self)
+        window.show()
+        window.raise_()
+        window.activateWindow()
 
     def show_about(self):
         """프로그램 정보를 보여주는 대화상자를 표시합니다."""

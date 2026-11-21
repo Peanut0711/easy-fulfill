@@ -83,7 +83,6 @@ class StartupMixin:
         """UI 파일을 로드합니다."""
         # 옮기기 전 Path(__file__).parent(easy-fulfill.py 폴더)와 같은 곳
         ui_file_path = APP_ROOT / "ui" / "main_window.ui"
-        print(f"UI 파일 경로: {ui_file_path}")
         ui_file = QFile(str(ui_file_path))
         
         if not ui_file.open(QIODevice.ReadOnly):
@@ -100,8 +99,6 @@ class StartupMixin:
             QMessageBox.critical(self, "오류", f"UI 파일을 로드할 수 없습니다: {loader.errorString()}")
             sys.exit(1)
             
-        print("UI 로드 완료")
-        
         # UI 객체를 인스턴스 변수로 저장
         self.ui = window
         self._setup_order_preview()

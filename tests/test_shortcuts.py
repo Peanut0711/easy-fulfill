@@ -28,6 +28,8 @@ def run_scenario():
     from PySide6.QtWidgets import QApplication, QDialog, QTableWidget
 
     import sheets.google_sheets_oauth as oauth
+    from shared import app_log
+    app_log.install()
 
     spec = importlib.util.spec_from_file_location("easy_fulfill_shortcuts", ROOT / "easy-fulfill.py")
     module = importlib.util.module_from_spec(spec)
@@ -63,6 +65,14 @@ def run_scenario():
         with patch.object(QDialog, "exec", fake_exec):
             window.act_shortcut_help.trigger()
         result["dialog"] = shown
+        print("로그 창 확인용 줄")
+        window.act_program_log.trigger()
+        window.act_program_log.trigger()  # 두 번 눌러도 창은 하나
+        app.processEvents()
+        from ui.log_window import LogWindow
+        log_windows = window.findChildren(LogWindow)
+        result["log_windows"] = [(w.windowTitle(), w.isVisible(), w.isModal()) for w in log_windows]
+        result["log_help_menu"] = [a.text() for a in window.menuBar().actions()[-1].menu().actions()]
     print("RESULT " + json.dumps(result, ensure_ascii=False), flush=True)
     os._exit(0)
 
@@ -110,6 +120,11 @@ class ShortcutTests(unittest.TestCase):
         self.assertTrue(any(row[1] == "송장 불러오기" and row[2] == "Ctrl+Shift+O" for row in rows))
         self.assertTrue(any(row[2] == "Ctrl+Enter" for row in rows))
         self.assertEqual(result["dialog"], {"title": "단축키", "rows": len(rows)})
+
+    def test_program_log_menu_opens_single_window(self):
+        result = scenario()
+        self.assertIn("프로그램 로그(&L)", result["log_help_menu"])
+        self.assertEqual(result["log_windows"], [["프로그램 로그", True, False]])
 
 
 if __name__ == "__main__":
