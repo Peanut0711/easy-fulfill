@@ -337,6 +337,9 @@ class InquiriesMixin:
         set_status(self.label_inquiry_status, "idle", "")
 
         self._inquiry_badge_thread = None
+        self._inquiry_known_ids = None  # 마지막으로 센 미답변 「종류:번호」(None = 아직 안 셈)
+        self._inquiry_auto_refreshing = False
+        self._inquiry_new_pending = False  # 다른 탭에 있을 때 새 문의가 생김 → 들어오면 오늘·미답변만으로
         self._inquiry_badge_timer = QTimer(self)
         self._inquiry_badge_timer.setInterval(INQUIRY_BADGE_POLL_MS)
         self._inquiry_badge_timer.timeout.connect(self._poll_inquiry_badge)
@@ -524,19 +527,62 @@ class InquiriesMixin:
     def _on_inquiry_badge_counted(self, payload):
         checked_at = payload.get("checked_at", "")
         if payload.get("ok"):
-            self._set_inquiry_badge(payload.get("count", 0), checked_at, partial=payload.get("partial", False))
+            partial = payload.get("partial", False)
+            self._set_inquiry_badge(payload.get("count", 0), checked_at, partial=partial)
+            if payload.get("ids") is not None:
+                self._note_inquiry_ids(set(payload["ids"]), partial=partial, auto_refresh=True)
         else:
             error = str(payload.get("error") or "")
             app_log.log(f"[문의 배지] 미답변 수 확인 실패: {error}")
             # 틀린 숫자를 남기지 않도록 배지는 떼고 툴팁에 실패만 알린다.
             self.set_nav_rail_badge("tab_inquiries", 0, f"미답변 수 확인 실패 · {checked_at}")
 
+    def _note_inquiry_ids(self, ids, partial=False, auto_refresh=False):
+        """미답변 문의 번호 목록(「종류:번호」)을 기억하고, 처음 보는 번호가 생기면 목록에 반영한다.
+
+        - 「문의」 탭을 보고 있으면 지금 기간·필터 그대로 바로 새로고침한다(어느 기간이든 오늘이 들어 있어 새 문의가 보인다).
+        - 다른 탭에 있으면 표시만 해 두고, 「문의」 탭에 들어올 때 오늘·미답변만으로 바꿔 새로고침한다
+          (_enter_inquiries_tab).
+        건수가 아니라 번호로 비교해 「한 건 답변 + 한 건 새로 옴」(건수 그대로)도 잡는다. 앱을 켠 뒤 처음
+        센 결과는 기준으로만 삼는다. 한 종류만 센 결과(partial)는 빠진 번호를 「답변됨」으로 보지 않도록
+        기존 목록에 더하기만 한다.
+        """
+        previous = self._inquiry_known_ids
+        new = ids - previous if previous is not None else set()
+        self._inquiry_known_ids = (previous or set()) | ids if partial else set(ids)
+        if not new or not auto_refresh:
+            return
+        if self._inquiries_tab_shown():
+            app_log.log(f"[문의 탭] 새 미답변 문의 {len(new)}건 → 목록 바로 새로고침: {', '.join(sorted(new))}")
+            self._inquiry_auto_refreshing = True
+            self.refresh_inquiries()
+        else:
+            app_log.log(f"[문의 탭] 새 미답변 문의 {len(new)}건 → 탭에 들어오면 오늘·미답변만으로 새로고침: "
+                        f"{', '.join(sorted(new))}")
+            self._inquiry_new_pending = True
+
+    def _inquiries_tab_shown(self):
+        tabs = getattr(self.ui, "tabWidget", None)
+        return tabs is not None and tabs.currentWidget() is self.ui.tab_inquiries
+
     def _set_inquiry_badge(self, count, checked_at, partial=False):
         note = f"미답변 {count}건 · {checked_at} 확인" + (" (일부 실패)" if partial else "")
         self.set_nav_rail_badge("tab_inquiries", count, note)
 
     def _enter_inquiries_tab(self):
-        """처음 들어올 때 한 번 자동으로 불러온다(조회 전용이라 바로 호출해도 된다)."""
+        """처음 들어올 때 한 번 자동으로 불러온다. 다른 탭에 있는 동안 새 미답변 문의가 생겼으면
+        기간을 「오늘」, 「미답변만」을 켬으로 바꿔 새로고침한다(새 문의가 바로 보이게)."""
+        if self._inquiry_new_pending:
+            self._inquiry_new_pending = False
+            for widget in (self.comboBox_inquiry_period, self.checkBox_inquiry_unanswered):
+                widget.blockSignals(True)  # 바꿀 때마다 따로 조회하지 않고 아래에서 한 번만
+            self.comboBox_inquiry_period.setCurrentIndex(0)
+            self.checkBox_inquiry_unanswered.setChecked(True)
+            for widget in (self.comboBox_inquiry_period, self.checkBox_inquiry_unanswered):
+                widget.blockSignals(False)
+            self._inquiry_auto_refreshing = True
+            self.refresh_inquiries()
+            return
         if not self._inquiries_loaded_once:
             self.refresh_inquiries()
 
@@ -579,6 +625,9 @@ class InquiriesMixin:
         unanswered_only = self.checkBox_inquiry_unanswered.isChecked()
         label = "미답변" if unanswered_only else "문의"
         text = f"{label} {len(rows)}건 · {payload.get('fetched_at', '')} 조회"
+        if self._inquiry_auto_refreshing:
+            text += " · 새 문의 자동 반영"
+            self._inquiry_auto_refreshing = False
         errors = payload.get("errors") or []
         if errors:
             set_status(self.label_inquiry_status, "warn", text + " (일부 실패)", detail="\n".join(errors))
@@ -589,6 +638,7 @@ class InquiriesMixin:
         if (payload.get("unanswered_only") and not errors
                 and payload.get("days") == _host(self).NAVER_INQUIRY_LOOKBACK_DAYS):
             self._set_inquiry_badge(len(rows), payload.get("fetched_at") or datetime.now().strftime("%H:%M"))
+            self._note_inquiry_ids({f"{r.get('kind', '')}:{r.get('id', '')}" for r in rows})
         if not rows:
             self.emptyState_inquiry.set_text(
                 "미답변 문의가 없습니다." if unanswered_only else "이 기간에 들어온 문의가 없습니다.")

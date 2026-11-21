@@ -1570,6 +1570,7 @@ def run_naver_inquiry_count_worker():
         if len(res["errors"]) >= 2:  # 상품문의·고객문의 모두 실패
             return {"ok": False, "error": " / ".join(res["errors"]), "checked_at": checked_at}
         return {"ok": True, "count": len(res["rows"]), "partial": bool(res["errors"]),
+                "ids": sorted(f"{r.get('kind', '')}:{r.get('id', '')}" for r in res["rows"]),
                 "checked_at": checked_at}
     except Exception as e:
         return {"ok": False, "error": str(e), "checked_at": checked_at}
