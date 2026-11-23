@@ -46,7 +46,7 @@ def run_scenario():
     def fake_list(days, unanswered_only=True):
         list_calls.append([days, unanswered_only])
         return {"ok": True, "rows": rows["value"], "errors": [], "sample_keys": {}, "fetched_at": "10:00",
-                "days": days, "unanswered_only": unanswered_only}
+                "days": days, "unanswered_only": unanswered_only, "naver_complete": True}
 
     def wait_idle(window):
         deadline = time.time() + 10
@@ -60,7 +60,7 @@ def run_scenario():
 
     result = {}
     with patch.object(oauth, "get_authorized_gspread_client", side_effect=RuntimeError("네트워크 금지")), \
-            patch.object(module, "run_naver_inquiry_list_worker", fake_list), \
+            patch.object(module, "run_inquiry_list_worker", fake_list), \
             patch.object(module, "run_naver_qna_templates_worker", lambda: {"ok": True, "templates": []}), \
             patch.object(module, "run_naver_inquiry_count_worker",
                          lambda: {"ok": False, "error": "테스트에서는 직접 넣음", "checked_at": ""}):

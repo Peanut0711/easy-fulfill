@@ -118,7 +118,7 @@ class ShortcutTests(unittest.TestCase):
         rows = result["rows"]
         self.assertEqual(sum(1 for row in rows if row[0] == "탭 이동"), 8)
         self.assertIn(["탭 이동", "「설정」 탭", "Ctrl+6"], rows)
-        self.assertIn(["탭 이동", "「네이버 문의」 탭", "Ctrl+7"], rows)
+        self.assertIn(["탭 이동", "「문의」 탭", "Ctrl+7"], rows)
         self.assertIn(["탭 이동", "「네이버 발주」 탭", "Ctrl+8"], rows)
         self.assertTrue(any(row[1] == "송장 불러오기" and row[2] == "Ctrl+Shift+O" for row in rows))
         self.assertTrue(any(row[2] == "Ctrl+Enter" for row in rows))

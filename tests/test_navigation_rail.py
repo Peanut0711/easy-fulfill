@@ -118,7 +118,7 @@ class NavigationRailTests(unittest.TestCase):
         self.assertEqual(tips["tab"], "주문·발송 (Ctrl+1)")
         self.assertEqual(tips["tab_documents"], "문서 만들기 (Ctrl+4)")
         self.assertEqual(tips["tab_settings"], "설정 (Ctrl+6)")
-        self.assertEqual(tips["tab_inquiries"], "네이버 문의 (Ctrl+7)")
+        self.assertEqual(tips["tab_inquiries"], "문의 (Ctrl+7)")
         self.assertEqual(tips["tab_naver_orders"], "네이버 발주 (Ctrl+8)")
 
 

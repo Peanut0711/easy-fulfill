@@ -1,4 +1,5 @@
-"""메인 창 「문의」 탭: 네이버 상품문의·고객문의를 API로 조회해 목록과 내용을 보여 주고, 미답변 문의에 답변을 등록한다.
+"""메인 창 「문의」 탭: 네이버 상품문의·고객문의와 쿠팡 상품문의·CS문의를 API로 조회해 목록과 내용을 보여 주고,
+네이버 미답변 문의에 답변을 등록한다(쿠팡 답변은 WING에서).
 
 「문의알림」 시트·슬랙 알림과는 따로 API 응답을 그대로 보여 주고 시트에는 쓰지 않는다.
 """
@@ -44,8 +45,8 @@ INQUIRY_PERIODS = (("오늘", 0), ("최근 7일", 7), ("최근 30일", 30))
 # 「상품」 열 처음 폭(글자 수). 유형·등록·작성자는 내용에 맞추고 「내용」은 남는 폭을 쓴다.
 INQUIRY_PRODUCT_COLUMN_CHARS = 10
 INQUIRY_COLUMNS = ("유형", "등록", "작성자", "상품", "내용")
-INQUIRY_EMPTY_TEXT = "「새로고침」을 누르면 네이버 상품문의·고객문의를 불러옵니다."
-# 측면 툴바 「문의」 배지(네이버 미답변 수): 시작 후 잠시 뒤 한 번, 그 뒤 5분마다 센다.
+INQUIRY_EMPTY_TEXT = "「새로고침」을 누르면 네이버·쿠팡 문의를 불러옵니다."
+# 측면 툴바 「문의」 배지(네이버 미답변 수, 쿠팡은 세지 않음): 시작 후 잠시 뒤 한 번, 그 뒤 5분마다 센다.
 INQUIRY_BADGE_FIRST_DELAY_MS = 15_000
 INQUIRY_BADGE_POLL_MS = 300_000
 
@@ -56,7 +57,26 @@ def inquiry_summary(row):
     return " ".join(str(text).split())
 
 
-KIND_TONES = {"고객문의": "info", "상품문의": "primary"}
+KIND_TONES = {"고객문의": "info", "상품문의": "primary", "쿠팡 CS문의": "info", "쿠팡 상품문의": "primary"}
+
+
+def inquiry_store(row):
+    """행의 스토어. 네이버 행에는 store 칸이 없다."""
+    return row.get("store") or "네이버"
+
+
+def inquiry_kind_label(row):
+    """목록 「유형」 칸·상세 배지 글자: 「네이버 상품문의」, 「쿠팡 CS문의」."""
+    kind = row.get("kind") or ""
+    store = inquiry_store(row)
+    return kind if kind.startswith(store) else f"{store} {kind}".strip()
+
+
+def inquiry_answerable(row):
+    """앱에서 답변을 등록할 수 있는 문의인지(네이버 미답변만. 쿠팡 답변은 WING에서 한다)."""
+    return row is not None and inquiry_store(row) == "네이버" and row.get("answered") is False
+
+
 # 상품주문 상태 → 색: 발송 전은 처리할 일(주의), 배송 중은 정보, 끝난 건 정상, 취소·반품·교환은 위험
 ORDER_STATUS_TONES = {
     "PAYMENT_WAITING": "muted",
@@ -154,13 +174,13 @@ def inquiry_order_html(state):
 def inquiry_detail_html(row, order_state=None):
     """오른쪽 상세 영역 HTML. 값은 모두 이스케이프한다. 고객문의는 아래에 주문·배송 구역을 붙인다."""
     kind = row.get("kind") or ""
-    chips = [_chip(kind, KIND_TONES.get(kind, "muted"))]
+    chips = [_chip(inquiry_kind_label(row), KIND_TONES.get(kind, "muted"))]
     if row.get("answered"):
         chips.append(_chip("답변 완료", "ok"))
     elif row.get("answered") is False:
         chips.append(_chip("미답변", "danger"))
     else:
-        chips.append(_chip("답변 여부 알 수 없음", "muted"))
+        chips.append(_chip(row.get("status_label") or "답변 여부 알 수 없음", "muted"))
     title = row.get("title") or row.get("product") or "(제목 없음)"
     meta = [f"등록 {_esc(row.get('created'))}"]
     if row.get("writer"):
@@ -182,18 +202,41 @@ def inquiry_detail_html(row, order_state=None):
         _section("문의", "primary"),
         _card(_block(row.get("content")) or _muted("(내용 없음)"), "primary"),
     ]
-    if row.get("answered"):
+    if row.get("replies"):
+        out += _replies_html(row)
+    elif row.get("answered"):
         when = row.get("answered_at") or ""
         answer = _block(row.get("answer")) or _muted("(답변 내용을 응답에서 찾지 못했습니다)")
         out += [_section("답변", "ok", note=when), _card(answer, "ok")]
     elif row.get("answered") is False:
         out += [_section("답변", "danger"), _card("아직 답변하지 않았습니다.", "danger")]
+    if inquiry_store(row) == "쿠팡" and row.get("answered") is False:
+        out.append(f'<p>{_muted("쿠팡 문의 답변은 쿠팡 WING에서 등록합니다.")}</p>')
     out.append(inquiry_order_html(order_state))
     return "".join(out)
 
 
+def _replies_html(row):
+    """쿠팡 CS문의 상담 기록: 쿠팡 상담원(판매자 답변 요청은 주의 색)과 판매자 답변을 시간 순 카드로."""
+    out = [_section("상담 기록", "ok" if row.get("answered") else "muted")]
+    for reply in row["replies"]:
+        if reply.get("vendor"):
+            tone = "ok"
+        elif "답변 요청" in (reply.get("who") or ""):
+            tone = "warn"
+        else:
+            tone = "info"
+        head = f'<b>{_esc(reply.get("who"))}</b>'
+        if reply.get("at"):
+            head += " " + _muted(_esc(reply["at"]))
+        out.append(_card(head + "<br>" + (_block(reply.get("content")) or _muted("(내용 없음)")), tone))
+    if row.get("answered") is False:
+        out.append(_card("아직 판매자가 답변하지 않았습니다.", "danger"))
+    return out
+
+
 class InquiriesMixin:
-    """MainWindow 믹스인. 메인 창 「문의」 탭: 네이버 문의 조회(답변 등록 없음)."""
+    """MainWindow 믹스인. 메인 창 「문의」 탭: 네이버·쿠팡 문의 조회와 네이버 문의 답변 등록."""
 
     def _mount_inquiries_tab(self):
         self._inquiry_rows = []
@@ -277,7 +320,7 @@ class InquiriesMixin:
         splitter.setStretchFactor(1, 2)
         layout.addWidget(splitter, 1)
 
-        tabs.addTab(page, "네이버 문의")
+        tabs.addTab(page, "문의")
         self.ui.tab_inquiries = page
 
         self.pushButton_inquiry_refresh.clicked.connect(self.refresh_inquiries)
@@ -339,7 +382,7 @@ class InquiriesMixin:
     def _sync_inquiry_answer_panel(self, row):
         """고른 문의에 맞춰 답변 칸을 보이거나 숨기고, 문의마다 쓰던 답변을 바꿔 끼운다."""
         key = (row.get("kind"), row.get("id")) if row else None
-        show = row is not None and row.get("answered") is False
+        show = inquiry_answerable(row)
         # 같은 문의라도 새로고침 뒤 답변됨으로 바뀌면 칸을 숨겨야 해서 보임 여부까지 비교한다
         if key == self._inquiry_answer_key and show == self.card_inquiry_answer.isVisibleTo(self.card_inquiry_answer.parentWidget()):
             return
@@ -516,7 +559,7 @@ class InquiriesMixin:
         return tabs is not None and tabs.currentWidget() is self.ui.tab_inquiries
 
     def _set_inquiry_badge(self, count, checked_at, partial=False):
-        note = f"미답변 {count}건 · {checked_at} 확인" + (" (일부 실패)" if partial else "")
+        note = f"네이버 미답변 {count}건 · {checked_at} 확인" + (" (일부 실패)" if partial else "")
         self.set_nav_rail_badge("tab_inquiries", count, note)
 
     def _enter_inquiries_tab(self):
@@ -549,7 +592,7 @@ class InquiriesMixin:
         unanswered_only = self.checkBox_inquiry_unanswered.isChecked()
         self.pushButton_inquiry_refresh.setEnabled(False)
         set_status(self.label_inquiry_status, "idle", "불러오는 중…")
-        thread = _host(self).NaverInquiryListThread(days, unanswered_only, self)
+        thread = _host(self).InquiryListThread(days, unanswered_only, self)
         thread.result_ready.connect(self._on_inquiries_loaded)
         thread.finished.connect(self._on_inquiry_thread_finished)
         self._inquiry_thread = thread
@@ -575,6 +618,9 @@ class InquiriesMixin:
         unanswered_only = self.checkBox_inquiry_unanswered.isChecked()
         label = "미답변" if unanswered_only else "문의"
         text = f"{label} {len(rows)}건 · {payload.get('fetched_at', '')} 조회"
+        missing = payload.get("missing_keys") or []
+        if missing:
+            text += f" · {'·'.join(missing)} 키 없음"
         if self._inquiry_auto_refreshing:
             text += " · 새 문의 자동 반영"
             self._inquiry_auto_refreshing = False
@@ -584,11 +630,13 @@ class InquiriesMixin:
             print("! 문의 조회 일부 실패: " + " / ".join(errors))
         else:
             set_status(self.label_inquiry_status, "ok", text)
-        # 배지와 같은 조건(미답변만·같은 기간)으로 빠짐없이 불러왔으면 배지도 바로 맞춘다.
-        if (payload.get("unanswered_only") and not errors
+        # 배지와 같은 조건(네이버 미답변만·같은 기간)으로 네이버를 빠짐없이 불러왔으면 배지도 바로 맞춘다.
+        # 배지는 네이버만 세므로 쿠팡 행은 빼고, 쿠팡 쪽 실패와는 상관없다.
+        if (payload.get("unanswered_only") and payload.get("naver_complete")
                 and payload.get("days") == _host(self).NAVER_INQUIRY_LOOKBACK_DAYS):
-            self._set_inquiry_badge(len(rows), payload.get("fetched_at") or datetime.now().strftime("%H:%M"))
-            self._note_inquiry_ids({f"{r.get('kind', '')}:{r.get('id', '')}" for r in rows})
+            naver_rows = [r for r in rows if inquiry_store(r) == "네이버"]
+            self._set_inquiry_badge(len(naver_rows), payload.get("fetched_at") or datetime.now().strftime("%H:%M"))
+            self._note_inquiry_ids({f"{r.get('kind', '')}:{r.get('id', '')}" for r in naver_rows})
         if not rows:
             self.emptyState_inquiry.set_text(
                 "미답변 문의가 없습니다." if unanswered_only else "이 기간에 들어온 문의가 없습니다.")
@@ -601,7 +649,8 @@ class InquiriesMixin:
         table.setRowCount(len(rows))
         restore = -1
         for index, row in enumerate(rows):
-            values = (row.get("kind"), row.get("created"), row.get("writer"), row.get("product"),
+            product = row.get("product") or (f"상품 {row['product_no']}" if row.get("product_no") else "")
+            values = (inquiry_kind_label(row), row.get("created"), row.get("writer"), product,
                       inquiry_summary(row))
             for column, value in enumerate(values):
                 item = QTableWidgetItem(str(value or ""))
@@ -641,7 +690,8 @@ class InquiriesMixin:
             self.textBrowser_inquiry_detail.clear()
             return
         order_state = None
-        order_id = str(row.get("order_id") or "")
+        # 주문·배송은 네이버 고객문의만 불러온다(쿠팡 문의의 주문번호는 상세에 번호만 보인다).
+        order_id = str(row.get("order_id") or "") if inquiry_store(row) == "네이버" else ""
         if order_id:
             order_state = self._inquiry_orders.get(order_id)
             if order_state is None or not order_state.get("ok"):

@@ -80,11 +80,14 @@
   - 온라인문의 `GET …/onlineInquiries?answeredType=NOANSWER`
   - 콜센터문의 `GET …/callCenterInquiries?partnerCounselingStatus=NO_ANSWER`
 - **날짜 범위 최대 ~7일 제한** → `_date_windows`로 30일 조회기간을 7일씩 끊어 호출. 페이지네이션은
-  `pageNum` 증가(페이지 항목 수 < `PAGE_SIZE` 면 종료), `MAX_PAGES=20` 안전장치.
+  `pageNum` 증가, 응답 `data.pagination.totalPages`까지 읽고(없을 때만 「항목 수 < `PAGE_SIZE`」로 종료),
+  `MAX_PAGES=20` 안전장치. 콜센터문의는 `pageSize=50`을 보내도 30건씩 줘서 예전 「건수 < 50이면 종료」
+  방식은 한 주에 30건이 넘으면 2쪽부터 놓쳤다(`0.0.44`에서 수정, 2026-11-23 실응답 30일 103건 중 5건).
+- 콜센터문의는 `partnerCounselingStatus`를 빼면 0건이 온다. 전체는 `NONE`, 답변 `ANSWER`, 미답변 `NO_ANSWER`.
 
 ## 문의 탭 (조회 전용, `0.0.36`)
 
-- 측면 툴바 「문의」(탭 이름 「네이버 문의」, Ctrl+7). `ui/main/inquiries.py` `InquiriesMixin`,
+- 측면 툴바 「문의」(탭 이름 「문의」, `0.0.43`까지 「네이버 문의」, Ctrl+7). `ui/main/inquiries.py` `InquiriesMixin`,
   작업 스레드 `NaverInquiryListThread` → `run_naver_inquiry_list_worker(days, unanswered_only)`
   → `naver_commerce.fetch_inquiry_list`.
 - 위 알림과 별개로 API를 직접 조회해 보여 준다. 「문의알림」 시트·슬랙에는 읽지도 쓰지도 않는다.
@@ -139,6 +142,33 @@
     보고 다시 보내 두 번 붙는 것 방지), 401이면 새 토큰으로 다시 확인부터, 보내는 중 연결이 끊기면 「등록됐는지
     알 수 없음」으로 알리고 새로고침해 확인하게 함. 실패하면 초안을 지킨다.
   - 등록한 답변 수정(고객문의 `PUT …/answer/{answerContentId}`, 상품문의 같은 PUT)은 아직 없다.
+
+## 문의 탭 — 쿠팡 (조회 전용, `0.0.44`)
+
+- 목록 작업자 `run_inquiry_list_worker`(`InquiryListThread`, `0.0.43`까지 `run_naver_inquiry_list_worker`)가
+  공유 「설정」에 키가 있는 스토어만 네이버·쿠팡을 동시에(스레드 2개) 불러 한 목록에 최근 등록 순으로 합친다.
+  쿠팡은 `coupang_commerce.fetch_inquiry_list`가 온라인문의·콜센터문의를 동시에 부른다.
+  - 한 스토어·한 종류가 실패해도 나머지는 보이고 「일부 실패」(툴팁에 원인). 네이버 오류는 「네이버 …」로 시작한다.
+  - 키가 없는 스토어는 조회하지 않고 상태 문구 끝에 「쿠팡 키 없음」처럼 붙인다. 둘 다 없으면 오류.
+  - 결과의 `naver_complete`(네이버 두 종류를 빠짐없이 읽음)일 때만 탭 목록으로 배지를 맞추고, 그때도 네이버 행만 센다.
+- 행 형식은 네이버와 같고 `store: "쿠팡"`이 붙는다. 종류는 `쿠팡 상품문의`(온라인문의)·`쿠팡 CS문의`(콜센터문의).
+  목록 「유형」 칸은 스토어를 붙여 「네이버 상품문의」·「쿠팡 CS문의」로 보인다.
+  - 온라인문의: 답변 = `commentDtoList`(여럿이면 이어 붙임), 주문번호 = `orderIds`. 응답에 상품명·작성자가 없어
+    상품명은 등록 상품 상세(`fetch_seller_product`, 약 0.7초/건)로 찾는다. 앱을 끌 때까지 기억하고 한 번 조회에 새로
+    찾는 건 20개까지(스레드 4개). 못 찾으면 목록에 「상품 {등록상품 ID}」.
+  - 콜센터문의: 답변 여부는 `csPartnerCounselingStatus`·`inquiryStatus` 조합 — `answered` = 답변,
+    `requestAnswer`+`progress` = 미답변(`NO_ANSWER`), `requestAnswer`+`complete` = 「판매자 답변 없이 종료」
+    (쿠팡 `TRANSFER`, 답변 여부 None). 상세에는 `replies`를 「상담 기록」 카드로 보인다(쿠팡 상담원 = 하늘,
+    판매자 답변 요청 = 주황, 판매자 = 초록). 상품은 `itemName`, 분류는 `receiptCategory`에서 겹친 단계를 뺀 것.
+    연락처(`buyerPhone`·`buyerEmail`)는 행에 넣지 않는다.
+- 쿠팡 문의는 답변 칸이 없고 미답변이면 상세에 「쿠팡 문의 답변은 쿠팡 WING에서 등록합니다」. 주문·배송 조회(네이버
+  고객문의 전용)도 하지 않고 주문번호만 보인다.
+- 측면 툴바 배지는 네이버만 센다(툴팁 「네이버 미답변 N건」).
+- 실응답 확인(2026-11-23, 읽기 전용, 키 이름·상태 값·건수만): 최근 30일 온라인문의 45건(모두 답변 1~2개, 미답변 0),
+  콜센터문의 103건(답변 95·미답변 7·답변 없이 종료 1). 걸린 시간: 오늘·미답변만(기본) 2.6초, 최근 7일 전체 4.2초,
+  최근 30일 전체 약 12초(콜센터문의 7일 구간 5번을 차례로 부르는 데 7.7초, 상품명 첫 조회 포함). 상품명은 45건 중
+  첫 조회 24건(한도 20개 상품), 두 번째 조회 45건 모두 찾음.
+- 쿠팡 OpenAPI는 WING에 등록한 IP에서만 열린다. 다른 곳의 PC에서는 쿠팡 쪽이 HTTP 오류로 「일부 실패」가 되고 네이버만 보인다.
 
 ## 키 관리 / 설정 UI
 

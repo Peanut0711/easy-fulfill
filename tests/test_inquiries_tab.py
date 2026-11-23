@@ -148,7 +148,7 @@ class DetailHtmlTests(unittest.TestCase):
         self.assertIn(">주문번호</td><td>2026112100001</td>", text)
         self.assertIn("변경해 드렸습니다.", text)
         # 머리 배지: 고객문의는 정보 색, 답변 완료는 정상 색. 문의·답변 카드는 색 막대
-        self.assertIn(f'color:{theme.INFO}; background-color:{theme.INFO_SUBTLE}; font-weight:600;">&nbsp;고객문의', text)
+        self.assertIn(f'color:{theme.INFO}; background-color:{theme.INFO_SUBTLE}; font-weight:600;">&nbsp;네이버 고객문의', text)
         self.assertIn(f'color:{theme.OK}; background-color:{theme.OK_SUBTLE}; font-weight:600;">&nbsp;답변 완료', text)
         self.assertIn(f'<td width="4" bgcolor="{theme.PRIMARY_PRESSED}"></td>', text)
         self.assertIn(f'<td width="4" bgcolor="{theme.OK}"></td>', text)
@@ -380,7 +380,7 @@ def run_scenario():
         raise AssertionError("문의 조회가 끝나지 않음")
 
     with patch.object(oauth, "get_authorized_gspread_client", side_effect=RuntimeError("네트워크 금지")), \
-            patch.object(module, "run_naver_inquiry_list_worker", fake_worker), \
+            patch.object(module, "run_inquiry_list_worker", fake_worker), \
             patch.object(module, "run_naver_inquiry_order_worker", fake_order_worker):
         window = module.MainWindow()
         window.show()
@@ -561,19 +561,34 @@ def run_scenario():
             window.checkBox_inquiry_unanswered.blockSignals(True)
             window.checkBox_inquiry_unanswered.setChecked(True)
             window.checkBox_inquiry_unanswered.blockSignals(False)
-            two = many[:2]
+            # 배지는 네이버만 센다: 쿠팡 행은 목록에 있어도 배지 수에서 뺀다
+            two = many[:2] + [{"kind": "쿠팡 CS문의", "store": "쿠팡", "id": "K1", "created": "2026-11-22 09:00",
+                               "content": "c", "answered": False, "replies": []}]
             responses.append({"ok": True, "rows": two, "errors": [], "sample_keys": {}, "fetched_at": "13:20",
-                              "days": 30, "unanswered_only": True})
+                              "days": 30, "unanswered_only": True, "naver_complete": True})
             window.refresh_inquiries()
             wait_idle(window)
             badge["from_list"] = list(window.nav_rail_badge("tab_inquiries"))
+            badge["known_ids_from_list"] = sorted(window._inquiry_known_ids)
+            # 쿠팡만 실패하고 네이버는 빠짐없이 읽었으면 네이버 수로 맞춘다
+            responses.append({"ok": True, "rows": many[:1], "errors": ["쿠팡 CS문의 조회 실패: HTTP 403"],
+                              "sample_keys": {}, "fetched_at": "13:22", "days": 30, "unanswered_only": True,
+                              "naver_complete": True})
+            window.refresh_inquiries()
+            wait_idle(window)
+            badge["from_coupang_failed"] = list(window.nav_rail_badge("tab_inquiries"))
+            responses.append({"ok": True, "rows": two, "errors": [], "sample_keys": {}, "fetched_at": "13:20",
+                              "days": 30, "unanswered_only": True, "naver_complete": True})
+            window.refresh_inquiries()
+            wait_idle(window)
             responses.append({"ok": True, "rows": many, "errors": [], "sample_keys": {}, "fetched_at": "13:25",
                               "days": 7, "unanswered_only": True})
             window.refresh_inquiries()
             wait_idle(window)
             badge["from_short_period"] = list(window.nav_rail_badge("tab_inquiries"))
-            responses.append({"ok": True, "rows": many, "errors": ["상품문의 조회 실패: HTTP 500"],
-                              "sample_keys": {}, "fetched_at": "13:30", "days": 30, "unanswered_only": True})
+            responses.append({"ok": True, "rows": many, "errors": ["네이버 상품문의 조회 실패: HTTP 500"],
+                              "sample_keys": {}, "fetched_at": "13:30", "days": 30, "unanswered_only": True,
+                              "naver_complete": False})
             window.refresh_inquiries()
             wait_idle(window)
             badge["from_partial_list"] = list(window.nav_rail_badge("tab_inquiries"))
@@ -671,7 +686,7 @@ class InquiriesTabTests(unittest.TestCase):
         self.assertTrue(all(first["fits"]))
         self.assertTrue(first["product_width"])
         self.assertEqual(first["rows"], 2)
-        self.assertEqual(first["cells"], ["고객문의", "2026-11-21 09:05", "홍*동", "현미 5kg", "주소 변경"])
+        self.assertEqual(first["cells"], ["네이버 고객문의", "2026-11-21 09:05", "홍*동", "현미 5kg", "주소 변경"])
         self.assertEqual(first["status"], "✓ 미답변 2건 · 11:42 조회")
         self.assertTrue(first["shows_table"])
         self.assertTrue(first["detail_empty"])
@@ -730,15 +745,17 @@ class InquiriesTabTests(unittest.TestCase):
         self.assertEqual(b["timer"], [300000, True, True])
         self.assertEqual(b["initial"], ["", ""])
         self.assertFalse(b["initial_red"])
-        self.assertEqual(b["three"], ["3", "미답변 3건 · 13:00 확인"])
-        self.assertEqual(b["three_tip"], "네이버 문의 (Ctrl+7) · 미답변 3건 · 13:00 확인")
+        self.assertEqual(b["three"], ["3", "네이버 미답변 3건 · 13:00 확인"])
+        self.assertEqual(b["three_tip"], "문의 (Ctrl+7) · 네이버 미답변 3건 · 13:00 확인")
         self.assertTrue(b["three_red"])
-        self.assertEqual(b["many"], ["99+", "미답변 120건 · 13:05 확인 (일부 실패)"])
+        self.assertEqual(b["many"], ["99+", "네이버 미답변 120건 · 13:05 확인 (일부 실패)"])
         self.assertEqual(b["failed"], ["", "미답변 수 확인 실패 · 13:10"])
         self.assertFalse(b["failed_red"])
-        self.assertEqual(b["from_list"], ["2", "미답변 2건 · 13:20 확인"])
-        self.assertEqual(b["from_short_period"], ["2", "미답변 2건 · 13:20 확인"])  # 7일은 배지와 기간이 달라 그대로
-        self.assertEqual(b["from_partial_list"], ["2", "미답변 2건 · 13:20 확인"])  # 일부 실패면 그대로
+        self.assertEqual(b["from_list"], ["2", "네이버 미답변 2건 · 13:20 확인"])  # 쿠팡 행은 세지 않는다
+        self.assertNotIn("쿠팡 CS문의:K1", b["known_ids_from_list"])
+        self.assertEqual(b["from_coupang_failed"], ["1", "네이버 미답변 1건 · 13:22 확인"])
+        self.assertEqual(b["from_short_period"], ["2", "네이버 미답변 2건 · 13:20 확인"])  # 7일은 배지와 기간이 달라 그대로
+        self.assertEqual(b["from_partial_list"], ["2", "네이버 미답변 2건 · 13:20 확인"])  # 네이버 일부 실패면 그대로
         self.assertTrue(b["skipped_when_closing"])
         self.assertTrue(b["stopped"])
 

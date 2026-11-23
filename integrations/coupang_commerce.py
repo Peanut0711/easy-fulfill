@@ -19,7 +19,9 @@
 
 import hashlib
 import hmac
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from urllib.parse import urlencode
 
@@ -117,8 +119,22 @@ def _date_windows(from_dt, to_dt, days=MAX_RANGE_DAYS):
     return windows
 
 
+def _page_count(js):
+    """응답의 data.pagination.totalPages(없으면 None)."""
+    data = js.get("data")
+    pagination = data.get("pagination") if isinstance(data, dict) else None
+    try:
+        return int(pagination.get("totalPages"))
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+
 def _paged(path, base_params, access_key, secret_key):
-    """pageNum 을 늘려가며 모든 페이지 항목을 모은다."""
+    """pageNum 을 늘려가며 모든 페이지 항목을 모은다.
+
+    콜센터문의는 pageSize 를 50으로 보내도 한 페이지에 30건만 준다(2026-11-23 실응답 countPerPage 30).
+    그래서 받은 건수가 아니라 응답의 totalPages 로 끝을 판단하고, totalPages 가 없을 때만 건수로 본다.
+    """
     items = []
     page = 1
     while page <= MAX_PAGES:
@@ -128,7 +144,11 @@ def _paged(path, base_params, access_key, secret_key):
         js = _get(path, params, access_key, secret_key)
         page_items = _extract_items(js)
         items.extend(page_items)
-        if len(page_items) < PAGE_SIZE:
+        total_pages = _page_count(js)
+        if total_pages is not None:
+            if page >= total_pages:
+                break
+        elif len(page_items) < PAGE_SIZE:
             break
         page += 1
     return items
@@ -153,20 +173,221 @@ def fetch_online_inquiries(vendor_id, access_key, secret_key, from_dt, to_dt,
 
 def fetch_callcenter_inquiries(vendor_id, access_key, secret_key, from_dt, to_dt,
                                answered=None):
-    """콜센터(CS) 문의 목록을 반환. answered=False → 미답변만(NO_ANSWER)."""
+    """콜센터(CS) 문의 목록을 반환. answered=False → 미답변만(NO_ANSWER), None → 전체(NONE).
+
+    partnerCounselingStatus 를 빼면 0건이 온다(2026-11-23 실응답). 그래서 전체도 NONE 으로 보낸다.
+    """
     path = f"{PATH_PREFIX}/{vendor_id}/callCenterInquiries"
-    status = None if answered is None else ("ANSWER" if answered else "NO_ANSWER")
+    status = "NONE" if answered is None else ("ANSWER" if answered else "NO_ANSWER")
     out = []
     for s, e in _date_windows(from_dt, to_dt):
         base = {
             "vendorId": vendor_id,
             "inquiryStartAt": s.strftime("%Y-%m-%d"),
             "inquiryEndAt": e.strftime("%Y-%m-%d"),
+            "partnerCounselingStatus": status,
         }
-        if status:
-            base["partnerCounselingStatus"] = status
         out.extend(_paged(path, base, access_key, secret_key))
     return out
+
+
+# ── 「문의」 탭: 쿠팡 문의 조회(읽기 전용) ─────────────────────────────
+# 실응답(2026-11-23, 최근 30일 읽기 전용, 키 이름·상태 값·건수만 확인):
+#   온라인문의 45건: inquiryId, productId, sellerProductId, sellerItemId, vendorItemId, content, inquiryAt,
+#     orderIds[], commentDtoList[{inquiryCommentId, inquiryId, content, inquiryCommentAt}]. 상품명·작성자 칸은 없다.
+#     미답변(NOANSWER)은 0건이었고 45건 모두 답변(commentDtoList)이 1~2개 있었다.
+#   콜센터문의 103건: inquiryId, csPartnerCounselingStatus, inquiryStatus, vendorItemId[], itemName, content,
+#     answeredAt, replies[{receptionistName, replyAt, content, answerType, partnerTransferStatus, needAnswer, …}],
+#     inquiryAt, buyerEmail, buyerPhone(가린 번호), orderId, orderDate, receiptCategory.
+#     상태 조합: answered+complete/progress 95건(ANSWER), requestAnswer+progress 7건(NO_ANSWER),
+#     requestAnswer+complete 1건(TRANSFER). replies 의 answerType 은 csAgent(쿠팡 상담원)·vendor(판매자).
+INQUIRY_KIND_ONLINE = "쿠팡 상품문의"
+INQUIRY_KIND_CALLCENTER = "쿠팡 CS문의"
+# 온라인문의에는 상품명이 없어 등록 상품 상세(약 0.7초/건)로 찾는다. 한 번 찾은 이름은 앱을 끌 때까지 기억하고,
+# 한 번 조회에 새로 찾는 상품 수를 제한한다(30일 전체 조회 때 수십 개를 찾느라 오래 걸리지 않게).
+PRODUCT_NAME_LOOKUP_LIMIT = 20
+PRODUCT_NAME_LOOKUP_WORKERS = 4
+_product_names = {}
+_product_names_lock = threading.Lock()
+
+
+def short_datetime(value):
+    """'2026-11-20T13:22:11+09:00' → '2026-11-20 13:22'(모르는 형식은 그대로)."""
+    s = str(value or "").strip()
+    if len(s) >= 16 and s[4] == "-" and s[7] == "-" and s[10] in "T " and s[13] == ":":
+        return s[:10] + " " + s[11:16]
+    return s
+
+
+def _text(value):
+    return "" if value is None else str(value).strip()
+
+
+def _category(value):
+    """receiptCategory('배송>배송>배송', '>>') → 겹치는 단계를 뺀 '배송'."""
+    parts = []
+    for part in _text(value).split(">"):
+        part = part.strip()
+        if part and part not in parts:
+            parts.append(part)
+    return " > ".join(parts)
+
+
+def normalize_online_inquiry(item, product_names=None):
+    """온라인문의(상품문의) 1개 → 문의 탭 행 dict. 답변은 commentDtoList(판매자 답변) 전부를 이어 보인다."""
+    comments = [c for c in (item.get("commentDtoList") or []) if isinstance(c, dict)]
+    seller_product_id = _text(item.get("sellerProductId"))
+    name = (product_names or {}).get(seller_product_id, "")
+    order_ids = [_text(x) for x in (item.get("orderIds") or []) if _text(x)]
+    return {
+        "kind": INQUIRY_KIND_ONLINE,
+        "store": "쿠팡",
+        "id": _text(item.get("inquiryId")),
+        "created": short_datetime(item.get("inquiryAt")),
+        "writer": "",
+        "product": name,
+        "product_no": seller_product_id,
+        "order_id": ", ".join(order_ids),
+        "product_order_ids": [],
+        "category": "",
+        "title": "",
+        "content": _text(item.get("content")),
+        "answered": bool(comments),
+        "answer": "\n\n".join(_text(c.get("content")) for c in comments if _text(c.get("content"))),
+        "answered_at": short_datetime(comments[-1].get("inquiryCommentAt")) if comments else "",
+        "replies": [],
+    }
+
+
+CALLCENTER_REPLY_WHO = {"csAgent": "쿠팡 상담원", "vendor": "판매자"}
+
+
+def normalize_callcenter_inquiry(item):
+    """콜센터(CS)문의 1개 → 문의 탭 행 dict. 연락처(buyerPhone·buyerEmail)는 넣지 않는다.
+
+    답변 여부: csPartnerCounselingStatus 가 answered 면 답변, requestAnswer 이면서 진행 중(progress)이면 미답변,
+    requestAnswer 인데 종료(complete, 쿠팡 TRANSFER)면 판매자 답변 없이 끝난 것이라 None(알 수 없음)으로 둔다.
+    """
+    status = _text(item.get("csPartnerCounselingStatus"))
+    progress = _text(item.get("inquiryStatus"))
+    if status == "answered":
+        answered, status_label = True, ""
+    elif status == "requestAnswer" and progress == "progress":
+        answered, status_label = False, ""
+    elif status == "requestAnswer":
+        answered, status_label = None, "판매자 답변 없이 종료"
+    else:
+        answered, status_label = None, ""
+    replies = []
+    for reply in item.get("replies") or []:
+        if not isinstance(reply, dict):
+            continue
+        answer_type = _text(reply.get("answerType"))
+        who = CALLCENTER_REPLY_WHO.get(answer_type, answer_type or "답변")
+        if answer_type == "csAgent" and reply.get("needAnswer"):
+            who += " · 판매자 답변 요청"
+        replies.append({
+            "who": who,
+            "vendor": answer_type == "vendor",
+            "at": short_datetime(reply.get("replyAt")),
+            "content": _text(reply.get("content")),
+        })
+    vendor_replies = [r for r in replies if r["vendor"]]
+    return {
+        "kind": INQUIRY_KIND_CALLCENTER,
+        "store": "쿠팡",
+        "id": _text(item.get("inquiryId")),
+        "created": short_datetime(item.get("inquiryAt")),
+        "writer": "",
+        "product": _text(item.get("itemName")),
+        "product_no": "",
+        "order_id": _text(item.get("orderId")),
+        "product_order_ids": [],
+        "category": _category(item.get("receiptCategory")),
+        "title": "",
+        "content": _text(item.get("content")),
+        "answered": answered,
+        "status_label": status_label,
+        "answer": vendor_replies[-1]["content"] if vendor_replies else "",
+        "answered_at": short_datetime(item.get("answeredAt")) if answered else "",
+        "replies": replies,
+    }
+
+
+def _remember_product_names(found):
+    with _product_names_lock:
+        _product_names.update(found)
+
+
+def product_names_for(seller_product_ids, access_key, secret_key, limit=PRODUCT_NAME_LOOKUP_LIMIT):
+    """등록 상품 번호 → 상품명. 기억한 이름은 다시 조회하지 않고, 새로 찾는 것은 limit 개까지(앞쪽부터).
+
+    상세 조회가 실패한 상품은 이름 없이 둔다(목록에는 상품 번호만 보인다). 반환: {번호: 이름}.
+    """
+    wanted = []
+    for pid in seller_product_ids:
+        pid = _text(pid)
+        if pid and pid not in wanted:
+            wanted.append(pid)
+    with _product_names_lock:
+        known = {pid: _product_names[pid] for pid in wanted if pid in _product_names}
+    missing = [pid for pid in wanted if pid not in known][:max(0, int(limit))]
+    if missing:
+        def lookup(pid):
+            try:
+                data = fetch_seller_product(pid, access_key, secret_key)
+            except Exception:
+                return pid, None
+            return pid, _text(data.get("sellerProductName") or data.get("displayProductName"))
+
+        with ThreadPoolExecutor(max_workers=PRODUCT_NAME_LOOKUP_WORKERS) as pool:
+            found = {pid: name for pid, name in pool.map(lookup, missing) if name}
+        _remember_product_names(found)
+        known.update(found)
+    return known
+
+
+def fetch_inquiry_list(vendor_id, access_key, secret_key, from_dt, to_dt, unanswered_only=True):
+    """온라인문의·콜센터문의를 함께(동시에) 조회해 문의 탭 행 목록으로 돌려준다.
+
+    한 종류가 실패해도 다른 종류는 보여 주도록 오류는 errors 에 모은다.
+    반환: {rows, errors, sample_keys: {종류: 첫 항목의 키 목록}}.
+    unanswered_only 면 미답변만 조회하고, 답변 여부를 알 수 없는 건은 미답변으로 본다.
+    """
+    answered = False if unanswered_only else None
+    sources = (
+        (INQUIRY_KIND_ONLINE, fetch_online_inquiries),
+        (INQUIRY_KIND_CALLCENTER, fetch_callcenter_inquiries),
+    )
+    with ThreadPoolExecutor(max_workers=len(sources)) as pool:
+        futures = [(kind, pool.submit(fetch, vendor_id, access_key, secret_key, from_dt, to_dt, answered=answered))
+                   for kind, fetch in sources]
+    fetched = {}
+    errors = []
+    for kind, future in futures:
+        try:
+            fetched[kind] = [it for it in future.result() if isinstance(it, dict)]
+        except Exception as e:
+            errors.append(f"{kind} 조회 실패: {e}")
+            fetched[kind] = []
+    online = fetched[INQUIRY_KIND_ONLINE]
+    names = product_names_for([it.get("sellerProductId") for it in online], access_key, secret_key) if online else {}
+    rows = []
+    sample_keys = {}
+    for kind, normalize in ((INQUIRY_KIND_ONLINE, lambda it: normalize_online_inquiry(it, names)),
+                            (INQUIRY_KIND_CALLCENTER, normalize_callcenter_inquiry)):
+        items = fetched[kind]
+        if items:
+            sample_keys[kind] = sorted(str(k) for k in items[0].keys())
+        for item in items:
+            row = normalize(item)
+            if not row["id"]:
+                continue
+            if unanswered_only and row["answered"] is None:
+                row["answered"] = False
+            rows.append(row)
+    rows.sort(key=lambda r: r["created"], reverse=True)
+    return {"rows": rows, "errors": errors, "sample_keys": sample_keys}
 
 
 def _money_units(value, field_name):

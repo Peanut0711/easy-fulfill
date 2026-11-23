@@ -207,7 +207,7 @@ def run_scenario():
         raise AssertionError("기다리는 상태가 오지 않음")
 
     with patch.object(oauth, "get_authorized_gspread_client", side_effect=RuntimeError("네트워크 금지")), \
-            patch.object(module, "run_naver_inquiry_list_worker", fake_list), \
+            patch.object(module, "run_inquiry_list_worker", fake_list), \
             patch.object(module, "run_naver_inquiry_answer_worker", fake_answer), \
             patch.object(module, "run_naver_qna_templates_worker", lambda: {"ok": True, "templates": [
                 {"subject": "배송 안내", "content": "오늘 발송됩니다.", "question_type": ""},

@@ -9,6 +9,7 @@ import html
 import math
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, date, timedelta
 from pathlib import Path
 import subprocess
@@ -1439,16 +1440,19 @@ def _recent_inquiry_token():
     return ""
 
 
-def run_naver_inquiry_list_worker(days, unanswered_only=True):
-    """「문의」 탭: 공유 「설정」의 네이버 키로 상품문의·고객문의를 조회한다(읽기 전용).
+def run_inquiry_list_worker(days, unanswered_only=True):
+    """「문의」 탭: 공유 「설정」의 키로 네이버(상품문의·고객문의)와 쿠팡(상품문의·CS문의)을 동시에 조회한다(읽기 전용).
 
     「문의알림」 시트·슬랙 알림과는 별개로 API 응답을 그대로 보여 주며 시트에는 쓰지 않는다.
-    반환: {ok, rows, errors, sample_keys, fetched_at} 또는 {ok: False, error}.
+    키가 등록된 스토어만 조회하고, 한 스토어가 실패해도 다른 스토어는 보여 준다(errors 에 모은다).
+    반환: {ok, rows, errors, sample_keys, fetched_at, days, unanswered_only, naver_complete, missing_keys}
+    또는 {ok: False, error}. naver_complete: 네이버 두 종류를 빠짐없이 읽었는지(배지 맞춤에 쓴다).
     """
     if gspread is None:
         return {"ok": False, "error": "gspread 패키지가 필요합니다."}
     try:
         from sheets.google_sheets_oauth import get_authorized_gspread_client
+        from integrations import coupang_commerce
         from integrations import naver_commerce
     except ImportError as e:
         return {"ok": False, "error": str(e)}
@@ -1457,28 +1461,62 @@ def run_naver_inquiry_list_worker(days, unanswered_only=True):
         cfg = _read_config_values_map(_standalone_open_config_ws(gc))
         client_id = cfg.get(CONFIG_KEY_NAVER_CLIENT_ID, "")
         client_secret = cfg.get(CONFIG_KEY_NAVER_CLIENT_SECRET, "")
-        if not (client_id and client_secret):
+        cp_keys = tuple(cfg.get(k, "") for k in (
+            CONFIG_KEY_COUPANG_VENDOR_ID, CONFIG_KEY_COUPANG_ACCESS_KEY, CONFIG_KEY_COUPANG_SECRET_KEY))
+        naver_on = bool(client_id and client_secret)
+        coupang_on = all(cp_keys)
+        if not naver_on and not coupang_on:
             return {"ok": False,
-                    "error": "네이버 client_id/secret 이 설정되지 않았습니다. "
-                             "「⚙ 설정 › 연동」의 API 키에서 등록하세요."}
+                    "error": "네이버·쿠팡 API 키가 설정되지 않았습니다. 「⚙ 설정 › 연동」의 API 키에서 등록하세요."}
         now_dt = datetime.now()
         from_dt = naver_commerce.inquiry_period_start(now_dt, days)
-        token = naver_commerce.get_access_token(client_id, client_secret)
-        _remember_inquiry_token(token)
-        res = naver_commerce.fetch_inquiry_list(token, from_dt, now_dt, unanswered_only=unanswered_only)
-        if not res["rows"] and res["errors"]:
-            return {"ok": False, "error": " / ".join(res["errors"])}
-        res["ok"] = True
-        res["fetched_at"] = now_dt.strftime("%H:%M")
-        res["days"] = int(days)
-        res["unanswered_only"] = bool(unanswered_only)
-        return res
+
+        def naver_part():
+            try:
+                token = naver_commerce.get_access_token(client_id, client_secret)
+            except Exception as e:
+                return {"rows": [], "errors": [f"네이버 토큰 발급 실패: {e}"], "sample_keys": {}}
+            _remember_inquiry_token(token)
+            res = naver_commerce.fetch_inquiry_list(token, from_dt, now_dt, unanswered_only=unanswered_only)
+            res["errors"] = [f"네이버 {e}" for e in res["errors"]]
+            return res
+
+        def coupang_part():
+            return coupang_commerce.fetch_inquiry_list(*cp_keys, from_dt, now_dt, unanswered_only=unanswered_only)
+
+        parts = [(name, part) for name, part, on in (("네이버", naver_part, naver_on),
+                                                     ("쿠팡", coupang_part, coupang_on)) if on]
+        # 쿠팡은 7일 단위로 끊어 여러 번 부르므로 네이버와 동시에 불러 기다리는 시간을 줄인다.
+        with ThreadPoolExecutor(max_workers=len(parts)) as pool:
+            futures = [(name, pool.submit(part)) for name, part in parts]
+        rows, errors, sample_keys = [], [], {}
+        naver_complete = False
+        for name, future in futures:
+            try:
+                res = future.result()
+            except Exception as e:
+                res = {"rows": [], "errors": [f"{name} 조회 실패: {e}"], "sample_keys": {}}
+            rows.extend(res["rows"])
+            errors.extend(res["errors"])
+            sample_keys.update({f"{name} {kind}" if name == "네이버" else kind: keys
+                                for kind, keys in res["sample_keys"].items()})
+            if name == "네이버":
+                naver_complete = not res["errors"]
+        if not rows and errors:
+            return {"ok": False, "error": " / ".join(errors)}
+        rows.sort(key=lambda r: r["created"], reverse=True)
+        return {
+            "ok": True, "rows": rows, "errors": errors, "sample_keys": sample_keys,
+            "fetched_at": now_dt.strftime("%H:%M"), "days": int(days), "unanswered_only": bool(unanswered_only),
+            "naver_complete": naver_complete,
+            "missing_keys": [name for name, on in (("네이버", naver_on), ("쿠팡", coupang_on)) if not on],
+        }
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
 
-class NaverInquiryListThread(QThread):
-    """「문의」 탭의 네이버 문의 조회를 백그라운드로 실행한다."""
+class InquiryListThread(QThread):
+    """「문의」 탭의 네이버·쿠팡 문의 조회를 백그라운드로 실행한다."""
 
     result_ready = Signal(dict)
 
@@ -1488,7 +1526,7 @@ class NaverInquiryListThread(QThread):
         self._unanswered_only = unanswered_only
 
     def run(self):
-        self.result_ready.emit(run_naver_inquiry_list_worker(self._days, self._unanswered_only))
+        self.result_ready.emit(run_inquiry_list_worker(self._days, self._unanswered_only))
 
 
 def _naver_inquiry_token_from_config():
