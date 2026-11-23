@@ -7,6 +7,7 @@
 from datetime import datetime
 
 from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -26,6 +27,7 @@ from PySide6.QtWidgets import (
 )
 
 from shared import app_log, theme
+from shared.paths import APP_ROOT
 from shared.ui_components import EmptyState, SectionCard, confirm_action, fixed_width_button, setup_table
 from shared.ui_style import set_button_role, set_status
 from ui.main import host as _host
@@ -40,6 +42,12 @@ from ui.main.rich_cards import (  # noqa: F401  (아래 이름들은 문의 상�
     section as _section,
 )
 
+# (이름, 스토어). "" = 전체. 첫 항목이 기본값이다. 고른 값은 이 PC 앱 설정에 기억한다.
+INQUIRY_STORES = (("전체", ""), ("네이버", "네이버"), ("쿠팡", "쿠팡"))
+APP_SETTING_INQUIRY_STORE = "inquiry_store_filter"
+# 목록 「유형」 칸 앞 스토어 아이콘(바로가기 메뉴와 같은 정사각 아이콘. 글자 로고는 행 높이에서 읽히지 않는다)
+STORE_ICON_FILES = {"네이버": "smart-store-icon.png", "쿠팡": "coupang-wing-icon.png"}
+_store_icons = {}
 # (이름, 일 수). 0 = 오늘 0시부터. 첫 항목이 기본값이다.
 INQUIRY_PERIODS = (("오늘", 0), ("최근 7일", 7), ("최근 30일", 30))
 # 「상품」 열 처음 폭(글자 수). 유형·등록·작성자는 내용에 맞추고 「내용」은 남는 폭을 쓴다.
@@ -70,6 +78,20 @@ def inquiry_kind_label(row):
     kind = row.get("kind") or ""
     store = inquiry_store(row)
     return kind if kind.startswith(store) else f"{store} {kind}".strip()
+
+
+def filter_inquiry_rows(rows, store):
+    """스토어로 거른 행. store "" = 전체(그대로)."""
+    return list(rows) if not store else [r for r in rows if inquiry_store(r) == store]
+
+
+def store_icon(store):
+    """스토어 아이콘(파일이 없으면 빈 아이콘). 한 번 읽은 것은 기억한다."""
+    if store not in _store_icons:
+        name = STORE_ICON_FILES.get(store)
+        path = APP_ROOT / "image" / name if name else None
+        _store_icons[store] = QIcon(str(path)) if path is not None and path.exists() else QIcon()
+    return _store_icons[store]
 
 
 def inquiry_answerable(row):
@@ -239,7 +261,9 @@ class InquiriesMixin:
     """MainWindow 믹스인. 메인 창 「문의」 탭: 네이버·쿠팡 문의 조회와 네이버 문의 답변 등록."""
 
     def _mount_inquiries_tab(self):
-        self._inquiry_rows = []
+        self._inquiry_rows = []  # 표에 보이는 행(스토어로 거른 것)
+        self._inquiry_all_rows = []  # 마지막으로 불러온 전체 행
+        self._inquiry_list_info = None  # 마지막 조회 결과의 상태 문구 재료(스토어를 바꿀 때 다시 쓴다)
         self._inquiry_thread = None
         self._inquiries_loaded_once = False
         self._inquiry_refresh_pending = False
@@ -256,6 +280,17 @@ class InquiriesMixin:
 
         bar = QHBoxLayout()
         bar.setSpacing(theme.SPACE_SM)
+        self.comboBox_inquiry_store = QComboBox()
+        self.comboBox_inquiry_store.setObjectName("comboBox_inquiry_store")
+        self.comboBox_inquiry_store.setToolTip("불러온 목록을 스토어로 걸러 봅니다(다시 조회하지 않음).")
+        for label, store in INQUIRY_STORES:
+            if store:
+                self.comboBox_inquiry_store.addItem(store_icon(store), label, store)
+            else:
+                self.comboBox_inquiry_store.addItem(label, store)
+        saved = self.get_app_setting(APP_SETTING_INQUIRY_STORE, "")
+        index = self.comboBox_inquiry_store.findData(saved if isinstance(saved, str) else "")
+        self.comboBox_inquiry_store.setCurrentIndex(max(0, index))
         self.comboBox_inquiry_period = QComboBox()
         self.comboBox_inquiry_period.setObjectName("comboBox_inquiry_period")
         for label, days in INQUIRY_PERIODS:
@@ -271,6 +306,7 @@ class InquiriesMixin:
         self.pushButton_inquiry_refresh = QPushButton("새로고침")
         self.pushButton_inquiry_refresh.setObjectName("pushButton_inquiry_refresh")
         set_button_role(self.pushButton_inquiry_refresh, "primary")
+        bar.addWidget(self.comboBox_inquiry_store)
         bar.addWidget(self.comboBox_inquiry_period)
         bar.addWidget(self.checkBox_inquiry_unanswered)
         bar.addWidget(self.label_inquiry_status, 1)
@@ -327,6 +363,7 @@ class InquiriesMixin:
         self.tableWidget_inquiries.itemSelectionChanged.connect(self._show_selected_inquiry)
         self.comboBox_inquiry_period.currentIndexChanged.connect(lambda _i: self.refresh_inquiries())
         self.checkBox_inquiry_unanswered.toggled.connect(lambda _on: self.refresh_inquiries())
+        self.comboBox_inquiry_store.currentIndexChanged.connect(self._on_inquiry_store_changed)
         set_status(self.label_inquiry_status, "idle", "")
 
         self._inquiry_badge_thread = None
@@ -571,6 +608,10 @@ class InquiriesMixin:
                 widget.blockSignals(True)  # 바꿀 때마다 따로 조회하지 않고 아래에서 한 번만
             self.comboBox_inquiry_period.setCurrentIndex(0)
             self.checkBox_inquiry_unanswered.setChecked(True)
+            if self._inquiry_store_filter() == "쿠팡":  # 새 문의는 네이버(배지)라 쿠팡만 보고 있으면 전체로
+                self.comboBox_inquiry_store.blockSignals(True)
+                self.comboBox_inquiry_store.setCurrentIndex(0)
+                self.comboBox_inquiry_store.blockSignals(False)
             for widget in (self.comboBox_inquiry_period, self.checkBox_inquiry_unanswered):
                 widget.blockSignals(False)
             self._inquiry_auto_refreshing = True
@@ -614,32 +655,58 @@ class InquiriesMixin:
         for kind, keys in (payload.get("sample_keys") or {}).items():
             app_log.log(f"[문의 탭] {kind} 응답 키: {', '.join(keys)}")
         rows = list(payload.get("rows") or [])
-        self._fill_inquiry_table(rows)
-        unanswered_only = self.checkBox_inquiry_unanswered.isChecked()
-        label = "미답변" if unanswered_only else "문의"
-        text = f"{label} {len(rows)}건 · {payload.get('fetched_at', '')} 조회"
-        missing = payload.get("missing_keys") or []
-        if missing:
-            text += f" · {'·'.join(missing)} 키 없음"
-        if self._inquiry_auto_refreshing:
-            text += " · 새 문의 자동 반영"
-            self._inquiry_auto_refreshing = False
         errors = payload.get("errors") or []
         if errors:
-            set_status(self.label_inquiry_status, "warn", text + " (일부 실패)", detail="\n".join(errors))
             print("! 문의 조회 일부 실패: " + " / ".join(errors))
-        else:
-            set_status(self.label_inquiry_status, "ok", text)
+        self._inquiry_all_rows = rows
+        self._inquiry_list_info = {
+            "fetched_at": payload.get("fetched_at", ""),
+            "unanswered_only": self.checkBox_inquiry_unanswered.isChecked(),
+            "missing": list(payload.get("missing_keys") or []),
+            "auto": self._inquiry_auto_refreshing,
+            "errors": list(errors),
+        }
+        self._inquiry_auto_refreshing = False
+        self._apply_inquiry_store_filter()
         # 배지와 같은 조건(네이버 미답변만·같은 기간)으로 네이버를 빠짐없이 불러왔으면 배지도 바로 맞춘다.
-        # 배지는 네이버만 세므로 쿠팡 행은 빼고, 쿠팡 쪽 실패와는 상관없다.
+        # 배지는 네이버만 세므로 쿠팡 행은 빼고, 쿠팡 쪽 실패와는 상관없다(스토어 거르기와도 상관없다).
         if (payload.get("unanswered_only") and payload.get("naver_complete")
                 and payload.get("days") == _host(self).NAVER_INQUIRY_LOOKBACK_DAYS):
             naver_rows = [r for r in rows if inquiry_store(r) == "네이버"]
             self._set_inquiry_badge(len(naver_rows), payload.get("fetched_at") or datetime.now().strftime("%H:%M"))
             self._note_inquiry_ids({f"{r.get('kind', '')}:{r.get('id', '')}" for r in naver_rows})
+
+    def _inquiry_store_filter(self):
+        return self.comboBox_inquiry_store.currentData() or ""
+
+    def _on_inquiry_store_changed(self, _index):
+        self.set_app_setting(APP_SETTING_INQUIRY_STORE, self._inquiry_store_filter())
+        self._apply_inquiry_store_filter()
+
+    def _apply_inquiry_store_filter(self):
+        """마지막으로 불러온 행을 지금 고른 스토어로 걸러 표와 상태 문구를 다시 그린다(조회는 하지 않는다)."""
+        info = self._inquiry_list_info
+        if info is None:  # 아직 불러온 적 없음
+            return
+        store = self._inquiry_store_filter()
+        rows = filter_inquiry_rows(self._inquiry_all_rows, store)
+        self._fill_inquiry_table(rows)
+        label = "미답변" if info["unanswered_only"] else "문의"
+        prefix = f"{store} {label}" if store else label
+        text = f"{prefix} {len(rows)}건 · {info['fetched_at']} 조회"
+        if store:
+            text += f" · 전체 {len(self._inquiry_all_rows)}건"
+        if info["missing"]:
+            text += f" · {'·'.join(info['missing'])} 키 없음"
+        if info["auto"]:
+            text += " · 새 문의 자동 반영"
+        if info["errors"]:
+            set_status(self.label_inquiry_status, "warn", text + " (일부 실패)", detail="\n".join(info["errors"]))
+        else:
+            set_status(self.label_inquiry_status, "ok", text)
         if not rows:
-            self.emptyState_inquiry.set_text(
-                "미답변 문의가 없습니다." if unanswered_only else "이 기간에 들어온 문의가 없습니다.")
+            what = "미답변 문의" if info["unanswered_only"] else "이 기간에 들어온 문의"
+            self.emptyState_inquiry.set_text(f"{store} {what}가 없습니다." if store else f"{what}가 없습니다.")
 
     def _fill_inquiry_table(self, rows):
         table = self.tableWidget_inquiries
@@ -654,6 +721,8 @@ class InquiriesMixin:
                       inquiry_summary(row))
             for column, value in enumerate(values):
                 item = QTableWidgetItem(str(value or ""))
+                if column == 0:
+                    item.setIcon(store_icon(inquiry_store(row)))
                 if column == len(values) - 1:
                     item.setToolTip(str(row.get("content") or ""))
                 table.setItem(index, column, item)

@@ -306,8 +306,10 @@ def run_scenario():
                 "inquiryNo": 202, "inquiryRegistrationDateTime": "2026-11-21T09:05:00.0+09:00", "orderId": "O1",
                 "title": "주소 변경", "inquiryContent": "c", "answered": False})]
     order_calls = []
+    list_calls = []
 
     def fake_list(days, unanswered_only=True):
+        list_calls.append(days)
         return {"ok": True, "rows": rows, "errors": [], "sample_keys": {}, "fetched_at": "10:00",
                 "days": days, "unanswered_only": unanswered_only, "naver_complete": True, "missing_keys": ["네이버"]}
 
@@ -330,6 +332,10 @@ def run_scenario():
             patch.object(module, "run_inquiry_list_worker", fake_list), \
             patch.object(module, "run_naver_inquiry_order_worker", fake_order), \
             patch.object(module, "run_naver_qna_templates_worker", lambda: {"ok": True, "templates": []}):
+        # 지난번에 「쿠팡」을 골라 둔 PC: 켜면 쿠팡만 보인다
+        settings_path = Path("database") / "app_settings.json"
+        settings_path.parent.mkdir(parents=True, exist_ok=True)
+        settings_path.write_text(json.dumps({"inquiry_store_filter": "쿠팡"}), encoding="utf-8")
         window = module.MainWindow()
         window.show()
         app.processEvents()
@@ -337,6 +343,41 @@ def run_scenario():
         wait_idle(window)
         table = window.tableWidget_inquiries
         card = window.card_inquiry_answer
+        store = window.comboBox_inquiry_store
+        filtered = {
+            "items": [store.itemText(i) for i in range(store.count())],
+            "icons": [not store.itemIcon(i).isNull() for i in range(store.count())],
+            "restored": store.currentText(),
+            "kinds": [table.item(r, 0).text() for r in range(table.rowCount())],
+            "status": window.label_inquiry_status.text(),
+        }
+        table.selectRow(1)  # 쿠팡 상품문의를 고른 채로 거르기를 바꿔도 선택이 남는다
+        app.processEvents()
+        store.setCurrentIndex(1)  # 네이버
+        app.processEvents()
+        filtered["naver_kinds"] = [table.item(r, 0).text() for r in range(table.rowCount())]
+        filtered["naver_status"] = window.label_inquiry_status.text()
+        filtered["naver_selection"] = table.selectionModel().hasSelection()
+        filtered["saved_naver"] = json.loads(settings_path.read_text(encoding="utf-8"))["inquiry_store_filter"]
+        rows.append(coupang_commerce.normalize_online_inquiry(dict(ONLINE, inquiryId=3999, commentDtoList=[])))
+        rows[:] = [r for r in rows if r.get("store") == "쿠팡"]  # 다음 조회는 쿠팡만 있음
+        window.refresh_inquiries()
+        wait_idle(window)
+        filtered["empty_text"] = window.emptyState_inquiry.label.text()
+        filtered["shows_empty"] = window.stackedWidget_inquiry_list.currentWidget() is window.emptyState_inquiry
+        rows[:] = [coupang_commerce.normalize_callcenter_inquiry(CALLCENTER_OPEN),
+                   coupang_commerce.normalize_online_inquiry(dict(ONLINE, commentDtoList=[])),
+                   naver_commerce.normalize_customer_inquiry({
+                       "inquiryNo": 202, "inquiryRegistrationDateTime": "2026-11-21T09:05:00.0+09:00",
+                       "orderId": "O1", "title": "주소 변경", "inquiryContent": "c", "answered": False})]
+        window.refresh_inquiries()
+        wait_idle(window)
+        calls_before = len(list_calls)
+        store.setCurrentIndex(0)  # 전체
+        app.processEvents()
+        filtered["refetched_on_store_change"] = len(list_calls) != calls_before
+        filtered["saved_all"] = json.loads(settings_path.read_text(encoding="utf-8"))["inquiry_store_filter"]
+        result["filter"] = filtered
         ui = {
             "kinds": [table.item(r, 0).text() for r in range(table.rowCount())],
             "products": [table.item(r, 3).text() for r in range(table.rowCount())],
@@ -352,7 +393,20 @@ def run_scenario():
         wait_idle(window)
         ui["naver_answer_visible"] = card.isVisibleTo(card.parentWidget())
         ui["order_calls_after_naver"] = list(order_calls)
+        ui["icons"] = [not table.item(r, 0).icon().isNull() for r in range(table.rowCount())]
         result["ui"] = ui
+
+        # 쿠팡만 보고 있을 때 새 네이버 미답변이 생기면 탭에 들어올 때 전체로 바꿔 보이게 한다
+        store.setCurrentIndex(2)
+        app.processEvents()
+        window.nav_rail_actions["tab"].trigger()
+        app.processEvents()
+        window._inquiry_known_ids = set()
+        window._note_inquiry_ids({"상품문의:NEW"}, auto_refresh=True)
+        window.nav_rail_actions["tab_inquiries"].trigger()
+        wait_idle(window)
+        result["pending"] = {"store": store.currentText(), "rows": table.rowCount(),
+                             "saved": json.loads(settings_path.read_text(encoding="utf-8"))["inquiry_store_filter"]}
     print("RESULT " + json.dumps(result, ensure_ascii=False), flush=True)
     os._exit(0)
 
@@ -419,6 +473,43 @@ class CoupangTabTests(unittest.TestCase):
         self.assertEqual(ui["order_calls_after_coupang"], [])  # 쿠팡 주문번호로 네이버 주문을 부르지 않는다
         self.assertTrue(ui["naver_answer_visible"])
         self.assertEqual(ui["order_calls_after_naver"], ["O1"])
+        self.assertEqual(ui["icons"], [True, True, True])  # 유형 칸 앞 스토어 아이콘
+
+
+class StoreFilterTests(unittest.TestCase):
+    def test_filter_rows(self):
+        from ui.main.inquiries import filter_inquiry_rows
+
+        naver = {"kind": "상품문의", "id": "1"}
+        coupang = {"kind": "쿠팡 CS문의", "store": "쿠팡", "id": "2"}
+        self.assertEqual(filter_inquiry_rows([naver, coupang], ""), [naver, coupang])
+        self.assertEqual(filter_inquiry_rows([naver, coupang], "네이버"), [naver])
+        self.assertEqual(filter_inquiry_rows([naver, coupang], "쿠팡"), [coupang])
+
+    def test_restored_from_app_setting(self):
+        f = scenario()["filter"]
+        self.assertEqual(f["items"], ["전체", "네이버", "쿠팡"])
+        self.assertEqual(f["icons"], [False, True, True])
+        self.assertEqual(f["restored"], "쿠팡")
+        self.assertEqual(f["kinds"], ["쿠팡 CS문의", "쿠팡 상품문의"])
+        self.assertEqual(f["status"], "✓ 쿠팡 미답변 2건 · 10:00 조회 · 전체 3건 · 네이버 키 없음")
+
+    def test_change_filters_without_refetch_and_saves(self):
+        f = scenario()["filter"]
+        self.assertEqual(f["naver_kinds"], ["네이버 고객문의"])
+        self.assertEqual(f["naver_status"], "✓ 네이버 미답변 1건 · 10:00 조회 · 전체 3건 · 네이버 키 없음")
+        self.assertFalse(f["naver_selection"])  # 고른 쿠팡 문의가 목록에서 빠지면 선택도 풀린다
+        self.assertEqual(f["saved_naver"], "네이버")
+        self.assertTrue(f["shows_empty"])  # 네이버로 거른 목록에 네이버 문의가 없으면 빈 화면
+        self.assertEqual(f["empty_text"], "네이버 미답변 문의가 없습니다.")
+        self.assertFalse(f["refetched_on_store_change"])
+        self.assertEqual(f["saved_all"], "")
+
+    def test_new_naver_inquiry_switches_coupang_filter_to_all(self):
+        p = scenario()["pending"]
+        self.assertEqual(p["store"], "전체")
+        self.assertEqual(p["rows"], 3)
+        self.assertEqual(p["saved"], "쿠팡")  # 자동 전환은 저장하지 않는다(다음 실행엔 고른 값)
 
 
 if __name__ == "__main__":
