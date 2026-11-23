@@ -373,6 +373,15 @@ def run_scenario():
         window.refresh_inquiries()
         wait_idle(window)
         calls_before = len(list_calls)
+        store.setCurrentIndex(4)  # 쿠팡 CS문의만
+        app.processEvents()
+        filtered["cs_kinds"] = [table.item(r, 0).text() for r in range(table.rowCount())]
+        filtered["cs_status"] = window.label_inquiry_status.text()
+        filtered["cs_tooltip"] = window.label_inquiry_status.toolTip()
+        filtered["saved_cs"] = json.loads(settings_path.read_text(encoding="utf-8"))["inquiry_store_filter"]
+        store.setCurrentIndex(3)  # 쿠팡 상품문의만
+        app.processEvents()
+        filtered["online_kinds"] = [table.item(r, 0).text() for r in range(table.rowCount())]
         store.setCurrentIndex(0)  # 전체
         app.processEvents()
         filtered["refetched_on_store_change"] = len(list_calls) != calls_before
@@ -396,8 +405,8 @@ def run_scenario():
         ui["icons"] = [not table.item(r, 0).icon().isNull() for r in range(table.rowCount())]
         result["ui"] = ui
 
-        # 쿠팡만 보고 있을 때 새 네이버 미답변이 생기면 탭에 들어올 때 전체로 바꿔 보이게 한다
-        store.setCurrentIndex(2)
+        # 쿠팡(여기서는 CS문의)만 보고 있을 때 새 네이버 미답변이 생기면 탭에 들어올 때 전체로 바꿔 보이게 한다
+        store.setCurrentIndex(4)
         app.processEvents()
         window.nav_rail_actions["tab"].trigger()
         app.processEvents()
@@ -485,11 +494,21 @@ class StoreFilterTests(unittest.TestCase):
         self.assertEqual(filter_inquiry_rows([naver, coupang], ""), [naver, coupang])
         self.assertEqual(filter_inquiry_rows([naver, coupang], "네이버"), [naver])
         self.assertEqual(filter_inquiry_rows([naver, coupang], "쿠팡"), [coupang])
+        online = {"kind": "쿠팡 상품문의", "store": "쿠팡", "id": "3"}
+        self.assertEqual(filter_inquiry_rows([naver, coupang, online], "쿠팡 CS문의"), [coupang])
+        self.assertEqual(filter_inquiry_rows([naver, coupang, online], "쿠팡 상품문의"), [online])
+        self.assertEqual(filter_inquiry_rows([naver, coupang, online], "쿠팡"), [coupang, online])
+
+    def test_filter_store_of_value(self):
+        from ui.main.inquiries import inquiry_filter_store
+
+        self.assertEqual([inquiry_filter_store(v) for v in ("", "네이버", "쿠팡", "쿠팡 상품문의", "쿠팡 CS문의")],
+                         ["", "네이버", "쿠팡", "쿠팡", "쿠팡"])
 
     def test_restored_from_app_setting(self):
         f = scenario()["filter"]
-        self.assertEqual(f["items"], ["전체", "네이버", "쿠팡"])
-        self.assertEqual(f["icons"], [False, True, True])
+        self.assertEqual(f["items"], ["전체", "네이버", "쿠팡", "쿠팡 상품문의", "쿠팡 CS문의"])
+        self.assertEqual(f["icons"], [False, True, True, True, True])
         self.assertEqual(f["restored"], "쿠팡")
         self.assertEqual(f["kinds"], ["쿠팡 CS문의", "쿠팡 상품문의"])
         self.assertEqual(f["status"], "✓ 쿠팡 미답변 2건 · 10:00 조회 · 전체 3건 · 네이버 키 없음")
@@ -503,13 +522,19 @@ class StoreFilterTests(unittest.TestCase):
         self.assertTrue(f["shows_empty"])  # 네이버로 거른 목록에 네이버 문의가 없으면 빈 화면
         self.assertEqual(f["empty_text"], "네이버 미답변 문의가 없습니다.")
         self.assertFalse(f["refetched_on_store_change"])
+        self.assertEqual(f["cs_kinds"], ["쿠팡 CS문의"])
+        self.assertEqual(f["cs_status"], "✓ 쿠팡 CS문의 미답변 1건 · 10:00 조회 · 전체 3건 · 네이버 키 없음")
+        self.assertEqual(f["saved_cs"], "쿠팡 CS문의")
+        # 좁은 창에서 문구 끝이 잘려도 툴팁으로 전체를 읽을 수 있다
+        self.assertEqual(f["cs_tooltip"], "쿠팡 CS문의 미답변 1건 · 10:00 조회 · 전체 3건 · 네이버 키 없음")
+        self.assertEqual(f["online_kinds"], ["쿠팡 상품문의"])
         self.assertEqual(f["saved_all"], "")
 
     def test_new_naver_inquiry_switches_coupang_filter_to_all(self):
         p = scenario()["pending"]
         self.assertEqual(p["store"], "전체")
         self.assertEqual(p["rows"], 3)
-        self.assertEqual(p["saved"], "쿠팡")  # 자동 전환은 저장하지 않는다(다음 실행엔 고른 값)
+        self.assertEqual(p["saved"], "쿠팡 CS문의")  # 자동 전환은 저장하지 않는다(다음 실행엔 고른 값)
 
 
 if __name__ == "__main__":

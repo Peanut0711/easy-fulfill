@@ -43,7 +43,10 @@ from ui.main.rich_cards import (  # noqa: F401  (아래 이름들은 문의 상�
 )
 
 # (이름, 스토어). "" = 전체. 첫 항목이 기본값이다. 고른 값은 이 PC 앱 설정에 기억한다.
-INQUIRY_STORES = (("전체", ""), ("네이버", "네이버"), ("쿠팡", "쿠팡"))
+# 쿠팡은 상품문의와 CS문의(콜센터 이관 — 반품·배송 건이 많다)를 따로 볼 수 있게 종류 이름으로도 거른다.
+# 값은 스토어 이름이거나 행의 kind 이고, 둘은 겹치지 않는다.
+INQUIRY_STORES = (("전체", ""), ("네이버", "네이버"), ("쿠팡", "쿠팡"),
+                  ("쿠팡 상품문의", "쿠팡 상품문의"), ("쿠팡 CS문의", "쿠팡 CS문의"))
 APP_SETTING_INQUIRY_STORE = "inquiry_store_filter"
 # 목록 「유형」 칸 앞 스토어 아이콘(바로가기 메뉴와 같은 정사각 아이콘. 글자 로고는 행 높이에서 읽히지 않는다)
 STORE_ICON_FILES = {"네이버": "smart-store-icon.png", "쿠팡": "coupang-wing-icon.png"}
@@ -81,8 +84,18 @@ def inquiry_kind_label(row):
 
 
 def filter_inquiry_rows(rows, store):
-    """스토어로 거른 행. store "" = 전체(그대로)."""
-    return list(rows) if not store else [r for r in rows if inquiry_store(r) == store]
+    """스토어(「네이버」·「쿠팡」)나 종류(「쿠팡 CS문의」 등)로 거른 행. store "" = 전체(그대로)."""
+    if not store:
+        return list(rows)
+    return [r for r in rows if inquiry_store(r) == store or r.get("kind") == store]
+
+
+def inquiry_filter_store(value):
+    """거르기 값의 스토어(「쿠팡 CS문의」 → 「쿠팡」, 전체는 "")."""
+    for store in STORE_ICON_FILES:
+        if value == store or value.startswith(store + " "):
+            return store
+    return ""
 
 
 def store_icon(store):
@@ -285,7 +298,7 @@ class InquiriesMixin:
         self.comboBox_inquiry_store.setToolTip("불러온 목록을 스토어로 걸러 봅니다(다시 조회하지 않음).")
         for label, store in INQUIRY_STORES:
             if store:
-                self.comboBox_inquiry_store.addItem(store_icon(store), label, store)
+                self.comboBox_inquiry_store.addItem(store_icon(inquiry_filter_store(store)), label, store)
             else:
                 self.comboBox_inquiry_store.addItem(label, store)
         saved = self.get_app_setting(APP_SETTING_INQUIRY_STORE, "")
@@ -608,7 +621,8 @@ class InquiriesMixin:
                 widget.blockSignals(True)  # 바꿀 때마다 따로 조회하지 않고 아래에서 한 번만
             self.comboBox_inquiry_period.setCurrentIndex(0)
             self.checkBox_inquiry_unanswered.setChecked(True)
-            if self._inquiry_store_filter() == "쿠팡":  # 새 문의는 네이버(배지)라 쿠팡만 보고 있으면 전체로
+            # 새 문의는 네이버(배지)라 쿠팡(상품문의·CS문의 포함)만 보고 있으면 전체로
+            if inquiry_filter_store(self._inquiry_store_filter()) == "쿠팡":
                 self.comboBox_inquiry_store.blockSignals(True)
                 self.comboBox_inquiry_store.setCurrentIndex(0)
                 self.comboBox_inquiry_store.blockSignals(False)
@@ -700,13 +714,19 @@ class InquiriesMixin:
             text += f" · {'·'.join(info['missing'])} 키 없음"
         if info["auto"]:
             text += " · 새 문의 자동 반영"
+        # 창이 좁으면 문구 끝이 잘리므로 툴팁에 전체 문구를 둔다(일부 실패면 그 아래 원인).
         if info["errors"]:
-            set_status(self.label_inquiry_status, "warn", text + " (일부 실패)", detail="\n".join(info["errors"]))
+            set_status(self.label_inquiry_status, "warn", text + " (일부 실패)",
+                       detail=text + " (일부 실패)\n\n" + "\n".join(info["errors"]))
         else:
-            set_status(self.label_inquiry_status, "ok", text)
+            set_status(self.label_inquiry_status, "ok", text, detail=text)
         if not rows:
-            what = "미답변 문의" if info["unanswered_only"] else "이 기간에 들어온 문의"
-            self.emptyState_inquiry.set_text(f"{store} {what}가 없습니다." if store else f"{what}가 없습니다.")
+            if store in STORE_ICON_FILES or not store:  # 스토어·전체: 「쿠팡 미답변 문의가 없습니다.」
+                what = "미답변 문의" if info["unanswered_only"] else "이 기간에 들어온 문의"
+                text = f"{store} {what}가 없습니다." if store else f"{what}가 없습니다."
+            else:  # 종류: 「미답변 쿠팡 CS문의가 없습니다.」
+                text = f"미답변 {store}가 없습니다." if info["unanswered_only"] else f"이 기간에 들어온 {store}가 없습니다."
+            self.emptyState_inquiry.set_text(text)
 
     def _fill_inquiry_table(self, rows):
         table = self.tableWidget_inquiries

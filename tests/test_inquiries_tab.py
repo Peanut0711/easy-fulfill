@@ -702,7 +702,8 @@ class InquiriesTabTests(unittest.TestCase):
         f = scenario()["filter"]
         self.assertEqual(f["call"], [0, False])
         self.assertEqual(f["status"], "! 문의 2건 · 11:50 조회 (일부 실패)")
-        self.assertEqual(f["tooltip"], "상품문의 조회 실패: HTTP 403")
+        # 좁은 창에서 잘려도 읽을 수 있게 툴팁에 전체 문구, 그 아래 실패 원인
+        self.assertEqual(f["tooltip"], "문의 2건 · 11:50 조회 (일부 실패)\n\n상품문의 조회 실패: HTTP 403")
         self.assertEqual(f["selected"], 1)
         self.assertTrue(f["detail_kept"])
 
