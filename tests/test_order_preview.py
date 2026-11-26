@@ -25,7 +25,7 @@ EXPECTED_MARKDOWN = {
         "▶ [C-USBC1M]**[ 1 개 ]** - [USB-C 케이블 1m](https://smartstore.naver.com/higenis/products/112) ( 옵션 : 없음 )\n"
         "\n"
         "[ ] 2.김철수 - 3.2만\n"
-        "▶ [        ]**[ 1 개 ]** - [STM32 Nucleo-F401RE](https://smartstore.naver.com/higenis/products/999) ( 옵션 : 없음 )\n"
+        "▶ [        ]**[ 1 개 ]** - [STM32 Nucleo-F401RE](https://smartstore.naver.com/higenis/products/999) ( 옵션 : 2개 )\n"
         "\n"
         "[ ] 3.이영희 - 12.8만 · **🎁: 에코백** **(직접전달)**\n"
         "▶ [L-TDS3P]**[ 1 개 ]** - [LilyGo T-Display S3](https://smartstore.naver.com/higenis/products/113) ( 옵션 : Pro )\n"
@@ -46,12 +46,12 @@ EXPECTED_MARKDOWN = {
         "  (추가구성 : 핀헤더 추가)\n"
         "\n"
         "[ ] 2.김유진 - 6.0만 · **🎁: 볼펜 또는 박스커터**\n"
-        "▶ [PASS]**[ 1 개 ]** - ESP32 DevKit V1 ( 옵션 : 없음 )\n"
+        "▶ [PASS]**[ 1 개 ]** - ESP32 DevKit V1 ( 옵션 : 5개 )\n"
         "\n"
     ),
     "11st": (
         "[ ] 1.오세훈 - 6.6만 · **🎁: 볼펜 또는 박스커터**\n"
-        "▶ [PASS]**[ 2 개 ]** - STM32 블루필 ( 옵션 : 없음 )\n"
+        "▶ [PASS]**[ 12 개 ]** - SG-90 서보 모터 ( 옵션 : 회전각:360도-12개 )\n"
         "\n"
     ),
 }
@@ -64,7 +64,7 @@ def _naver_frame(pd):
     return pd.DataFrame([
         ["2026111700001001", "홍길동", "010-1111-2222", "서울 강남구 1", "010", "", "ESP32-S3 DevKitC-1", "N16R8", 2, "06035", "111", std, 41000],
         ["2026111700001002", "홍길동", "010-1111-2222", "서울 강남구 1", "010", "", "USB-C 케이블 1m", "", 1, "06035", "112", std, 20000],
-        ["2026111700002001", "김철수", "010-3333-4444", "부산 해운대구 2", "010", "", "STM32 Nucleo-F401RE", "", 1, "48000", "999", std, 32000],
+        ["2026111700002001", "김철수", "010-3333-4444", "부산 해운대구 2", "010", "", "STM32 Nucleo-F401RE", "2개", 1, "48000", "999", std, 32000],
         ["2026111700003001", "이영희", "010-5555-6666", "대전 유성구 3", "010", "", "LilyGo T-Display S3", "Pro", 1, "34000", "113", "직접전달", 128000],
     ], columns=cols)
 
@@ -84,14 +84,14 @@ def _gmarket_frame(pd):
             "배송시 요구사항", "우편번호", "판매금액", "추가구성", "배송비 금액"]
     return pd.DataFrame([
         ["40001", "한소희", "경기 수원시 7", "", "010-9090-1010", "ESP32 DevKit V1", "", 3, "", "16000", 27000, "핀헤더 추가", 3000],
-        ["40002", "김유진", "경기 수원시 8", "", "010-9090-2020", "ESP32 DevKit V1", "", 1, "", "16001", 57000, "", 3000],
+        ["40002", "김유진", "경기 수원시 8", "", "010-9090-2020", "ESP32 DevKit V1", "5개", 1, "", "16001", 57000, "", 3000],
     ], columns=cols)
 
 
 def _11st_frame(pd):
     cols = ["주문번호", "수취인", "상품명", "옵션", "수량", "주문금액", "휴대폰번호", "전화번호", "우편번호", "주소", "배송메시지"]
     return pd.DataFrame([
-        ["50001", "오세훈", "STM32 블루필", "", 2, 66000, "010-2020-3030", "", "12000", "경기 남양주시 8", ""],
+        ["50001", "오세훈", "SG-90 서보 모터", "회전각:360도-12개", 12, 66000, "010-2020-3030", "", "12000", "경기 남양주시 8", ""],
     ], columns=cols)
 
 
@@ -399,9 +399,12 @@ class OrderPreviewModelTests(unittest.TestCase):
         self.assertEqual(self.order(delivery="").delivery_text, "택배")
         self.assertEqual(product_line(PreviewProduct(" ", 2, "보드", "R4"), True), "[코드 없음] 2개 · 보드 (옵션: R4)")
         self.assertEqual(product_line(PreviewProduct("PASS", 1, "보드", "없음", "핀"), False), "1개 · 보드 (추가구성: 핀)")
-        # 묶음 옵션은 낱개 수와 계산식을 함께 보여 준다
-        self.assertEqual(product_line(PreviewProduct("L307", 2, "보드", "3개 ESP32-C3"), True),
+        # 쿠팡(bundles=True) 묶음 옵션은 낱개 수와 계산식을 함께 보여 준다
+        self.assertEqual(product_line(PreviewProduct("L307", 2, "보드", "3개 ESP32-C3"), True, True),
                          "[L307] 6개(2세트×3개) · 보드 (옵션: 3개 ESP32-C3)")
+        # 네이버·지마켓·11번가(기본값)는 주문 수량만 보여 준다
+        self.assertEqual(product_line(PreviewProduct("L307", 2, "보드", "3개 ESP32-C3"), True),
+                         "[L307] 2개 · 보드 (옵션: 3개 ESP32-C3)")
 
     def test_model_rows_children_and_colors(self):
         from ui.order_preview import (CODE_MISSING_BACKGROUND, NON_PARCEL_BACKGROUND, PreviewProduct,
@@ -568,7 +571,8 @@ class OrderLoadAndCopyTests(unittest.TestCase):
         self.assertEqual([r["bg"] for r in tree["rows"]], ["", CODE_MISSING_BACKGROUND, NON_PARCEL_BACKGROUND])
         self.assertEqual(tree["rows"][0]["children"], [
             "[A-ESP32S3] 2개 · ESP32-S3 DevKitC-1 (옵션: N16R8)", "[C-USBC1M] 1개 · USB-C 케이블 1m"])
-        self.assertEqual(tree["rows"][1]["children"], ["[코드 없음] 1개 · STM32 Nucleo-F401RE"])
+        # 네이버는 옵션명의 「2개」를 수량에 곱하지 않는다
+        self.assertEqual(tree["rows"][1]["children"], ["[코드 없음] 1개 · STM32 Nucleo-F401RE (옵션: 2개)"])
         self.assertTrue(all(r["spanned"] for r in tree["rows"]))
         self.assertTrue(tree["legend"])
         self.assertIn("상품코드 매칭 실패 1건", tree["legend_text"])
@@ -596,6 +600,8 @@ class OrderLoadAndCopyTests(unittest.TestCase):
         ])
         self.assertEqual(rows[0]["bg"], "")
         self.assertEqual(rows[0]["children"], ["3개 · ESP32 DevKit V1 (추가구성: 핀헤더 추가)"])
+        # 지마켓은 옵션명의 「5개」를 수량에 곱하지 않는다
+        self.assertEqual(rows[1]["children"], ["1개 · ESP32 DevKit V1 (옵션: 5개)"])
         self.assertFalse(result["tree"]["legend"])
 
     def test_11st_file_load_table_and_copy(self):
@@ -603,7 +609,8 @@ class OrderLoadAndCopyTests(unittest.TestCase):
         self.check_copies(result, "11st")
         rows = result["tree"]["rows"]
         self.assertEqual([r["cells"] for r in rows], [["1", "오세훈", "6.6만", "볼펜 또는 박스커터", "택배", "1"]])
-        self.assertEqual(rows[0]["children"], ["2개 · STM32 블루필"])
+        # 11번가 수량은 이미 낱개 수일 수 있어 옵션명의 「12개」를 곱하지 않는다
+        self.assertEqual(rows[0]["children"], ["12개 · SG-90 서보 모터 (옵션: 회전각:360도-12개)"])
 
 
 if __name__ == "__main__":

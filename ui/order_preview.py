@@ -45,6 +45,7 @@ class PreviewOrder:
     delivery: str
     products: tuple
     check_codes: bool  # 상품코드 매칭을 쓰는 스토어(네이버·쿠팡)인지
+    bundles: bool = False  # 옵션명의 묶음 개수를 수량에 곱할지(쿠팡만 True)
 
     @property
     def code_missing(self) -> bool:
@@ -59,10 +60,14 @@ class PreviewOrder:
         return self.delivery if self.non_parcel else "택배"
 
 
-def product_line(product: PreviewProduct, check_codes: bool) -> str:
+def _packed(product: PreviewProduct, bundles: bool) -> int:
+    return packed_quantity(product.quantity, product.option) if bundles else int(product.quantity or 0)
+
+
+def product_line(product: PreviewProduct, check_codes: bool, bundles: bool = False) -> str:
     code = str(product.code).strip()
     head = f"[{code or '코드 없음'}] " if check_codes else ""
-    note = bundle_note(product.quantity, product.option)
+    note = bundle_note(product.quantity, product.option) if bundles else ""
     count = f"{packed_quantity(product.quantity, product.option)}개({note})" if note else f"{product.quantity}개"
     line = f"{head}{count} · {product.name}"
     option = str(product.option).strip()
@@ -110,7 +115,7 @@ def build_preview_model(orders, parent=None) -> QStandardItemModel:
     center = Qt.AlignmentFlag.AlignCenter
     for order in orders:
         flags = order_flags_text(order)
-        total_qty = sum(packed_quantity(p.quantity, p.option) for p in order.products)
+        total_qty = sum(_packed(p, order.bundles) for p in order.products)
         cells = [
             _item(order.number, align=right),
             _item(order.recipient),
@@ -130,7 +135,7 @@ def build_preview_model(orders, parent=None) -> QStandardItemModel:
             if flags:
                 cell.setToolTip(flags if not cell.toolTip() else f"{cell.toolTip()}\n{flags}")
         for product in order.products:
-            child = _item(product_line(product, order.check_codes))
+            child = _item(product_line(product, order.check_codes, order.bundles))
             if order.check_codes and not str(product.code).strip():
                 child.setForeground(QBrush(QColor(CODE_MISSING_TEXT)))
             cells[0].appendRow([child])

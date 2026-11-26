@@ -5760,7 +5760,7 @@ class MainWindow(ChromeMixin, StartupMixin, SettingsMixin, DetailPageMixin, Inqu
                     name_for_md = self._format_product_name_markdown_link(
                         product_name, vp_no, COUPANG_VP_PRODUCT_URL_PREFIX
                     )
-                    markdown_text += f"▶ [{product_code}]{quantity_markdown(quantity, option)} - {name_for_md} ( 옵션 : {option} )\n"
+                    markdown_text += f"▶ [{product_code}]{quantity_markdown(quantity, option, bundles=True)} - {name_for_md} ( 옵션 : {option} )\n"
                 
                 markdown_text += "\n"
                 preview_rows.append(PreviewOrder(
@@ -5772,6 +5772,7 @@ class MainWindow(ChromeMixin, StartupMixin, SettingsMixin, DetailPageMixin, Inqu
                         PreviewProduct(p['상품코드'], p['수량'], p['상품명'], p['옵션'])
                         for p in info['상품목록']),
                     check_codes=True,
+                    bundles=True,
                 ))
             
             # 미리보기 표와 복사용 마크다운 갱신

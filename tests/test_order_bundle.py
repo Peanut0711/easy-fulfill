@@ -31,15 +31,21 @@ class BundleSizeTests(unittest.TestCase):
 
 class QuantityMarkdownTests(unittest.TestCase):
     def test_bundle_option_shows_pieces_and_formula(self):
-        self.assertEqual(quantity_markdown(1, "3개 ESP32-C3"), "**[ 3 개 ]** (1세트×3개)")
-        self.assertEqual(quantity_markdown(2, "3개 ESP32-C3"), "**[ 6 개 ]** (2세트×3개)")
+        # 쿠팡(bundles=True)만 묶음 개수를 곱한다
+        self.assertEqual(quantity_markdown(1, "3개 ESP32-C3", bundles=True), "**[ 3 개 ]** (1세트×3개)")
+        self.assertEqual(quantity_markdown(2, "3개 ESP32-C3", bundles=True), "**[ 6 개 ]** (2세트×3개)")
         self.assertEqual(packed_quantity(2, "3개"), 6)
         self.assertEqual(bundle_note(2, "3개"), "2세트×3개")
 
     def test_plain_option_keeps_previous_format(self):
-        self.assertEqual(quantity_markdown(2, "N16R8"), "**[ 2 개 ]**")
-        self.assertEqual(quantity_markdown(1, ""), "**[ 1 개 ]**")
+        self.assertEqual(quantity_markdown(2, "N16R8", bundles=True), "**[ 2 개 ]**")
+        self.assertEqual(quantity_markdown(1, "", bundles=True), "**[ 1 개 ]**")
         self.assertEqual(bundle_note(1, "없음"), "")
+
+    def test_default_shows_order_quantity_only(self):
+        # 네이버·지마켓·11번가(기본값): 옵션명에 「N개」가 있어도 주문 수량만 적는다
+        self.assertEqual(quantity_markdown(12, "회전각:360도-12개"), "**[ 12 개 ]**")
+        self.assertEqual(quantity_markdown(1, "3개"), "**[ 1 개 ]**")
 
 
 if __name__ == "__main__":
